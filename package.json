@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {

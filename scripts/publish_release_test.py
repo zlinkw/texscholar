@@ -67,6 +67,7 @@ class Publish(unittest.TestCase):
         self.assertEqual(canonical, archive_bytes({'source.tex': '中文\r\nBody.\r\n'.encode('utf-8')}))
         with zipfile.ZipFile(io.BytesIO(canonical)) as archive:
             self.assertEqual(archive.read('source.tex').decode('utf-8'), '中文\nBody.\n')
+            self.assertEqual(archive.getinfo('source.tex').compress_type, zipfile.ZIP_STORED)
         parent = Path(os.environ['LOCAL_LATEX_TEST_ROOT'])
         root = Path(tempfile.mkdtemp(prefix='release-', dir=parent))
         (root / 'package.json').write_text(json.dumps({'version': '1.0.0'}), encoding='utf-8')
