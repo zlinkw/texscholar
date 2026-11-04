@@ -1,0 +1,325 @@
+"""Full-paper, stacked original/proposal PDF without Git."""
+from pathlib import Path
+import os
+import re
+import unittest
+from pypdf import PdfReader
+from native_review_test import NativeReview
+from review_pdf import preview, sentences, sentence_changes, review_units, with_legend
+
+BIN = Path(os.environ['LOCAL_LATEX_TEXBIN'])
+EXE = '.exe' if os.name == 'nt' else ''
+
+
+class ReviewUnits(unittest.TestCase):
+    def changes(self, text, replacements):
+        edits = []
+        for id_, old, new in replacements:
+            start = text.index(old)
+            edits.append({'id': id_, 'start': start + 37, 'end': start + len(old) + 37, 'item': {'after': new}})
+        return [unit for unit in review_units(text, edits, 37) if unit['kind'] != 'equal']
+
+    def test_adjacent_equation_does_not_absorb_changed_sentence(self):
+        before = 'First sentence stays. The model is strong.\\begin{equation}x=1\\end{equation}Last sentence stays.'
+        after = before.replace('strong', 'reliable')
+        changes = [(old.strip(), new.strip()) for kind, old, new in sentence_changes(before, after) if kind != 'equal']
+        self.assertEqual(changes, [('The model is strong.', 'The model is reliable.')])
+        self.assertEqual(len(sentences(before)), 4)
+
+    def test_plain_sentence_and_independent_ids_with_length_changes(self):
+        text = 'Context stays. The model is strong. The model is fast. Tail stays.'
+        changes = self.changes(text, [('1', 'strong', 'highly reliable'), ('2', 'fast', 'compact')])
+        self.assertEqual([unit['ids'] for unit in changes], [['1'], ['2']])
+        self.assertEqual([unit['before'].strip() for unit in changes], ['The model is strong.', 'The model is fast.'])
+
+    def test_text_and_equation_remain_independent(self):
+        text = r'The model is strong.\begin{equation}\begin{aligned}x&=1\\y&=2\end{aligned}\label{eq:a}\end{equation}Tail stays.'
+        changes = self.changes(text, [('1', 'strong', 'reliable'), ('2', 'x&=1', 'x&=3')])
+        self.assertEqual([unit['ids'] for unit in changes], [['1'], ['2']])
+        self.assertEqual(changes[0]['before'], 'The model is strong.')
+        self.assertTrue(changes[1]['before'].startswith(r'\begin{equation}'))
+        self.assertNotIn('Tail stays.', changes[1]['after'])
+
+    def test_protected_tex_and_figure_boundaries_are_lossless(self):
+        text = (r'At 1.5 mm, e.g. in Fig. 2, \cite{demo} uses $p=0.05$ and \(z=2.3\). '
+                r'The \textbf{first clause. Still one macro} and \verb|a. b| stay. '
+                r'Changed sentence.\begin{figure}[t]\fbox{Diagram}\caption{A figure.}\end{figure}Tail stays.')
+        self.assertEqual(''.join(sentences(text)), text)
+        self.assertEqual(len(sentences(text)), 5)
+        changes = self.changes(text, [('7', 'Changed sentence.', 'Improved sentence.')])
+        self.assertEqual([(unit['before'], unit['after'], unit['ids']) for unit in changes],
+                         [('Changed sentence.', 'Improved sentence.', ['7'])])
+
+    def test_display_math_and_insert_delete(self):
+        text = r'Old sentence.\[x=1\] Tail stays.'
+        changes = self.changes(text, [('1', 'Old sentence.', ''), ('2', 'x=1', 'x=3')])
+        self.assertEqual([unit['ids'] for unit in changes], [['1'], ['2']])
+        changes = self.changes('Tail stays.', [('3', 'Tail stays.', 'Added sentence. Tail stays.')])
+        self.assertEqual(changes[0]['ids'], ['3'])
+
+    def test_comment_prefixed_replacements_and_gap_additions_keep_their_own_original_and_id(self):
+        first = 'The teacher uses three views.'
+        second = 'Reliability uses mean probabilities.'
+        text = first + ' ' + second + ' Tail stays.'
+        plan = '% CODEX-PARAGRAPH-PLAN-BEGIN\n% 中文逻辑说明。\n% CODEX-PARAGRAPH-PLAN-END\n'
+        edits = [
+            {'id': '45', 'start': 0, 'end': len(first), 'item': {'after': plan + 'The teacher predicts three probability maps.'}},
+            {'id': '48', 'start': len(first), 'end': len(first) + 1, 'item': {'after': '\n' + plan + 'Before screening, soft targets are used.\n'}},
+            {'id': '46', 'start': len(first) + 1, 'end': len(first) + 1 + len(second), 'item': {'after': plan + 'Reliability uses the view mean and entropy.'}},
+            {'id': '47', 'start': len(first) + 1 + len(second), 'end': len(first) + 2 + len(second), 'item': {'after': '\n' + plan + 'After screening, hard targets are used.\n'}}
+        ]
+        units = list(review_units(text, edits))
+        changes = [u for u in units if u['kind'] != 'equal']
+        self.assertEqual([u['ids'] for u in changes], [['45'], ['48'], ['46'], ['47']])
+        self.assertEqual(changes[0]['before'], first)
+        self.assertEqual(changes[2]['before'], second)
+        self.assertTrue(changes[1]['addition_only'])
+        self.assertTrue(changes[3]['addition_only'])
+        self.assertEqual(''.join(u['after'] for u in units).count('Tail stays.'), 1)
+
+    def test_two_ids_in_one_original_sentence_are_reported_not_silently_aggregated(self):
+        with self.assertRaisesRegex(ValueError, '同一原文.*1.*2'):
+            self.changes('The model is strong and fast.', [('1', 'strong', 'reliable'), ('2', 'fast', 'compact')])
+
+    def test_legend_follows_title_once_and_ignores_commented_title(self):
+        for newline in ['\n', '\r\n']:
+            text = newline.join(['% \\maketitle', '\\maketitle', 'Body.'])
+            result = with_legend(text)
+            self.assertEqual(result.count(r'\textbf{Legend:}'), 1)
+            self.assertLess(result.index(newline + '\\maketitle' + newline), result.index(r'\textbf{Legend:}'))
+            self.assertLess(result.index(r'\textbf{Legend:}'), result.index('Body.'))
+        self.assertTrue(with_legend('Body.').endswith('Body.'))
+
+
+class ReviewPDF(unittest.TestCase):
+    setUp = NativeReview.setUp
+    review = NativeReview.review
+    apply = NativeReview.apply
+    proposal = NativeReview.proposal
+
+    def test_deletions_show_complete_surviving_candidate_and_explicit_empty_result(self):
+        main = self.root / 'main.tex'
+        text = ('\\documentclass[twocolumn]{article}\n\\title{Isolated review example}\n\\author{Test}\n\\date{}\n'
+                '\\begin{document}\n\\maketitle\nOpening stays.\n\n'
+                'The model uses an obsolete prior.\n\nRemove this sentence.\n\n'
+                'The remaining context stays.\n\\end{document}\n')
+        main.write_text(text, encoding='utf-8')
+        self.apply('begin', 'deletions-round', ['main.tex', 'reply.tex'])
+        self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'an obsolete prior', 'after': 'a prior'})
+        self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'Remove this sentence.', 'after': ''})
+        before, state = main.read_bytes(), (self.root / 'reply.tex').read_bytes()
+        data = self.review().inspect('1')
+        result = preview(self.root, 'reply.tex', main, '1', data['version'], 'missing-git',
+                         str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        pdf_text = re.sub(r'(?<=\w)-\s+(?=\w)', '', ' '.join(' '.join(page.extract_text() for page in PdfReader(result['pdf']).pages).split()))
+        self.assertIn('The model uses a prior.', pdf_text)
+        self.assertIn('Sentence/item deleted. Remaining context continues below.', pdf_text)
+        self.assertEqual(pdf_text.count('The remaining context stays.'), 1)
+        self.assertEqual(pdf_text.count('Legend:'), 1)
+        self.assertLess(pdf_text.index('Isolated review example'), pdf_text.index('Legend:'))
+        self.assertLess(pdf_text.index('Legend:'), pdf_text.index('Opening stays.'))
+        self.assertEqual(main.read_bytes(), before)
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), state)
+        print('DELETION_PDF', result['pdf'])
+
+    def test_comment_prefixed_replacements_and_addition_labels_in_complete_pdf(self):
+        main = self.root / 'main.tex'
+        first, second = 'The teacher uses three views.', 'Reliability uses mean probabilities.'
+        main.write_text('\\documentclass[twocolumn]{article}\n\\usepackage{amsmath}\n\\begin{document}\nUnique opening context.\n\n'
+                        '\\section{Method}\n' + first + ' ' + second + ' Tail stays.\n'
+                        '\\begin{equation}z=1\\label{eq:unchanged}\\end{equation}\nUnique ending context.\n\\end{document}\n', encoding='utf-8')
+        self.apply('begin', 'original-unit-round', ['main.tex', 'reply.tex'])
+        plan = '% CODEX-PARAGRAPH-PLAN-BEGIN\n% 中文逻辑注释，保留源文件。\n% CODEX-PARAGRAPH-PLAN-END\n'
+        first_id = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': first,
+                                         'after': plan + 'The teacher predicts three probability maps.'})['id']
+        second_id = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': second,
+                                          'after': plan + 'Reliability uses the view mean and entropy.'})['id']
+        addition = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': ' ', 'left': first,
+                                         'right': second, 'after': '\n' + plan + 'Before screening, soft targets are used.\n'})['id']
+        source, owner = main.read_bytes(), (self.root / 'reply.tex').read_bytes()
+        data = self.review().inspect(first_id)
+        result = preview(self.root, 'reply.tex', main, first_id, data['version'], 'missing-git',
+                         str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        tex = (Path(result['output']) / 'source/__codex_inline_review__.tex').read_text(encoding='utf-8')
+        self.assertIn('[' + first_id + '] Original', tex)
+        self.assertIn('[' + second_id + '] Original', tex)
+        self.assertIn('[' + addition + '] Original', tex)
+        self.assertIn('Addition only; no corresponding original text.', tex)
+        self.assertNotRegex(tex, r'\[\d+,\d+')
+        text = '\n'.join(page.extract_text() for page in PdfReader(result['pdf']).pages)
+        normalized = ' '.join(text.split())
+        self.assertIn(first, normalized)
+        self.assertIn(second, normalized)
+        self.assertIn('Addition only; no corresponding original text.', normalized)
+        self.assertEqual(normalized.count('Tail stays.'), 1)
+        self.assertEqual(normalized.count('Unique opening context.'), 1)
+        self.assertEqual(tex.count(r'\label{eq:unchanged}'), 1)
+        self.assertEqual(main.read_bytes(), source)
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
+        print('ORIGINAL_UNIT_PDF', result['pdf'])
+
+    def test_complete_paper_sentence_environment_and_id_granularity(self):
+        main = self.root / 'main.tex'
+        text = r'''\documentclass{article}
+\usepackage{amsmath,graphicx,hyperref}
+\begin{document}
+Unique opening context.
+
+\section{Plain}
+Plain anchor stays. The plain model is strong. Plain tail stays.
+
+\section{Adjacent}
+The adjacent model is weak.\begin{equation}E_{\mathrm{adj}}=17\label{eq:adj}\end{equation}Adjacent tail stays.
+
+\section{Separate}
+The separate model is slow.\begin{equation}G=2\label{eq:changed}\end{equation}Separate tail stays.
+
+\section{Independent}
+The first model is fragile. The second model is large. Independent tail stays.
+
+\section{Protected}
+At 1.5 mm, e.g. in Fig. 2, \cite{demo} uses $p=0.05$ and \(z=2.3\). The \textbf{first clause. Still one macro} stays. The protected model is noisy.
+
+\section{Figures}
+The figure model is crude.\begin{figure}[h]\centering\fbox{Unique unchanged diagram}\caption{Unique unchanged caption.}\end{figure}Figure tail stays.
+
+\begin{equation}L=9\label{eq:last}\end{equation}
+Unique ending context.
+\begin{thebibliography}{1}
+\bibitem{demo} Example reference.
+\end{thebibliography}
+\end{document}
+'''
+        main.write_text(text, encoding='utf-8', newline='')
+        self.apply('begin', 'granularity-round', ['main.tex', 'reply.tex'])
+        replacements = [('strong', 'reliable'), ('weak', 'robust'), ('slow', 'efficient'), ('G=2', 'G=3'),
+                        ('fragile', 'highly stable'), ('large', 'compact'), ('noisy', 'precise'), ('crude', 'refined')]
+        for old, new in replacements:
+            self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': old, 'after': new})
+        source_bytes, state_bytes = main.read_bytes(), (self.root / 'reply.tex').read_bytes()
+        data = self.review().inspect('1')
+        result = preview(self.root, 'reply.tex', main, '1', data['version'], 'missing-git',
+                         str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        source = (Path(result['output']) / 'source/__codex_inline_review__.tex').read_text(encoding='utf-8')
+        for unchanged in ['Plain anchor stays.', 'Plain tail stays.', 'Adjacent tail stays.', 'Separate tail stays.',
+                          'Independent tail stays.', 'At 1.5 mm', 'first clause.', 'Figure tail stays.',
+                          'Unique opening context.', 'Unique ending context.', 'Unique unchanged caption.',
+                          r'\label{eq:adj}', r'\label{eq:last}']:
+            self.assertEqual(source.count(unchanged), 1, unchanged)
+        for id_ in map(str, range(1, 9)):
+            self.assertEqual(source.count('[' + id_ + '] Original'), 1)
+            self.assertEqual(source.count('[' + id_ + '] Proposed'), 1)
+        self.assertNotIn('[5,6]', source)
+        self.assertEqual(source.count(r'\begin{equation}'), 4)
+        aux = (Path(result['output']) / 'pdf/review.aux').read_text(encoding='utf-8')
+        self.assertRegex(aux, r'newlabel\{eq:last\}\{\{3\}')
+        self.assertIn(r'\bibcite{demo}{1}', aux)
+        pdf_text = '\n'.join(page.extract_text() for page in PdfReader(result['pdf']).pages)
+        for unchanged in ['Unique opening context.', 'Unique ending context.', 'Unique unchanged diagram', 'Plain anchor stays.']:
+            self.assertEqual(pdf_text.count(unchanged), 1)
+        self.assertEqual(set(result['shown_ids']), set(map(str, range(1, 9))))
+        self.assertEqual(main.read_bytes(), source_bytes)
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), state_bytes)
+        print('GRANULARITY_PDF', result['pdf'])
+
+    def test_one_complete_pdf_keeps_context_and_only_marks_different_words(self):
+        main = self.root / 'main.tex'
+        main.write_text(main.read_text(encoding='utf-8').replace('The model is strong and fast.',
+                        'The first sentence stays. The model is strong and fast. The last sentence stays.'), encoding='utf-8')
+        id_ = self.proposal()
+        data = self.review().inspect(id_)
+        before = (self.root / 'main.tex').read_bytes()
+        state = (self.root / 'reply.tex').read_bytes()
+        result = preview(self.root, 'reply.tex', self.root / 'main.tex', id_, data['version'], 'missing-git',
+                         str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        pdf = Path(result['pdf'])
+        text = '\n'.join(page.extract_text() for page in PdfReader(pdf).pages)
+        self.assertIn('Unchanged context before.', text)
+        self.assertIn('Unchanged context after.', text)
+        self.assertEqual(text.count('Unchanged context before.'), 1)
+        self.assertEqual(text.count('Unchanged context after.'), 1)
+        self.assertEqual(text.count('The first sentence stays.'), 1)
+        self.assertEqual(text.count('The last sentence stays.'), 1)
+        self.assertLess(text.index('Original'), text.index('Proposed'))
+        self.assertIn('strong', text)
+        self.assertIn('reliable', text)
+        self.assertEqual(len(list(pdf.parent.glob('*.pdf'))), 1)
+        source = next((Path(result['output']) / 'source').glob('__codex_inline_review__.tex')).read_text(encoding='utf-8')
+        self.assertIn('codexreviewold', source)
+        self.assertNotRegex(source, r'\\DIFadd(?:FL)?\{[^{}]*\band\b')
+        self.assertEqual((self.root / 'main.tex').read_bytes(), before)
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), state)
+        self.assertFalse((self.root / '.git').exists())
+        print('REVIEW_PDF', pdf)
+        import json
+        import subprocess
+        meta = json.loads(Path(result['navigation']).read_text(encoding='utf-8'))
+        target = meta['targets'][id_]
+        sync = subprocess.run([str(BIN / ('synctex' + EXE)), 'view', '-i',
+                               f"{target['line']}:0:{target['file']}", '-o', meta['compiled_pdf']], capture_output=True)
+        self.assertEqual(sync.returncode, 0, sync.stderr.decode('utf-8', errors='replace'))
+        self.assertRegex(sync.stdout.decode('utf-8'), r'Page:[1-9][0-9]*')
+        from unittest.mock import patch
+        import review_pdf
+        old_pdf = pdf.read_bytes()
+        original_command = review_pdf.command
+        def compile_failure(args, cwd, log):
+            if Path(args[0]).name.startswith('latexmk'):
+                raise ValueError('isolated compile failure')
+            return original_command(args, cwd, log)
+        with patch.object(review_pdf, 'command', compile_failure):
+            with self.assertRaisesRegex(ValueError, 'isolated compile failure'):
+                preview(self.root, 'reply.tex', self.root / 'main.tex', id_, data['version'], 'missing-git',
+                        str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        self.assertEqual(pdf.read_bytes(), old_pdf)
+        again = preview(self.root, 'reply.tex', self.root / 'main.tex', id_, data['version'], 'missing-git',
+                        str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        self.assertEqual(again['pdf'], str(pdf), 'subsequent generation updates the same viewer artifact')
+
+    def test_sentence_boundaries_preserve_tex_math_and_abbreviations(self):
+        text = r'Fig. 2 uses $x=1.5$. The model uses \textbf{a feature. Another feature}. It works.'
+        self.assertEqual(len(sentences(text)), 3)
+        self.assertEqual(''.join(sentences(text)), text)
+        pairs = list(sentence_changes('First old sentence. Second old sentence.', 'First new sentence. Second new sentence.'))
+        self.assertEqual(len(pairs), 2)
+
+    def test_graphicx_hyperref_preamble_does_not_require_figure_markup_packages(self):
+        main = self.root / 'main.tex'
+        main.write_text(main.read_text(encoding='utf-8').replace(r'\documentclass{article}',
+                        '\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage{hyperref}'), encoding='utf-8')
+        id_ = self.proposal()
+        data = self.review().inspect(id_)
+        result = preview(self.root, 'reply.tex', main, id_, data['version'], 'missing-git',
+                         str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        self.assertTrue(Path(result['pdf']).is_file())
+        source = (Path(result['output']) / 'source/__codex_inline_review__.tex').read_text(encoding='utf-8')
+        self.assertNotIn(r'\RequirePackage{settobox}', source)
+
+    def test_independent_reply_changes_are_not_included_in_manuscript_pdf(self):
+        id_ = self.proposal()
+        self.apply('propose', {'file': 'reply.tex', 'kind': 'response', 'before': 'Thank you.',
+                              'after': r'Thank you. \undefinedReplyTemplateMacro{reply only}'})
+        data = self.review().inspect(id_)
+        result = preview(self.root, 'reply.tex', self.root / 'main.tex', id_, data['version'], 'missing-git',
+                         str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        self.assertEqual(result['shown_ids'], ['1'])
+
+    def test_equation_numbers_and_unchanged_sections_are_not_duplicated(self):
+        main = self.root / 'main.tex'
+        main.write_text('\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n'
+                        '\\section{Method}\nBefore the equation.\n\n\\begin{equation}x=1\\label{first}\\end{equation}\n\n'
+                        '\\begin{equation}y=2\\label{second}\\end{equation}\n\nAfter both equations.\n\\end{document}\n', encoding='utf-8')
+        self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'x=1', 'after': 'x=3', 'deferred': True})
+        data = self.review().inspect('1')
+        result = preview(self.root, 'reply.tex', main, '1', data['version'], 'missing-git', str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        aux = (Path(result['output']) / 'pdf/review.aux').read_text(encoding='utf-8')
+        self.assertRegex(aux, r'newlabel\{second\}\{\{2\}')
+        text = '\n'.join(page.extract_text() for page in PdfReader(result['pdf']).pages)
+        self.assertEqual(text.count('Method'), 1)
+        self.assertIn('After both equations.', text)
+        self.assertEqual(text.count('Before the equation.'), 1)
+        self.assertEqual(text.count('After both equations.'), 1)
+
+
+if __name__ == '__main__':
+    unittest.main()

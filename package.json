@@ -1,0 +1,1011 @@
+{
+  "name": "latex-writing-tools",
+  "displayName": "TeXScholar · 本地论文写作与审核",
+  "publisher": "local-research",
+  "version": "0.7.0",
+  "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Formatters"
+  ],
+  "main": "./src/main.js",
+  "activationEvents": [
+    "workspaceContains:**/*.tex",
+    "onLanguage:latex",
+    "onCommand:localLatex.foldReviewComments",
+    "onUri",
+    "onCustomEditor:latex-workshop-pdf-hook"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "localLatex.foldReviewComments",
+        "title": "折叠写作规则与段落计划",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.toggleVisual",
+        "title": "切换源码与可视化编辑器",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.formatFromVisual",
+        "title": "从可视化编辑器切回并整理缩进",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.checkUnusedCitations",
+        "title": "检查未引用文献（主文档）",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.build",
+        "title": "编译当前 LaTeX 主文档并更新 PDF",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.forwardSync",
+        "title": "定位 PDF 中光标对应的位置",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.wordcount",
+        "title": "统计当前 LaTeX 文档字数",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.grammar",
+        "title": "检查当前文档的英语拼写与语法",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.formattedPaste",
+        "title": "粘贴并转换为 LaTeX（表格或图片）",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.selectEnvironment",
+        "title": "选中当前环境（如公式、表格或图）",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.wrapEnvironment",
+        "title": "将选中文字放入 LaTeX 环境（如公式或列表）",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.renameEnvironment",
+        "title": "同时修改当前环境的 begin/end 名称",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.labeledBookmark",
+        "title": "添加或取消带名称的书签",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.openVisual",
+        "title": "打开 LaTeX 可视化编辑器",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.selectSection",
+        "title": "选中当前章节的全部内容",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.foldSection",
+        "title": "折叠当前位置及其下级内容",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.unfoldSection",
+        "title": "展开当前位置及其下级内容",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.promoteSection",
+        "title": "将选中标题升一级（如 subsection → section）",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.demoteSection",
+        "title": "将选中标题降一级（如 section → subsection）",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.viewPdf",
+        "title": "打开编译后的 PDF（右侧预览）",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkList",
+        "title": "列出当前文件的全部书签",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkListAll",
+        "title": "列出所有文件的全部书签",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkSelectLines",
+        "title": "选中当前文件的所有书签行",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkExpandNext",
+        "title": "把选区扩展到下一个书签",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkExpandPrevious",
+        "title": "把选区扩展到上一个书签",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkShrinkSelection",
+        "title": "把选区收缩到最后一个书签",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkClearFile",
+        "title": "清空当前文件的全部书签",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkClearAll",
+        "title": "清空所有文件的全部书签",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkExport",
+        "title": "导出书签（另存文件）",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.menu.bookmarkSettings",
+        "title": "打开书签插件设置",
+        "category": "LaTeX"
+      },
+      {
+        "command": "localLatex.formatOnly",
+        "title": "整理缩进并保存（不改正文，不操作 Git）",
+        "category": "LaTeX 审核",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "localLatex.inlineReview",
+        "title": "显示或刷新原文审核与评论",
+        "category": "LaTeX 审核",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "localLatex.inlineReviewAt",
+        "title": "打开指定原文审核卡片",
+        "category": "LaTeX 审核",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "localLatex.inlineAccept",
+        "title": "接收本项并替换正文",
+        "category": "LaTeX 审核",
+        "icon": "$(check)"
+      },
+      {
+        "command": "localLatex.inlineReject",
+        "title": "拒绝本项候选并保留原文",
+        "category": "LaTeX 审核",
+        "icon": "$(close)"
+      },
+      {
+        "command": "localLatex.inlineAnnotate",
+        "title": "给选中文字添加返修批注",
+        "category": "LaTeX 审核",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "localLatex.inlinePostComment",
+        "title": "保存返修批注",
+        "category": "LaTeX 审核",
+        "icon": "$(check)"
+      },
+      {
+        "command": "localLatex.inlineCancelComment",
+        "title": "取消本次批注草稿",
+        "category": "LaTeX 审核",
+        "icon": "$(close)"
+      },
+      {
+        "command": "localLatex.inlineNext",
+        "title": "下一项原文审核",
+        "category": "LaTeX 审核",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "localLatex.inlinePreview",
+        "title": "生成／更新完整论文审核 PDF（首次新窗口）",
+        "category": "LaTeX 审核",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "localLatex.inlineAddRequests",
+        "title": "把全部批注加入 Codex 输入区（不发送）",
+        "category": "LaTeX 审核",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "localLatex.finishReview",
+        "title": "本轮审完：提交已接收成果并推送私有 GitHub",
+        "category": "LaTeX 审核",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "localLatex.backupProject",
+        "title": "Git 备份论文项目（提交并推送到私有 GitHub）",
+        "category": "LaTeX",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "localLatex.setupWriting",
+        "title": "导入／重新应用论文写作配置",
+        "category": "本地论文写作",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "localLatex.restoreWriting",
+        "title": "恢复本插件修改的配置",
+        "category": "本地论文写作",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "localLatex.checkEnvironment",
+        "title": "检查本地写作环境与跨平台工具",
+        "category": "本地论文写作",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "localLatex.installRecommended",
+        "title": "安装缺少的配套扩展",
+        "category": "本地论文写作",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "localLatex.saveBuild",
+        "title": "保存并编译当前 LaTeX 主文档",
+        "category": "本地论文写作",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "localLatex.inlineReopenPreview",
+        "title": "重新打开已有审核 PDF 窗口（不编译）",
+        "category": "本地论文写作",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "localLatex.inlineQuestions",
+        "title": "查看／收起关联的原始审稿意见",
+        "category": "本地论文写作",
+        "icon": "$(question)"
+      },
+      {
+        "command": "localLatex.jumpQuestion",
+        "title": "跳转原始审稿意见文件",
+        "category": "本地论文写作",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "localLatex.openWritingGuide",
+        "title": "查看论文撰写与回复信规则",
+        "category": "TeXScholar"
+      },
+      {
+        "command": "localLatex.addWritingContext",
+        "title": "将写作规则与当前源文件加入 Codex（不发送）",
+        "category": "TeXScholar"
+      },
+      {
+        "command": "localLatex.interfaceGuide",
+        "title": "章节树、界面汉化与原生布局指引",
+        "category": "TeXScholar"
+      },
+      {
+        "command": "localLatex.inlineLocatePDF",
+        "title": "定位到审核 PDF 中的当前修改",
+        "category": "TeXScholar",
+        "icon": "$(location)"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "localLatex.editActions",
+        "label": "LaTeX：编辑与排版"
+      },
+      {
+        "id": "localLatex.sectionActions",
+        "label": "LaTeX：章节与环境"
+      },
+      {
+        "id": "localLatex.writingChecks",
+        "label": "LaTeX：写作检查"
+      },
+      {
+        "id": "localLatex.reviewActions",
+        "label": "LaTeX：原文审核与批注"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "localLatex.menu.build",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "navigation@20"
+        },
+        {
+          "command": "localLatex.menu.viewPdf",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "navigation@25"
+        },
+        {
+          "command": "localLatex.menu.forwardSync",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "navigation@30"
+        },
+        {
+          "submenu": "localLatex.editActions",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "latex_tools@10"
+        },
+        {
+          "submenu": "localLatex.sectionActions",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "latex_tools@20"
+        },
+        {
+          "submenu": "localLatex.writingChecks",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "latex_tools@30"
+        },
+        {
+          "submenu": "localLatex.reviewActions",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "latex_tools@40"
+        }
+      ],
+      "localLatex.sectionActions": [
+        {
+          "command": "localLatex.menu.selectSection",
+          "group": "1_selection@10"
+        },
+        {
+          "command": "localLatex.menu.foldSection",
+          "group": "2_folding@10"
+        },
+        {
+          "command": "localLatex.menu.unfoldSection",
+          "group": "2_folding@20"
+        },
+        {
+          "command": "localLatex.menu.promoteSection",
+          "group": "3_level@10"
+        },
+        {
+          "command": "localLatex.menu.demoteSection",
+          "group": "3_level@20"
+        },
+        {
+          "command": "localLatex.menu.selectEnvironment",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "4_environment@10"
+        },
+        {
+          "command": "localLatex.menu.wrapEnvironment",
+          "when": "resourceScheme == file && editorLangId == latex && editorHasSelection",
+          "group": "4_environment@20"
+        },
+        {
+          "command": "localLatex.menu.renameEnvironment",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "4_environment@30"
+        },
+        {
+          "command": "localLatex.foldReviewComments",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "5_comments@10"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "localLatex.inlineReview",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "navigation@90"
+        },
+        {
+          "command": "localLatex.inlineAccept",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+          "group": "navigation@91"
+        },
+        {
+          "command": "localLatex.inlineAnnotate",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+          "group": "navigation@92"
+        },
+        {
+          "command": "localLatex.inlineAddRequests",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+          "group": "navigation@93"
+        },
+        {
+          "command": "localLatex.formatOnly",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "navigation@86"
+        },
+        {
+          "command": "localLatex.backupProject",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "navigation@87"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "localLatex.inlineAccept",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard && isWorkspaceTrusted",
+          "group": "navigation@1"
+        },
+        {
+          "command": "localLatex.inlineReject",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard && isWorkspaceTrusted",
+          "group": "navigation@2"
+        },
+        {
+          "command": "localLatex.inlineAnnotate",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard && isWorkspaceTrusted",
+          "group": "navigation@3"
+        },
+        {
+          "command": "localLatex.inlinePreview",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard && isWorkspaceTrusted",
+          "group": "navigation@4"
+        },
+        {
+          "command": "localLatex.inlineNext",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard && isWorkspaceTrusted",
+          "group": "navigation@5"
+        },
+        {
+          "command": "localLatex.inlineAddRequests",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard && isWorkspaceTrusted",
+          "group": "navigation@6"
+        },
+        {
+          "command": "localLatex.inlineQuestions",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard",
+          "group": "navigation@7"
+        },
+        {
+          "command": "localLatex.inlineLocatePDF",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard",
+          "group": "navigation@8"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "localLatex.inlinePostComment",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineDraft",
+          "group": "inline@1"
+        },
+        {
+          "command": "localLatex.inlineCancelComment",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineDraft",
+          "group": "inline@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "localLatex.menu.labeledBookmark",
+          "when": "false"
+        },
+        {
+          "command": "localLatex.menu.openVisual",
+          "when": "false"
+        },
+        {
+          "command": "localLatex.inlinePostComment",
+          "when": "false"
+        },
+        {
+          "command": "localLatex.inlineCancelComment",
+          "when": "false"
+        },
+        {
+          "command": "localLatex.inlineReviewAt",
+          "when": "false"
+        }
+      ],
+      "localLatex.editActions": [
+        {
+          "command": "localLatex.formatOnly",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "1_format@10"
+        },
+        {
+          "command": "localLatex.backupProject",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "1_format@20"
+        },
+        {
+          "command": "localLatex.menu.formattedPaste",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "2_paste@10"
+        },
+        {
+          "command": "localLatex.toggleVisual",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "3_visual@10"
+        },
+        {
+          "command": "localLatex.addWritingContext",
+          "when": "editorLangId == latex && isWorkspaceTrusted",
+          "group": "writing@90"
+        }
+      ],
+      "localLatex.writingChecks": [
+        {
+          "command": "localLatex.menu.wordcount",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "1_checks@10"
+        },
+        {
+          "command": "localLatex.menu.grammar",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "1_checks@20"
+        },
+        {
+          "command": "localLatex.checkUnusedCitations",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "2_references@10"
+        }
+      ],
+      "localLatex.reviewActions": [
+        {
+          "command": "localLatex.finishReview",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "4_finish@10"
+        },
+        {
+          "command": "localLatex.inlineReview",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "1_review@10"
+        },
+        {
+          "command": "localLatex.inlineAccept",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+          "group": "1_review@20"
+        },
+        {
+          "command": "localLatex.inlineAnnotate",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+          "group": "1_review@30"
+        },
+        {
+          "command": "localLatex.inlineNext",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+          "group": "1_review@40"
+        },
+        {
+          "command": "localLatex.inlinePreview",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+          "group": "2_preview@10"
+        },
+        {
+          "command": "localLatex.inlineAddRequests",
+          "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+          "group": "3_codex@10"
+        },
+        {
+          "command": "localLatex.inlineReopenPreview",
+          "when": "editorLangId == latex && isWorkspaceTrusted",
+          "group": "navigation@8"
+        }
+      ],
+      "bookmarks.editor.context": [
+        {
+          "command": "localLatex.menu.bookmarkList",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "2_lists@10"
+        },
+        {
+          "command": "localLatex.menu.bookmarkListAll",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "2_lists@20"
+        },
+        {
+          "command": "localLatex.menu.bookmarkSelectLines",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "3_selection@30"
+        },
+        {
+          "command": "localLatex.menu.bookmarkExpandNext",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "3_selection@40"
+        },
+        {
+          "command": "localLatex.menu.bookmarkExpandPrevious",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "3_selection@50"
+        },
+        {
+          "command": "localLatex.menu.bookmarkShrinkSelection",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "3_selection@60"
+        },
+        {
+          "command": "localLatex.menu.bookmarkClearFile",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "4_clear@70"
+        },
+        {
+          "command": "localLatex.menu.bookmarkClearAll",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "4_clear@80"
+        },
+        {
+          "command": "localLatex.menu.bookmarkExport",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "5_manage@90"
+        },
+        {
+          "command": "localLatex.menu.bookmarkSettings",
+          "when": "resourceScheme == file && editorLangId == latex",
+          "group": "5_manage@100"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Local LaTeX Writing",
+      "properties": {
+        "localLatex.texFmtPath": {
+          "type": "string",
+          "default": "tex-fmt",
+          "scope": "machine",
+          "description": "Trusted tex-fmt executable."
+        },
+        "localLatex.gitPath": {
+          "type": "string",
+          "default": "git",
+          "scope": "machine",
+          "description": "Trusted Git executable."
+        },
+        "localLatex.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "scope": "machine"
+        },
+        "localLatex.checkcitesPath": {
+          "type": "string",
+          "default": "checkcites",
+          "scope": "machine"
+        },
+        "localLatex.latexdiffPath": {
+          "type": "string",
+          "default": "latexdiff",
+          "scope": "machine"
+        },
+        "localLatex.latexmkPath": {
+          "type": "string",
+          "default": "latexmk",
+          "scope": "machine"
+        },
+        "localLatex.ghPath": {
+          "type": "string",
+          "default": "gh",
+          "scope": "machine",
+          "description": "已登录的 GitHub CLI；用于确认已配置备份仓库的私有状态。"
+        },
+        "localLatex.configurationProfile": {
+          "type": "string",
+          "enum": [
+            "full",
+            "latex-only",
+            "off"
+          ],
+          "default": "full",
+          "scope": "machine",
+          "description": "受信任 .tex 项目的自动配置方案：full 导入完整白名单并保留已有选择；latex-only 仅补齐 LaTeX 专用设置；off 不自动写入设置。完整方案含部分全局显示设置，不含 Typst、账号、代理和安全配置。"
+        },
+        "localLatex.ripgrepPath": {
+          "type": "string",
+          "default": "rg",
+          "scope": "machine",
+          "description": "供 Todo Tree 使用的本机 ripgrep；优先稳定安装位置，Mac 可用 Homebrew 安装，不固定到版本化的 VS Code 目录。"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "key": "ctrl+alt+b",
+        "command": "localLatex.menu.build",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+alt+b"
+      },
+      {
+        "key": "ctrl+alt+v",
+        "command": "localLatex.menu.viewPdf",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+alt+v"
+      },
+      {
+        "key": "ctrl+alt+j",
+        "command": "localLatex.menu.forwardSync",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+alt+j"
+      },
+      {
+        "key": "ctrl+alt+w",
+        "command": "localLatex.menu.wordcount",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+alt+w"
+      },
+      {
+        "key": "ctrl+alt+g",
+        "command": "localLatex.menu.grammar",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+alt+g"
+      },
+      {
+        "key": "ctrl+shift+v",
+        "command": "localLatex.menu.formattedPaste",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && !editorReadonly",
+        "mac": "cmd+shift+v"
+      },
+      {
+        "key": "ctrl+alt+e",
+        "command": "localLatex.menu.selectEnvironment",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+alt+e"
+      },
+      {
+        "key": "ctrl+alt+shift+e",
+        "command": "localLatex.menu.wrapEnvironment",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && editorHasSelection && !editorReadonly",
+        "mac": "cmd+alt+shift+e"
+      },
+      {
+        "key": "ctrl+alt+shift+l",
+        "command": "localLatex.menu.renameEnvironment",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && !editorReadonly",
+        "mac": "cmd+alt+shift+l"
+      },
+      {
+        "key": "ctrl+alt+shift+s",
+        "command": "localLatex.menu.selectSection",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+alt+shift+s"
+      },
+      {
+        "key": "ctrl+k ctrl+[",
+        "command": "localLatex.menu.foldSection",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && foldingEnabled",
+        "mac": "cmd+k cmd+["
+      },
+      {
+        "key": "ctrl+k ctrl+]",
+        "command": "localLatex.menu.unfoldSection",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && foldingEnabled",
+        "mac": "cmd+k cmd+]"
+      },
+      {
+        "key": "ctrl+alt+[",
+        "command": "localLatex.menu.promoteSection",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && !editorReadonly",
+        "mac": "cmd+alt+["
+      },
+      {
+        "key": "ctrl+alt+]",
+        "command": "localLatex.menu.demoteSection",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && !editorReadonly",
+        "mac": "cmd+alt+]"
+      },
+      {
+        "key": "ctrl+alt+shift+b",
+        "command": "localLatex.menu.bookmarkListAll",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+alt+shift+b"
+      },
+      {
+        "key": "ctrl+alt+shift+p",
+        "command": "umath.preview.reloadPreview",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+alt+shift+p"
+      },
+      {
+        "key": "ctrl+alt+r",
+        "command": "localLatex.inlineReview",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+        "mac": "cmd+alt+r"
+      },
+      {
+        "key": "ctrl+alt+d",
+        "command": "localLatex.inlinePreview",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+        "mac": "cmd+alt+d"
+      },
+      {
+        "key": "ctrl+alt+shift+a",
+        "command": "localLatex.inlineAccept",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+        "mac": "cmd+alt+shift+a"
+      },
+      {
+        "key": "ctrl+alt+shift+r",
+        "command": "localLatex.inlineAnnotate",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+        "mac": "cmd+alt+shift+r"
+      },
+      {
+        "key": "ctrl+alt+shift+q",
+        "command": "localLatex.inlineAnnotate",
+        "when": "editorTextFocus && editorHasSelection && resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+        "mac": "cmd+alt+shift+q"
+      },
+      {
+        "key": "ctrl+alt+shift+n",
+        "command": "localLatex.inlineNext",
+        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+        "mac": "cmd+alt+shift+n"
+      },
+      {
+        "key": "ctrl+alt+shift+enter",
+        "command": "localLatex.inlineAddRequests",
+        "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted && localLatex.inlineReviewActive",
+        "mac": "cmd+alt+shift+enter"
+      },
+      {
+        "key": "ctrl+alt+l",
+        "command": "localLatex.formatOnly",
+        "when": "editorTextFocus && !editorReadonly && resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
+        "mac": "cmd+alt+l"
+      },
+      {
+        "key": "ctrl+s",
+        "command": "localLatex.saveBuild",
+        "when": "editorTextFocus && !editorReadonly && resourceScheme == file && editorLangId == latex",
+        "mac": "cmd+s"
+      },
+      {
+        "key": "ctrl+alt+0",
+        "command": "localLatex.foldReviewComments",
+        "when": "editorTextFocus && editorLangId == latex",
+        "mac": "cmd+alt+0"
+      },
+      {
+        "key": "ctrl+alt+o",
+        "command": "localLatex.toggleVisual",
+        "when": "resourceExtname == .tex && (editorTextFocus || activeCustomEditorId == latexVisualEditor.editor)",
+        "mac": "cmd+alt+o"
+      },
+      {
+        "key": "ctrl+alt+shift+c",
+        "command": "localLatex.checkUnusedCitations",
+        "when": "editorTextFocus && editorLangId == latex",
+        "mac": "cmd+alt+shift+c"
+      },
+      {
+        "key": "ctrl+alt+shift+t",
+        "command": "latex-workshop-structure.focus",
+        "when": "editorTextFocus && editorLangId == latex",
+        "mac": "cmd+alt+shift+t"
+      },
+      {
+        "key": "ctrl+alt+shift+m",
+        "command": "umath.preview.toggleMathPreview",
+        "when": "editorTextFocus && editorLangId == latex",
+        "mac": "cmd+alt+shift+m"
+      },
+      {
+        "key": "ctrl+alt+m",
+        "command": "bookmarks.toggleLabeled",
+        "when": "editorTextFocus && editorLangId == latex",
+        "mac": "cmd+alt+m"
+      },
+      {
+        "key": "ctrl+alt+n",
+        "command": "bookmarks.jumpToNext",
+        "when": "editorTextFocus && editorLangId == latex",
+        "mac": "cmd+alt+n"
+      },
+      {
+        "key": "ctrl+alt+p",
+        "command": "bookmarks.jumpToPrevious",
+        "when": "editorTextFocus && editorLangId == latex",
+        "mac": "cmd+alt+p"
+      },
+      {
+        "key": "ctrl+alt+k",
+        "command": "bookmarks.toggle",
+        "when": "editorTextFocus && editorLangId == latex",
+        "mac": "cmd+alt+k"
+      },
+      {
+        "key": "ctrl+s",
+        "mac": "cmd+s",
+        "command": "latexVisualEditor.workshopBuild",
+        "when": "activeCustomEditorId == latexVisualEditor.editor && resourceScheme == file"
+      },
+      {
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v",
+        "command": "latexVisualEditor.viewPdf",
+        "when": "activeCustomEditorId == latexVisualEditor.editor && resourceScheme == file"
+      },
+      {
+        "key": "ctrl+alt+j",
+        "mac": "cmd+alt+j",
+        "command": "latexVisualEditor.workshopSynctex",
+        "when": "activeCustomEditorId == latexVisualEditor.editor && resourceScheme == file"
+      },
+      {
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l",
+        "command": "localLatex.formatFromVisual",
+        "when": "activeCustomEditorId == latexVisualEditor.editor && resourceScheme == file"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "latex",
+        "path": "./src/paper.code-snippets"
+      }
+    ],
+    "configurationDefaults": {
+      "[latex]": {
+        "editor.wordWrap": "bounded",
+        "editor.wordWrapColumn": 110,
+        "editor.fontSize": 16,
+        "editor.lineHeight": 26,
+        "editor.minimap.enabled": false,
+        "editor.snippetSuggestions": "top",
+        "editor.tabCompletion": "off",
+        "editor.stickyScroll.enabled": true,
+        "editor.unicodeHighlight.invisibleCharacters": true,
+        "editor.unicodeHighlight.ambiguousCharacters": true,
+        "editor.unicodeHighlight.nonBasicASCII": false,
+        "editor.unicodeHighlight.allowedLocales": {
+          "zh-hans": true,
+          "zh-hant": true,
+          "en": true
+        },
+        "editor.formatOnSave": false,
+        "editor.formatOnPaste": false,
+        "editor.formatOnType": false,
+        "editor.quickSuggestions": {
+          "other": "on",
+          "comments": "off",
+          "strings": "off"
+        }
+      }
+    }
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "extensionDependencies": [
+    "james-yu.latex-workshop"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zlinkw/texscholar.git"
+  },
+  "homepage": "https://github.com/zlinkw/texscholar#readme",
+  "bugs": {
+    "url": "https://github.com/zlinkw/texscholar/issues"
+  }
+}

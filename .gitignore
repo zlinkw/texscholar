@@ -1,0 +1,19 @@
+dist/
+artifacts/
+.test-artifacts/
+__pycache__/
+*.pyc
+node_modules/
+.venv/
+.DS_Store
+Thumbs.db
+.env
+.env.*
+*.pem
+*.key
+*.vsix
+.codex-review/
+.latex-build/
+source-review-validation/
+# Retained local fixture from initial extraction; root package.json is authoritative.
+src/package.json

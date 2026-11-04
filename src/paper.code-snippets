@@ -1,0 +1,87 @@
+{
+  "Research figure": {
+    "scope": "latex",
+    "prefix": "rfig",
+    "description": "论文图片，Tab 填写路径、图注和标签",
+    "body": [
+      "\\begin{figure}[t]",
+      "  \\centering",
+      "  \\includegraphics[width=\\linewidth]{${1:figures/example.pdf}}",
+      "  \\caption{${2:Caption}}",
+      "  \\label{fig:${3:example}}",
+      "\\end{figure}",
+      "$0"
+    ]
+  },
+  "Research subfigures": {
+    "scope": "latex",
+    "prefix": "rsubfig",
+    "description": "两个子图，需要与期刊兼容的 subfig 包",
+    "body": [
+      "\\begin{figure}[t]",
+      "  \\centering",
+      "  \\subfloat[${1:First view}]{\\includegraphics[width=0.48\\linewidth]{${2:figures/first.pdf}}\\label{fig:${3:first}}}",
+      "  \\hfill",
+      "  \\subfloat[${4:Second view}]{\\includegraphics[width=0.48\\linewidth]{${5:figures/second.pdf}}\\label{fig:${6:second}}}",
+      "  \\caption{${7:Caption}}",
+      "  \\label{fig:${8:comparison}}",
+      "\\end{figure}",
+      "$0"
+    ]
+  },
+  "Research booktabs table": {
+    "scope": "latex",
+    "prefix": "rtab",
+    "description": "三线表，需要 booktabs；不生成实验数值",
+    "body": [
+      "\\begin{table}[t]",
+      "  \\centering",
+      "  \\caption{${1:Caption}}",
+      "  \\label{tab:${2:example}}",
+      "  \\begin{tabular}{${3:lcc}}",
+      "    \\toprule",
+      "    ${4:Method & Metric 1 & Metric 2} \\\\",
+      "    \\midrule",
+      "    ${5:Method name & -- & --} \\\\",
+      "    \\bottomrule",
+      "  \\end{tabular}",
+      "\\end{table}",
+      "$0"
+    ]
+  },
+  "Research equation": {
+    "scope": "latex",
+    "prefix": "req",
+    "description": "带标签的公式",
+    "body": [
+      "\\begin{equation}",
+      "  ${1:expression}",
+      "  \\label{eq:${2:example}}",
+      "\\end{equation}",
+      "$0"
+    ]
+  },
+  "Reviewer issue and response": {
+    "scope": "latex",
+    "prefix": "rreply",
+    "description": "审稿意见与回复结构；保留真实原文，不预填完成声明",
+    "body": [
+      "% 审稿意见：${1:来源与原编号}",
+      "\\noindent\\textbf{Comment ${1}:} ${2:Paste the exact reviewer comment.}",
+      "",
+      "\\noindent\\textbf{Response:} ${3:Direct answer, evidence and actual manuscript changes.}",
+      "",
+      "% 手稿对应位置/正文修订编号：${4:待核实}",
+      "$0"
+    ]
+  },
+  "Research contribution item": {
+    "scope": "latex",
+    "prefix": "rcontrib",
+    "description": "作者指定的贡献条目格式",
+    "body": [
+      "\\item[\\textbullet] ${1:Evidence-supported contribution.}",
+      "$0"
+    ]
+  }
+}

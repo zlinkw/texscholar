@@ -1,0 +1,627 @@
+{
+  "revision": 1,
+  "settings": [
+    {
+      "key": "ltex.additionalRules.motherTongue",
+      "value": "zh-CN",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.latex.autoBuild.run",
+      "value": "never",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.latex.autoBuild.cleanAndRetry.enabled",
+      "value": false,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.latex.autoClean.run",
+      "value": "never",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.latex.outDir",
+      "value": "%DIR%/.latex-build/%DOCFILE%",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.latex.rootFile.useSubFile",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.latex.rootFile.doNotPrompt",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.latex.build.rootfileInStatus",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.pdf.viewer",
+      "value": "tab",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.showContextMenu",
+      "value": false,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.pdf.tab.editorGroup",
+      "value": "right",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.pdf.internal.synctex.keybinding",
+      "value": "double-click",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.pdf.scrollMode",
+      "value": 0,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.pdf.spreadMode",
+      "value": 0,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.synctex.afterBuild.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.pdf.zoom",
+      "value": "page-width",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.pdf.reload.transition",
+      "value": "none",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.outline.sync.viewer",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.outline.follow.editor",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.outline.floats.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.hover.preview.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.hover.ref.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.hover.citation.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.intellisense.citation.label",
+      "value": "title",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.intellisense.citation.filterText",
+      "value": [
+        "bibtex key",
+        "title",
+        "other fields"
+      ],
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.intellisense.citation.format",
+      "value": [
+        "title",
+        "author",
+        "year",
+        "journal",
+        "booktitle"
+      ],
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.linting.chktex.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.linting.run",
+      "value": "onType",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.formatting.latex",
+      "value": "none",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.texcount.autorun",
+      "value": "onSave",
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.texcount.interval",
+      "value": 5000,
+      "optional": false
+    },
+    {
+      "key": "ltex.enabled",
+      "value": [
+        "latex"
+      ],
+      "optional": true
+    },
+    {
+      "key": "ltex.language",
+      "value": "en-US",
+      "optional": true
+    },
+    {
+      "key": "ltex.checkFrequency",
+      "value": "save",
+      "optional": true
+    },
+    {
+      "key": "ltex.languageToolHttpServerUri",
+      "value": "",
+      "optional": true
+    },
+    {
+      "key": "ltex.statusBarItem",
+      "value": true,
+      "optional": true
+    },
+    {
+      "key": "ltex.dictionary",
+      "value": {
+        "en-US": [
+          "LaTeX",
+          "BibTeX",
+          "SyncTeX",
+          "TeX",
+          "DINO",
+          "DINOv3",
+          "Dice",
+          "Hausdorff",
+          "voxel",
+          "voxels",
+          "multimodal",
+          "hypergraph",
+          "hypergraphs"
+        ]
+      },
+      "optional": true
+    },
+    {
+      "key": "ltex.latex.commands",
+      "value": {
+        "\\codexdelete{}{}": "ignore",
+        "\\deleted{}": "ignore",
+        "\\deleted[]{}": "ignore",
+        "\\codexadd{}{}": "default",
+        "\\codexreplace{}{}{}": "default"
+      },
+      "optional": false
+    },
+    {
+      "key": "errorLens.enabledDiagnosticLevels",
+      "value": [
+        "error",
+        "warning"
+      ],
+      "optional": true
+    },
+    {
+      "key": "errorLens.excludeBySource",
+      "value": [
+        "LTeX",
+        "ltex",
+        "LTeX+"
+      ],
+      "optional": true
+    },
+    {
+      "key": "errorLens.messageMaxChars",
+      "value": 160,
+      "optional": true
+    },
+    {
+      "key": "errorLens.delay",
+      "value": 600,
+      "optional": true
+    },
+    {
+      "key": "errorLens.excludePatterns",
+      "value": [
+        "**/*.typ"
+      ],
+      "optional": true
+    },
+    {
+      "key": "latex-utilities.formattedPaste.useAsDefault",
+      "value": false,
+      "optional": false
+    },
+    {
+      "key": "latex-utilities.formattedPaste.tableBooktabsStyle",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-utilities.formattedPaste.tableColumnType",
+      "value": "c",
+      "optional": false
+    },
+    {
+      "key": "latex-utilities.formattedPaste.tableHeaderRows",
+      "value": 1,
+      "optional": false
+    },
+    {
+      "key": "latex-utilities.liveReformat.enabled",
+      "value": false,
+      "optional": false
+    },
+    {
+      "key": "latex-utilities.countWord.format",
+      "value": "",
+      "optional": false
+    },
+    {
+      "key": "bookmarks.saveBookmarksInProject",
+      "value": false,
+      "optional": true
+    },
+    {
+      "key": "bookmarks.navigateThroughAllFiles",
+      "value": true,
+      "optional": true
+    },
+    {
+      "key": "todo-tree.filtering.includeGlobs",
+      "value": [
+        "**/*.tex"
+      ],
+      "optional": true
+    },
+    {
+      "key": "todo-tree.filtering.excludeGlobs",
+      "value": [
+        "**/.git/**",
+        "**/.latex-build/**",
+        "**/clean_dir/**"
+      ],
+      "optional": true
+    },
+    {
+      "key": "todo-tree.general.tags",
+      "value": [
+        "TODO",
+        "FIXME",
+        "CODEX-RULES-BEGIN",
+        "CODEX-REVIEW-STATE-BEGIN",
+        "CODEX-WRITING-PROFILE-BEGIN",
+        "CODEX-PARAGRAPH-PLAN-BEGIN",
+        "CODEX-REVIEW",
+        "CODEX-RESPONSE",
+        "codexreplace",
+        "codexadd",
+        "codexdelete"
+      ],
+      "optional": true
+    },
+    {
+      "key": "todo-tree.regex.regex",
+      "value": "^\\s*(%\\s*|\\\\)($TAGS)\\b",
+      "optional": true
+    },
+    {
+      "key": "todo-tree.tree.groupedByTag",
+      "value": true,
+      "optional": true
+    },
+    {
+      "key": "todo-tree.highlights.enabled",
+      "value": true,
+      "optional": true
+    },
+    {
+      "key": "todo-tree.highlights.defaultHighlight",
+      "value": {
+        "type": "tag",
+        "foreground": "#1976D2",
+        "gutterIcon": true
+      },
+      "optional": true
+    },
+    {
+      "key": "latexSuite.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latexSuite.fileExtensions",
+      "value": [
+        ".tex"
+      ],
+      "optional": false
+    },
+    {
+      "key": "latexSuite.snippets.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latexSuite.snippets.source",
+      "value": "[{trigger:'ff',replacement:'\\\\frac{${0:numerator}}{${1:denominator}}$2',options:'mw'},{trigger:'sq',replacement:'\\\\sqrt{${0:x}}$1',options:'mw'},{trigger:'sum',replacement:'\\\\sum_{${0:i=1}}^{${1:n}} $2',options:'mw'},{trigger:'mat',replacement:'\\\\begin{bmatrix}\\n${0:a} & ${1:b} \\\\\\\\\\n${2:c} & ${3:d}\\n\\\\end{bmatrix}$4',options:'mw'}]",
+      "optional": false
+    },
+    {
+      "key": "latexSuite.autoFraction.enabled",
+      "value": false,
+      "optional": false
+    },
+    {
+      "key": "latexSuite.bracketEnlargement.enabled",
+      "value": false,
+      "optional": false
+    },
+    {
+      "key": "latexSuite.matrixShortcuts.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latexSuite.tabOut.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latexVisualEditor.openTexFilesIn",
+      "value": "Source editor",
+      "optional": false
+    },
+    {
+      "key": "latexVisualEditor.useOverleafKeybindings",
+      "value": false,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.latex.search.rootFiles.exclude",
+      "value": [
+        "**/.latex-build/**",
+        "**/clean_dir/**",
+        "**/.git/**"
+      ],
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.intellisense.file.exclude",
+      "value": [
+        "**/*.aux",
+        "**/*.bbl",
+        "**/*.bcf",
+        "**/*.blg",
+        "**/*.idx",
+        "**/*.ind",
+        "**/*.lof",
+        "**/*.lot",
+        "**/*.out",
+        "**/*.toc",
+        "**/*.acn",
+        "**/*.acr",
+        "**/*.alg",
+        "**/*.glg",
+        "**/*.glo",
+        "**/*.gls",
+        "**/*.ist",
+        "**/*.fls",
+        "**/*.log",
+        "**/*.nav",
+        "**/*.snm",
+        "**/*.fdb_latexmk",
+        "**/*.synctex.gz",
+        "**/*.run.xml",
+        "**/.latex-build/**",
+        "**/clean_dir/**",
+        "**/.git/**"
+      ],
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.outline.numbers.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.outline.floats.number.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "latex-workshop.view.outline.floats.caption.enabled",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "umath.preview.enableMathPreview",
+      "value": true,
+      "optional": false
+    },
+    {
+      "key": "editor.wordWrap",
+      "value": "bounded",
+      "language": "latex"
+    },
+    {
+      "key": "editor.wordWrapColumn",
+      "value": 110,
+      "language": "latex"
+    },
+    {
+      "key": "editor.fontSize",
+      "value": 16,
+      "language": "latex"
+    },
+    {
+      "key": "editor.lineHeight",
+      "value": 26,
+      "language": "latex"
+    },
+    {
+      "key": "editor.minimap.enabled",
+      "value": false,
+      "language": "latex"
+    },
+    {
+      "key": "editor.snippetSuggestions",
+      "value": "top",
+      "language": "latex"
+    },
+    {
+      "key": "editor.tabCompletion",
+      "value": "off",
+      "language": "latex"
+    },
+    {
+      "key": "editor.stickyScroll.enabled",
+      "value": true,
+      "language": "latex"
+    },
+    {
+      "key": "editor.unicodeHighlight.invisibleCharacters",
+      "value": true,
+      "language": "latex"
+    },
+    {
+      "key": "editor.unicodeHighlight.ambiguousCharacters",
+      "value": true,
+      "language": "latex"
+    },
+    {
+      "key": "editor.unicodeHighlight.nonBasicASCII",
+      "value": false,
+      "language": "latex"
+    },
+    {
+      "key": "editor.unicodeHighlight.allowedLocales",
+      "value": {
+        "zh-hans": true,
+        "zh-hant": true,
+        "en": true
+      },
+      "language": "latex"
+    },
+    {
+      "key": "editor.formatOnSave",
+      "value": false,
+      "language": "latex"
+    },
+    {
+      "key": "editor.formatOnPaste",
+      "value": false,
+      "language": "latex"
+    },
+    {
+      "key": "editor.formatOnType",
+      "value": false,
+      "language": "latex"
+    },
+    {
+      "key": "editor.quickSuggestions",
+      "value": {
+        "other": "on",
+        "comments": "off",
+        "strings": "off"
+      },
+      "language": "latex"
+    },
+    {
+      "key": "workbench.editorAssociations",
+      "value": {
+        "*.pdf": "latex-workshop-pdf-hook",
+        "*.PDF": "latex-workshop-pdf-hook"
+      },
+      "optional": true
+    },
+    {
+      "key": "files.exclude",
+      "value": {
+        "**/.latex-build": true
+      },
+      "optional": true
+    },
+    {
+      "key": "search.exclude",
+      "value": {
+        "**/.latex-build/**": true,
+        "**/clean_dir/**": true
+      },
+      "optional": true
+    },
+    {
+      "key": "explorer.fileNesting.enabled",
+      "value": true,
+      "optional": true
+    },
+    {
+      "key": "explorer.fileNesting.patterns",
+      "value": {
+        "*.tex": "${capture}.aux, ${capture}.log, ${capture}.toc, ${capture}.out, ${capture}.fls, ${capture}.fdb_latexmk, ${capture}.synctex.gz, ${capture}.bbl, ${capture}.blg"
+      },
+      "optional": true
+    },
+    {
+      "key": "breadcrumbs.enabled",
+      "value": true,
+      "optional": true
+    },
+    {
+      "key": "commentTranslate.hover.concise",
+      "value": true,
+      "optional": true
+    },
+    {
+      "key": "commentTranslate.multiLineMerge",
+      "value": true,
+      "optional": true
+    },
+    {
+      "key": "commentTranslate.sourceLanguage",
+      "value": "en",
+      "optional": true
+    },
+    {
+      "key": "commentTranslate.targetLanguage",
+      "value": "zh-CN",
+      "optional": true
+    },
+    {
+      "key": "commentTranslate.maxTranslationLength",
+      "value": 1000,
+      "optional": true
+    }
+  ]
+}
