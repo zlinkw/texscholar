@@ -13,11 +13,20 @@ async function jump(vscode, repo, question) {
     const relative = path.relative(root, real);
     if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw new Error('原始问题文件链接越出当前论文项目。');
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target));
-    const text = doc.getText(), start = text.indexOf(question.quote);
+    const text = doc.getText();
+    // Link metadata repeats excerpts; search original prose, not that metadata,
+    // while retaining the real document offsets for the editor selection.
+    const excluded = [...text.matchAll(/^% CODEX-REVIEW-STATE-BEGIN\r?\n[\s\S]*?^% CODEX-REVIEW-STATE-END(?:\r?\n|$)|^[ \t]*%[ \t]*CODEX-QUESTION[^\r\n]*/gm)]
+        .map(match => [match.index, match.index + match[0].length]);
+    const hits = [];
+    for (let at = text.indexOf(question.quote); at >= 0; at = text.indexOf(question.quote, at + 1)) {
+        if (!excluded.some(([a, b]) => at < b && at + question.quote.length > a)) hits.push(at);
+    }
     const editor = await vscode.window.showTextDocument(doc, {preview: false});
-    if (start < 0 || text.indexOf(question.quote, start + 1) >= 0) {
+    if (hits.length !== 1) {
         vscode.window.showWarningMessage('问题原文已变化或不唯一，已打开源文件但没有猜测定位；请核对关联。'); return;
     }
+    const [start] = hits;
     editor.selection = new vscode.Selection(doc.positionAt(start), doc.positionAt(start + question.quote.length));
     editor.revealRange(editor.selection, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
 }

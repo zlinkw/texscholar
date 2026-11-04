@@ -262,12 +262,18 @@ function createInlineReview(vscode, context, execute = run) {
         for (const thread of new Set(cards.values())) {
             const selected = threadContexts.get(thread), record = records.get(selected.id);
             previous.set(lineKey(record), selected.id);
-            if (drafts.has(thread)) writing.set(lineKey(record), {thread, record});
-            else thread.dispose();
+            const replacement = state.cards[selected.id];
+            if (drafts.has(thread) && (!replacement || replacement.version === selected.version)) {
+                if (replacement) record.data.edit.questions = replacement.edit.questions;
+                writing.set(lineKey(record), {thread, record});
+            } else {
+                drafts.delete(thread);
+                thread.dispose();
+            }
         }
         cards.clear(); records.clear();
-        // A source save/refresh must not discard text being typed in a card.
-        // Posting still checks its original immutable version and exact selection.
+        // Ordinary refresh/metadata updates keep the draft. A genuine new
+        // candidate generation replaces its old disposable review interaction.
         for (const {record} of writing.values()) records.set(record.c.id, record);
         for (const [id, data] of Object.entries(state.cards)) {
             if (records.has(id)) continue;
@@ -297,7 +303,7 @@ function createInlineReview(vscode, context, execute = run) {
             if (!draft) {
                 renderCard(thread, record);
                 thread.collapsibleState = record.c.id === c.id ? vscode.CommentThreadCollapsibleState.Expanded : vscode.CommentThreadCollapsibleState.Collapsed;
-            }
+            } else thread.comments = [{...thread.comments[0], body: cardBody(record.data, record.c.id, record.c)}, ...thread.comments.slice(1)];
         }
         decorate();
         await setContext();

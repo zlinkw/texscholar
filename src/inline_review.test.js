@@ -281,6 +281,17 @@ test('same-line candidates share one native card but retain independent actions 
     items['4'] = JSON.parse(JSON.stringify(items['1'])); items['4'].edit.file = 'other.tex';
     await ui.refresh(c);
     assert.equal(live().length, 3, 'identical line numbers in different files must never share a view');
+    const pendingDraft = await ui.annotate({...c, id: '1', version: 'v1'});
+    items['1'].edit.questions = [{id: 'R1-Q3', file: 'paper.tex', quote: 'First sentence.'}];
+    await ui.refresh(c);
+    assert.equal(pendingDraft.disposed, undefined, 'association-only updates preserve same-version drafts');
+    assert(pendingDraft.comments[0].body.value.includes('R1-Q3'));
+    items['1'].edit.versions.push('v2'); items['1'].version = 'v2';
+    items['1'].candidate = 'First revised wording.'; items['1'].edit.requests = [];
+    await ui.refresh(c);
+    assert.equal(pendingDraft.disposed, true, 'a new AI candidate must not be hidden behind an old forced draft');
+    assert.equal(ui.records.get('1').c.version, 'v2');
+    assert(live().some(t => t.comments[0].body.value.includes('First revised wording.') && t.canReply === false));
 });
 
 test('hidden full-line plans leave no blank placeholders; complete deletion results and surviving words remain visible', () => {

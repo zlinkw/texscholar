@@ -202,6 +202,7 @@ class Review:
         else:
             self.interrupted = False
         self.original = {}
+        self.question_original = {}
 
     @contextmanager
     def writer_lock(self):
@@ -429,6 +430,22 @@ class Review:
         self.state["accepted"] = acc
         return {}, {"round": name, "baseline": base, "accepted": acc}
 
+    def question_source(self, name):
+        relative = Path(name)
+        if relative.is_absolute() or '..' in relative.parts:
+            raise Conflict('Reviewer question source must be inside this paper project')
+        target = self.repo / relative
+        for component in [target, *target.parents]:
+            if component == self.repo:
+                break
+            if component.is_symlink() or component.is_junction():
+                raise Conflict('Reviewer question source cannot be a link')
+        if not target.resolve(strict=True).is_relative_to(self.repo) or not target.is_file():
+            raise Conflict('Reviewer question source is not a regular project file')
+        if target.suffix.lower() not in ('.tex', '.txt', '.md'):
+            raise Conflict('Exact reviewer-question links currently require a UTF-8 .tex, .txt or .md source')
+        return target.read_bytes()
+
     def question_links(self, questions):
         if not isinstance(questions, list):
             raise Conflict('questions must be a list of verified original reviewer excerpts')
@@ -436,27 +453,46 @@ class Review:
         for question in questions:
             if not isinstance(question, dict) or not all(isinstance(question.get(k), str) and question[k].strip() for k in ('id', 'file', 'quote')):
                 raise Conflict('Each reviewer question needs id, file and exact quote')
-            relative = Path(question['file'])
-            if relative.is_absolute() or '..' in relative.parts:
-                raise Conflict('Reviewer question source must be inside this paper project')
-            target = self.repo / relative
-            for component in [target, *target.parents]:
-                if component == self.repo:
-                    break
-                if component.is_symlink() or component.is_junction():
-                    raise Conflict('Reviewer question source cannot be a link')
-            if not target.resolve(strict=True).is_relative_to(self.repo) or not target.is_file():
-                raise Conflict('Reviewer question source is not a regular project file')
-            if target.suffix.lower() not in ('.tex', '.txt', '.md'):
-                raise Conflict('Exact reviewer-question links currently require a UTF-8 .tex, .txt or .md source')
-            source = target.read_bytes().decode('utf-8-sig')
-            if source.count(question['quote']) != 1:
+            raw = self.question_source(question['file'])
+            previous = self.question_original.setdefault(question['file'], raw)
+            if previous != raw:
+                raise Conflict('Concurrent reviewer-question source modification')
+            # Embedded state and generated linkage comments are not original
+            # reviewer prose and can repeat the stored quote verbatim.
+            source = body(raw.decode('utf-8-sig'))
+            source = re.sub(r'(?m)^[ \t]*%[ \t]*CODEX-QUESTION[^\r\n]*', '', source)
+            start = source.find(question['quote'])
+            if start < 0 or source.find(question['quote'], start + 1) >= 0:
                 raise Conflict('Reviewer question quote must match its actual source uniquely')
             normalized.append({k: question[k] for k in ('id', 'file', 'quote')})
         return normalized
 
+    def update_questions(self, id_, version, questions, replace=False):
+        self.assert_ready()
+        edit = self.state['edits'].get(id_)
+        if not edit or edit['status'] not in PENDING:
+            raise Conflict('Question metadata requires an existing unresolved candidate ID')
+        if version != edit['versions'][-1]:
+            raise Conflict('Displayed candidate is stale; reread the latest version before linking questions')
+        data = self.inspect(id_, version)
+        if not data['source_match']:
+            raise Conflict(data['conflict'])
+        incoming = self.question_links(questions)
+        combined = incoming if replace else self.question_links(edit.get('questions', [])) + incoming
+        merged = []
+        for question in combined:
+            if question not in merged:
+                merged.append(question)
+        edit['questions'] = merged
+        return {}, {'id': id_, 'version': version, 'mode': 'replace' if replace else 'append', 'questions': merged}
+
     def propose(self, spec, rework=None):
         self.assert_ready()
+        discard_annotations = spec.get('discard_annotations', False)
+        if type(discard_annotations) is not bool or (discard_annotations and not rework):
+            raise Conflict('discard_annotations is a boolean option for rework only')
+        if discard_annotations and spec.get('resolve_requests'):
+            raise Conflict('Choose annotation discard or individual request resolution, not both')
         questions = self.question_links(spec['questions']) if 'questions' in spec else None
         edits = self.state["edits"]
         if rework:
@@ -532,6 +568,8 @@ class Review:
             edit['questions'] = questions
         if rework:
             edit["status"] = "rework"
+            if discard_annotations:
+                edit.pop('requests', None)
             resolved = spec.get("resolve_requests", [])
             available = {r["id"] for r in edit.get("requests", []) if r["status"] == "open"}
             if not set(resolved) <= available:
@@ -679,6 +717,8 @@ class Review:
             targets[rel] = (b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b"") + text.encode("utf-8")
         if self.state_path.read_bytes() != self.raw or any(self.path(p).read_bytes() != raw for p, raw in self.original.items()):
             raise Conflict("Concurrent source/state modification; no source writes")
+        if any(self.question_source(p) != raw for p, raw in self.question_original.items()):
+            raise Conflict('Concurrent reviewer-question source modification; no source writes')
         # Durable intent stored in the sole state block. Recovery verifies exact old/new bytes.
         intent_files = {}
         for i, (rel, raw) in enumerate(targets.items()):
@@ -819,6 +859,10 @@ def main():
     sub.add_parser("propose", help="UTF-8 JSON spec on stdin")
     p = sub.add_parser("rework", help="UTF-8 JSON {after,...} on stdin")
     p.add_argument("--id", required=True)
+    p = sub.add_parser('link-questions', help='Update only verified questions metadata; UTF-8 JSON {questions:[...]} on stdin')
+    p.add_argument('--id', required=True)
+    p.add_argument('--version', required=True)
+    p.add_argument('--replace', action='store_true', help='Explicitly replace all existing associations; otherwise append/deduplicate')
     p = sub.add_parser("decide")
     p.add_argument("--accept", nargs="*", default=[])
     p.add_argument("--reject", nargs="*", default=[])
@@ -875,6 +919,9 @@ def dispatch(r, args):
             updated, result = r.propose(spec, getattr(args, "id", None))
         elif args.command == "feedback":
             updated, result = r.feedback(json.loads(sys.stdin.read()))
+        elif args.command == 'link-questions':
+            spec = json.loads(sys.stdin.read())
+            updated, result = r.update_questions(args.id, args.version, spec['questions'], replace=args.replace)
         else:
             ids = args.accept + args.reject
             if args.version and len(ids) != 1:

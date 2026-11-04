@@ -1,5 +1,6 @@
 """Git-independent review tests; fixtures are retained for inspection."""
 from pathlib import Path
+import json
 import os
 import subprocess
 import tempfile
@@ -47,6 +48,89 @@ class NativeReview(unittest.TestCase):
             self.apply('propose', spec)
         self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
         self.assertEqual(sorted(p.name for p in (self.root / '.codex-review/objects').iterdir()), objects)
+
+    def test_questions_metadata_append_replace_changes_only_associations(self):
+        id_ = self.proposal()
+        owner = self.root / 'reply.tex'
+        owner.write_text(owner.read_text(encoding='utf-8') + '\nExact first reviewer question.\nExact second reviewer question.\n', encoding='utf-8')
+        data = self.review().inspect(id_)
+        self.apply('feedback', {'id': id_, 'version': data['version'], 'side': 'original', 'start': 13, 'end': 19,
+                                'quote': 'strong', 'text': '请重新修改。'})
+        before = self.review().state
+        original = (self.root / 'main.tex').read_bytes(), body(owner.read_text(encoding='utf-8'))
+        links = [{'id': 'R1-Q3', 'file': 'reply.tex', 'quote': 'Exact first reviewer question.'},
+                 {'id': 'R4-Q5', 'file': 'reply.tex', 'quote': 'Exact second reviewer question.'}]
+        for incoming, replace, expected in [(links[:1], False, links[:1]), (links, False, links), (links[1:], True, links[1:])]:
+            review = self.review()
+            with review.writer_lock():
+                updated, result = review.update_questions(id_, data['version'], incoming, replace=replace)
+                self.assertEqual(updated, {})
+                review.persist(updated, digest(review.raw))
+            state = self.review().state
+            self.assertEqual(state['edits'][id_]['questions'], expected)
+            del state['edits'][id_]['questions']
+            self.assertEqual(state, before, 'versions, counters, decisions, requests, dependencies and freshness are unchanged')
+            self.assertEqual((self.root / 'main.tex').read_bytes(), original[0])
+            self.assertEqual(body(owner.read_text(encoding='utf-8')), original[1])
+
+    def test_questions_metadata_rejects_bad_quotes_stale_versions_and_concurrent_sources(self):
+        id_ = self.proposal(); data = self.review().inspect(id_)
+        question_file = self.root / 'questions.txt'
+        question_file.write_text('Exact question.\n', encoding='utf-8')
+        link = {'id': 'R1-Q3', 'file': 'questions.txt', 'quote': 'Exact question.'}
+        owner = (self.root / 'reply.tex').read_bytes()
+        for version, questions, message in [('old-version', [link], 'stale'),
+                                            (data['version'], [{**link, 'quote': 'Missing question.'}], 'uniquely')]:
+            with self.assertRaisesRegex(Conflict, message):
+                self.review().update_questions(id_, version, questions)
+            self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
+        question_file.write_text('Exact question. Exact question.\n', encoding='utf-8')
+        with self.assertRaisesRegex(Conflict, 'uniquely'):
+            self.review().update_questions(id_, data['version'], [link])
+        question_file.write_text('Exact question.\n', encoding='utf-8')
+        review = self.review(); updated, _ = review.update_questions(id_, data['version'], [link])
+        question_file.write_text('Author has changed the original question.\n', encoding='utf-8')
+        with self.assertRaisesRegex(Conflict, 'Concurrent'):
+            review.persist(updated, digest(review.raw))
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
+
+    def test_questions_cli_preview_apply_stale_owner_and_shared_writer_lock(self):
+        id_ = self.proposal(); data = self.review().inspect(id_)
+        (self.root / 'questions.txt').write_text('A precise original question.\n', encoding='utf-8')
+        spec = {'questions': [{'id': 'R1-Q3', 'file': 'questions.txt', 'quote': 'A precise original question.'}]}
+        owner = (self.root / 'reply.tex').read_bytes()
+        command = [sys.executable, '-X', 'utf8', str(Path(__file__).with_name('source_review.py')),
+                   '--project', str(self.root), '--state', 'reply.tex']
+        suffix = ['link-questions', '--id', id_, '--version', data['version']]
+        run = lambda options: subprocess.run(command + options + suffix, input=json.dumps(spec).encode('utf-8'), capture_output=True)
+        result = run([])
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8'))
+        self.assertFalse(json.loads(result.stdout)['applied'])
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
+        result = run(['--apply', '--expect', '0' * 64])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Stale', result.stderr.decode('utf-8'))
+        with self.review().writer_lock():
+            result = run(['--apply', '--expect', digest(owner)])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('审核写入', result.stderr.decode('utf-8'))
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
+        result = run(['--apply', '--expect', digest(owner)])
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8'))
+        self.assertEqual(self.review().state['edits'][id_]['questions'], spec['questions'])
+
+    def test_ai_rework_can_discard_old_annotations_without_an_author_decision(self):
+        id_ = self.proposal(); data = self.review().inspect(id_)
+        self.apply('feedback', {'id': id_, 'version': data['version'], 'side': 'original', 'start': 13, 'end': 19,
+                                'quote': 'strong', 'text': '直接重新生成候选。'})
+        original = (self.root / 'main.tex').read_bytes(); before = self.review().state
+        self.apply('propose', {'after': 'The model is reliable and fast.', 'discard_annotations': True}, id_)
+        state = self.review().state; edit = state['edits'][id_]
+        self.assertFalse(edit.get('requests'))
+        self.assertEqual(edit['status'], 'rework')
+        self.assertEqual(len(edit['versions']), len(before['edits'][id_]['versions']) + 1)
+        self.assertEqual(state['next'], before['next'])
+        self.assertEqual((self.root / 'main.tex').read_bytes(), original)
 
     def test_cards_cli_is_read_only_and_shares_source_for_multiple_pending_items(self):
         import json

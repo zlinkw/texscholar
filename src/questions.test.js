@@ -26,4 +26,12 @@ test('AI-authored explicit question markers are recognized without guessing ques
     await jump(api, root, q);
     assert.equal(warnings.length, 1, 'a stale quote opens the source without inventing a new exact position');
     assert.equal(fs.readFileSync(file, 'utf8'), source);
+    const embedded = '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA ' + JSON.stringify({questions: [q]})
+        + '\n% CODEX-REVIEW-STATE-END\n% CODEX-QUESTION ' + JSON.stringify(q) + '\nReviewer 2\n' + q.quote + '\n';
+    doc.getText = () => embedded;
+    await jump(api, root, q);
+    assert.equal(editor.selection.start, embedded.lastIndexOf(q.quote), 'select the original, not its stored metadata copy');
+    doc.getText = () => embedded + q.quote;
+    await jump(api, root, q);
+    assert.equal(warnings.length, 2, 'two real original matches remain ambiguous');
 });
