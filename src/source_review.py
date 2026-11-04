@@ -375,6 +375,8 @@ class Review:
 
     @staticmethod
     def live_excerpt(edit, item):
+        if edit['status'] == 'accepted':
+            return item['after']
         return item["before"] if edit.get("deferred", False) else item["after"]
 
     def assert_ready(self):
@@ -397,11 +399,18 @@ class Review:
                 value = value * 26 + ord(c) - 96
             self.state = {"schema": 2 if self.storage == "files" else 1, "session": uuid.uuid4().hex, "next": [int(n), value],
                           "rounds": [], "edits": {}, "submission": None}
-        if name in [r["name"] for r in self.state["rounds"]]:
+        if self.storage == 'files':
+            if self.state.get('pending_backup') or any(
+                    e['status'] == 'accepted' and e['versions'] and e.get('published_version') != e['versions'][-1]
+                    for e in self.state['edits'].values()):
+                raise Conflict('请先完成已接收成果的提交与推送，再开始新批次；未清除任何旧记录。')
+            if any(e['status'] in PENDING and not e.get('deferred', False) for e in self.state['edits'].values()):
+                raise Conflict('旧式候选仍在正文中，请先核对并转换为候选与正文分离的审核方式。')
+        elif name in [r["name"] for r in self.state["rounds"]]:
             raise Conflict("Round names must not be reused")
         if self.state_rel not in files:
             raise Conflict("Include the canonical state owner in the round's file scope")
-        if any(e["file"] not in files for e in self.state["edits"].values() if e["status"] in PENDING):
+        if self.storage != 'files' and any(e["file"] not in files for e in self.state["edits"].values() if e["status"] in PENDING):
             raise Conflict("Carry every unresolved file into the next round")
         current = {p: self.read(p) for p in sorted(set(files))}
         if any(BEGIN in self.original[p].decode("utf-8-sig") for p in current if p != self.state_rel):
@@ -426,6 +435,11 @@ class Review:
                 accepted[e["file"]] = accepted[e["file"]][:a] + item["before"] + accepted[e["file"]][b:]
         base = self.snapshot({p: t.encode("utf-8") for p, t in current.items()}, "review round baseline " + name)
         acc = self.snapshot({p: t.encode("utf-8") for p, t in accepted.items()}, "accepted projection at round start " + name)
+        if self.storage == 'files':
+            # Explicit begin replaces disposable pending work, not accepted prose.
+            # Fixed-size batch identity keeps an old button/version from targeting
+            # an identical candidate reissued as 1/a in a later batch.
+            self.state.update(session=uuid.uuid4().hex, next=[1, 1], edits={}, rounds=[])
         self.state["rounds"].append({"name": name, "baseline": base, "accepted_start": acc, "ids": [], "files": sorted(current)})
         self.state["accepted"] = acc
         return {}, {"round": name, "baseline": base, "accepted": acc}
@@ -560,6 +574,8 @@ class Review:
                 edit["deferred"] = True
             edits[id_] = edit
         item = {"before": original, "after": after, "left": text[max(0, a - 120):a], "right": text[b:b + 120]}
+        if self.storage == 'files':
+            item['batch'] = self.state['session']
         commit = self.snapshot({"original.tex": original.encode("utf-8"), "candidate.tex": after.encode("utf-8"),
                                 "span.json": json.dumps(item, ensure_ascii=False).encode("utf-8")}, "review item " + id_)
         edit["versions"].append(commit)
@@ -956,7 +972,7 @@ def dispatch(r, args):
             updated, result = r.decide(args.accept, args.reject, {ids[0]: args.version} if args.version else None)
         if args.apply:
             r.persist(updated, args.expect)
-            if args.command == 'feedback':
+            if args.command in ('feedback', 'rework'):
                 result['card'] = r.inspect(result['id'], source=True)
                 result['owner_text'] = r.encode(r.embedded()).decode('utf-8-sig')
         result.update({"applied": args.apply, "expected_sha256": digest(r.raw)})

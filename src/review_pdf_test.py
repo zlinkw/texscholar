@@ -13,6 +13,20 @@ EXE = '.exe' if os.name == 'nt' else ''
 
 
 class ReviewUnits(unittest.TestCase):
+    def test_real_paragraph_types_ignore_soft_lines_and_comment_only_lines(self):
+        text = 'Opening sentence.\nOld sentence. Tail stays.\n\nWhole old paragraph.\n\nNext stays.'
+        changes = self.changes(text, [('1', 'Old sentence.', 'New sentence.'), ('2', 'Whole old paragraph.', 'Whole new paragraph.')])
+        self.assertEqual([(u['change_type'], u['paragraph_start']) for u in changes], [('Within paragraph', False), ('Paragraph rewrite', True)])
+        for added, kind in [('\n% plan\nAdded sentence.\n', 'Inline addition'), ('\n\n% plan\nAdded paragraph.\n\n', 'New paragraph')]:
+            text = 'First stays. Second stays.'
+            edits = [{'id': '3', 'start': 12, 'end': 13, 'item': {'after': added}}]
+            changed = [u for u in review_units(text, edits) if u['kind'] != 'equal']
+            self.assertEqual(changed[0]['change_type'], kind)
+            self.assertEqual(changed[0]['paragraph_start'], kind == 'New paragraph')
+        changes = self.changes('First stays.\\par\n% plan\nOld paragraph.', [('4', 'Old paragraph.', 'New paragraph.')])
+        self.assertEqual(changes[0]['change_type'], 'Paragraph rewrite')
+        self.assertTrue(changes[0]['paragraph_start'])
+
     def changes(self, text, replacements):
         edits = []
         for id_, old, new in replacements:
@@ -121,6 +135,8 @@ class ReviewPDF(unittest.TestCase):
         self.assertNotIn('[' + id_ + '] Proposed', source)
         text = ' '.join(' '.join(page.extract_text() for page in PdfReader(result['pdf']).pages).split())
         self.assertIn('R1-Q3, R4-Q5', text)
+        self.assertIn('Paragraph rewrite', text)
+        self.assertIn(r'\P{} Paragraph rewrite', source)
         self.assertEqual(text.count('The context remains unchanged.'), 2)
         self.assertIn('The model is reliable.', text)
         self.assertEqual({p: (self.root / p).read_bytes() for p in before}, before)

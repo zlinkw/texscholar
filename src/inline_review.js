@@ -73,7 +73,18 @@ function deletionPreview(data) {
 function markedWords(data, side) {
     const text = data[side], prefix = side === 'original' ? 'old' : 'new';
     const comments = commentSpans(text);
+    let cursor = 0, displayStart = text.length, displayEnd = 0;
+    for (const [a, b] of [...comments, [text.length, text.length]]) {
+        const part = text.slice(cursor, a), first = part.search(/\S/u);
+        if (first >= 0) {
+            displayStart = Math.min(displayStart, cursor + first);
+            displayEnd = cursor + part.trimEnd().length;
+        }
+        cursor = b;
+    }
     function visible(start, end) {
+        start = Math.max(start, displayStart); end = Math.min(end, displayEnd);
+        if (start >= end) return '';
         let cursor = start, output = '';
         for (const [a, b] of comments) {
             if (b <= cursor || a >= end) continue;
@@ -97,7 +108,7 @@ function createInlineReview(vscode, context, execute = run) {
     const cards = new Map(), records = new Map(), drafts = new WeakMap(), threadContexts = new WeakMap(), threadMembers = new WeakMap(), expandedSources = new Set();
     const controller = vscode.comments.createCommentController('localLatexInlineReview', '原文内修订审核');
     const deleted = vscode.window.createTextEditorDecorationType({color: '#d32f2f', textDecoration: 'line-through'});
-    let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite;
+    let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
     const shownPanels = new Set(), openedPDFs = new Set(), expandedQuestions = new Set(), pdfMetadata = new Map();
     context.subscriptions.push(controller, deleted);
     controller.options = {prompt: '填写针对选中文字的返修要求', placeHolder: '保存后可一键把全部批注加入 Codex；不会自动发送。'};
@@ -223,9 +234,10 @@ function createInlineReview(vscode, context, execute = run) {
             + '<span style="color:#1565c0;">new</span>＝新增／改写；same＝未改；公式可仅标色。'
             + ' → 原文到候选；Addition only＝无对应原句。</div>');
         if (data.edit.questions?.length) {
-            enabledCommands.push('localLatex.inlineQuestions', 'localLatex.jumpQuestion');
+            enabledCommands.push('localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges');
             const toggle = encodeURIComponent(JSON.stringify([c]));
             markdown.appendMarkdown(`\n\n[关联问题 ${data.edit.questions.map(q => escapeHtml(q.id)).join('、')}（展开／收起）](command:localLatex.inlineQuestions?${toggle})`);
+            markdown.appendMarkdown(` · [查看这些问题的全部改动](command:localLatex.inlineRelatedChanges?${toggle})`);
             if (expandedQuestions.has(sourceKey(c))) for (const q of data.edit.questions) {
                 const target = encodeURIComponent(JSON.stringify([{repo: c.repo, question: q}]));
                 markdown.appendMarkdown(`\n\n<div><strong>${escapeHtml(q.id)}：</strong>${wrapHtml(q.quote)}</div>\n\n`
@@ -282,6 +294,12 @@ function createInlineReview(vscode, context, execute = run) {
     }
     async function refresh(c, explicitPanel = false, focus = false) {
         const state = await backend(c, ['cards']);
+        if (batch && batch !== state.session) {
+            expandedSources.clear(); expandedQuestions.clear(); pdfMetadata.clear();
+            for (const thread of new Set(cards.values())) {drafts.delete(thread); thread.dispose();}
+            cards.clear(); records.clear();
+        }
+        batch = state.session;
         const documents = new Map();
         const previous = new Map(), writing = new Map(), available = new Map();
         const oldCards = new Map(cards), oldRecords = new Map(records), oldThreads = new Set(cards.values());
@@ -392,7 +410,7 @@ function createInlineReview(vscode, context, execute = run) {
     async function select(next = false, arg) {
         if (!next) return enableReview(true);
         if (!activeScope) await enableReview();
-        const choices = [...records.values()];
+        const choices = orderedRecords();
         if (!choices.length) return vscode.window.showInformationMessage('没有待审修改。');
         const from = arg ? contextFor(arg) : activeScope;
         const index = choices.findIndex(r => r.c.id === from?.id);
@@ -402,10 +420,25 @@ function createInlineReview(vscode, context, execute = run) {
         editor.selection = new vscode.Selection(picked.range.start, picked.range.start);
         editor.revealRange(picked.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     }
+    function orderedRecords() {
+        return [...records.values()].sort((a, b) => {
+            const x = a.c.id, y = b.c.id, numericX = /^\d/.test(x), numericY = /^\d/.test(y);
+            return numericX !== numericY ? (numericX ? -1 : 1) : x.length - y.length || x.localeCompare(y);
+        });
+    }
     async function accept(arg) {
         const c = contextFor(arg), data = await current(c);
+        const ordered = orderedRecords(), index = ordered.findIndex(record => record.c.id === c.id);
+        const following = ordered.slice(index + 1).map(record => record.c.id);
         await backend(c, ['decide', '--accept', c.id, '--version', c.version], undefined, data.sha256);
         await refresh(c);
+        const next = following.map(id => records.get(id)).find(Boolean);
+        if (next) {
+            const editor = await vscode.window.showTextDocument(uri(next.c, next.data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
+            editor.selection = new vscode.Selection(next.range.start, next.range.start);
+            editor.revealRange(next.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+            showCard(next.c);
+        }
         vscode.window.showInformationMessage(`${c.id} 已接收并替换正文；未提交 Git 或推送。已打开的审核 PDF 保留为本次审核快照。`);
     }
     async function reject(arg) {
@@ -444,21 +477,30 @@ function createInlineReview(vscode, context, execute = run) {
         if (!reply?.text?.trim()) throw new Error('请填写返修要求。');
         const note = drafts.get(reply.thread);
         if (!note) throw new Error('请用原文右键的“批注选中文字”入口创建批注。');
-        const data = await current(note.c);
-        const saved = await backend(note.c, ['feedback'], {id: note.c.id, version: note.c.version, side: note.side,
-            start: note.start, end: note.end, quote: note.quote, text: reply.text}, data.sha256);
+        await saveNote(note.c, note, reply.text);
         drafts.delete(reply.thread);
+    }
+    async function saveNote(c, note, text) {
+        const data = await current(c);
+        const saved = await backend(c, ['feedback'], {id: c.id, version: c.version, side: note.side,
+            start: note.start, end: note.end, quote: note.quote, text}, data.sha256);
+        updateSaved(c, saved);
+        vscode.window.showInformationMessage(`${c.id} 批注已保存，原文和编号保留；尚未发送给 Codex。`);
+        if (!saved.card.source_match) vscode.window.showWarningMessage('批注已保存，但原文随后发生变化；请核对并刷新，不会猜测重新定位。');
+    }
+    function updateSaved(c, saved) {
         ownerAfterWrite = saved.owner_text;
-        const previous = records.get(note.c.id);
-        const record = {...previous, data: {...saved.card, source: saved.card.source || previous.data.source}};
-        records.set(note.c.id, record);
-        renderCard(reply.thread, record, previous, false, threadMembers.get(reply.thread));
+        const previous = records.get(c.id), thread = cards.get(c.id);
+        const record = {...previous, c: {...c, version: saved.card.version}, data: {...saved.card, source: saved.card.source || previous.data.source}};
+        records.set(c.id, record);
+        drafts.delete(thread);
+        renderCard(thread, record, previous, false, threadMembers.get(thread));
         // Feedback changes only the embedded state. Rebase cached owner offsets
         // across that header's size change, without rereading/repainting its peers.
         const offsets = new Map(), newLength = Array.from(saved.owner_text).length;
         for (const [id, peer] of records) {
             const source = peer.data.source;
-            if (peer.data.edit.file !== note.c.owner || source.text === saved.owner_text) continue;
+            if (peer.data.edit.file !== c.owner || source.text === saved.owner_text) continue;
             if (!offsets.has(source.text)) {
                 const end = /^% CODEX-REVIEW-STATE-END\r?$/m.exec(source.text);
                 offsets.set(source.text, {delta: newLength - Array.from(source.text).length,
@@ -467,9 +509,29 @@ function createInlineReview(vscode, context, execute = run) {
             const {delta, boundary} = offsets.get(source.text), shift = source.start >= boundary ? delta : 0;
             records.set(id, {...peer, data: {...peer.data, source: {...source, text: saved.owner_text, start: source.start + shift, end: source.end + shift}}});
         }
-        vscode.window.showInformationMessage(`${note.c.id} 批注已保存，原文和编号保留；尚未发送给 Codex。`);
-        if (!saved.card.source_match) vscode.window.showWarningMessage('批注已保存，但原文随后发生变化；请核对并刷新，不会猜测重新定位。');
     }
+    async function exclusive(action) {
+        if (busy) throw new Error('当前审核操作尚未结束。');
+        busy = true;
+        try {return await action();} finally {busy = false;}
+    }
+    const candidatePanel = require('./candidate_panel').createCandidatePanel(vscode, context, {
+        read: current,
+        save: (c, after) => exclusive(async () => {
+            const data = await current(c);
+            const saved = await backend(c, ['rework', '--id', c.id], {after, discard_annotations: true}, data.sha256);
+            updateSaved(c, saved);
+            return saved.card;
+        }),
+        note: (c, selected, text) => exclusive(() => saveNote(c, selected, text)),
+        back: async c => {
+            await current(c);
+            const record = records.get(c.id);
+            const editor = await vscode.window.showTextDocument(uri(c, record.data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
+            editor.revealRange(record.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+            showCard(c);
+        }
+    });
     async function preview(arg) {
         const c = contextFor(arg), data = await current(c), cfg = config();
         let document = path.join(c.repo, data.edit.file);
@@ -538,6 +600,33 @@ function createInlineReview(vscode, context, execute = run) {
     command('localLatex.inlineAccept', accept);
     command('localLatex.inlineReject', reject);
     command('localLatex.inlineAnnotate', annotate);
+    command('localLatex.inlineEditCandidate', arg => candidatePanel.show(contextFor(arg)), true);
+    command('localLatex.inlineRelatedChanges', async arg => {
+        const c = contextFor(arg), state = await backend(c, ['cards']);
+        const item = state.edits[c.id];
+        if (!item || item.versions.at(-1) !== c.version) throw new Error('该卡片或批次已经更新，请刷新当前审核。');
+        const questions = item.questions || [];
+        if (!questions.length) throw new Error('请先核实并关联原始审稿问题，再查看对应改动。');
+        const matches = (edit) => (edit.questions || []).filter(q => questions.some(source =>
+            source.id === q.id && source.file === q.file && source.quote === q.quote));
+        const status = {pending: '待审', rework: '返修', accepted: '已接收', rejected: '已拒绝'};
+        const choices = Object.entries(state.edits).filter(([id, edit]) => id !== c.id && matches(edit).length)
+            .map(([id, edit]) => ({label: `${id} · ${status[edit.status] || edit.status} · ${edit.file}`,
+                description: matches(edit).map(q => q.id).join('、'), detail: edit.location || '本批关联修改；接收不代表科学问题已解决。', id, edit}));
+        if (!choices.length) return vscode.window.showInformationMessage('本批没有其他精确关联的改动；已精简的历史请查看 Git，不据此判定问题已完成。');
+        const picked = await vscode.window.showQuickPick(choices, {placeHolder: '本批关联改动（按已核实的原始问题关联，不自动判断完成）', matchOnDescription: true, matchOnDetail: true});
+        if (!picked) return;
+        const target = {...c, id: picked.id, version: picked.edit.versions.at(-1)};
+        if (OPEN.has(picked.edit.status)) return open(target);
+        if (!target.version) throw new Error('该已完结记录已精简；请到 Git 查看已备份成果。');
+        const data = await backend(target, ['inspect', '--id', target.id, '--version', target.version, '--source']);
+        if (!data.source_match) throw new Error('该位置后来发生变化，无法精确定位；请查看文件或 Git，不猜测跳转。');
+        const editor = await vscode.window.showTextDocument(uri(target, data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
+        if (editor.document.getText() !== data.source.text) throw new Error('编辑区内容与定位快照不同，请先保存并重新核对位置。');
+        const at = range(editor.document, data);
+        editor.selection = new vscode.Selection(at.start, at.end);
+        editor.revealRange(at, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    }, true);
     command('localLatex.inlinePostComment', post);
     command('localLatex.inlineCancelComment', cancelComment);
     command('localLatex.inlinePreview', preview);

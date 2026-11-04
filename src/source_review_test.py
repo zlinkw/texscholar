@@ -246,7 +246,7 @@ class Flow(unittest.TestCase):
         updates, _ = r.decide(["1"], [])
         r.persist(updates, m.digest(r.raw))
         r = m.Review(root, "article.tex", GIT)
-        self.assertEqual(r.state["next"], [2, 26])
+        self.assertEqual(r.state["next"], [2, 1])
         self.assertEqual(r.state["edits"]["1"]["status"], "accepted")
         data = [l[len(m.DATA):] for l in r.text.splitlines() if l.startswith(m.DATA)][0]
         self.assertNotIn("next", json.loads(data))

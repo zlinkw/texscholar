@@ -157,7 +157,7 @@ test('accepted checkpoint excludes pending material, compacts terminal history a
     const init = ['-X','utf8',path.join(SCRIPTS,'source_review.py'),'--project',clone,'--state','reply.tex','--git',GIT];
     const empty = JSON.parse(await run(PYTHON,[...init,'status'],clone)); assert.equal(empty.initialized,false);
     await run(PYTHON,[...init,'--apply','--expect',empty.sha256,'begin','--round','new-local-round','--files','main.tex','reply.tex'],clone);
-    const resumed = JSON.parse(await run(PYTHON,[...init,'status'],clone)); assert.equal(resumed.next[0],3);
+    const resumed = JSON.parse(await run(PYTHON,[...init,'status'],clone)); assert.equal(resumed.next[0],1);
 });
 
 test('pending-only checkpoint and raw state backup never publish candidates',async () => {
@@ -243,7 +243,11 @@ test('already published accepted records retained for stale dependencies are not
 test('accepted files omitted from a later round cannot be falsely marked published',async () => {
     const f=await reviewFixture('checkpoint-round-scope');
     await f.backend(['decide','--accept','1','--reject','2','a']);
-    await f.backend(['begin','--round','reply-only','--files','reply.tex']);
+    const before=await f.status();
+    await assert.rejects(f.backend(['begin','--round','reply-only','--files','reply.tex']),/提交与推送/);
+    assert.deepEqual(await f.status(),before,'new-batch replacement stops before dropping unpublished accepted records');
+    // Retained malformed/legacy scope still fails at the checkpoint boundary.
+    await run(PYTHON,['-X','utf8','-c','import sys;from source_review import Review,digest;r=Review(sys.argv[1],"reply.tex");r.state["rounds"][-1]["files"]=["reply.tex"];r.persist({},digest(r.raw))',f.root],SCRIPTS);
     await assert.rejects(finishReview(f.root,'reply.tex',f.options,'不能遗漏已接收的手稿文件',f.execute),/已接收文件不在当前轮投影范围/);
     const state=await f.status(); assert(!state.edits['1'].published_version);
     assert.equal((await f.git(['rev-parse','HEAD'])).trim(),f.baseline);

@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -216,6 +216,17 @@
         "title": "给选中文字添加返修批注",
         "category": "LaTeX 审核",
         "icon": "$(comment)"
+      },
+      {
+        "command": "localLatex.inlineEditCandidate",
+        "title": "编辑候选／划词精确批注",
+        "category": "LaTeX 审核",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "localLatex.inlineRelatedChanges",
+        "title": "查看关联审稿问题的全部改动",
+        "category": "LaTeX 审核"
       },
       {
         "command": "localLatex.inlinePostComment",
@@ -460,6 +471,11 @@
         }
       ],
       "comments/commentThread/title": [
+        {
+          "command": "localLatex.inlineEditCandidate",
+          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard",
+          "group": "navigation@2.5"
+        },
         {
           "command": "localLatex.inlineAccept",
           "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineCard && isWorkspaceTrusted",

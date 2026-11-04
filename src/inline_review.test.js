@@ -113,7 +113,7 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
     assert(card.value.includes('Addition only＝无对应原句'));
     assert(!card.value.includes('中文段落逻辑'));
     assert(card.value.includes('展开完整源码（含注释）'));
-    assert.deepEqual(card.isTrusted, {enabledCommands: ['localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineToggleSource']});
+    assert.deepEqual(card.isTrusted, {enabledCommands: ['localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges', 'localLatex.inlineToggleSource']});
     const beforeQuestion = backendCalls.length;
     await handlers.get('localLatex.inlineQuestions')(c);
     assert(threads.at(-1).comments[0].body.value.includes('Please clarify reliability.'));
@@ -207,7 +207,7 @@ test('same-line candidates share one native card but retain independent actions 
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'shared-line-'));
     const file = path.join(root, 'paper.tex'), text = 'First sentence. Second sentence.\nThird sentence.';
     fs.writeFileSync(file, text, 'utf8');
-    const calls = [], threads = [], handlers = new Map(), notices = []; let selectionListener, pauseFeedback, finishFeedback;
+    const calls = [], threads = [], handlers = new Map(), notices = []; let selectionListener, pauseFeedback, finishFeedback, choices, batch = 'batch-1';
     const items = Object.fromEntries(['First sentence.', 'Second sentence.', 'Third sentence.'].map((original, index) => {
         const start = text.indexOf(original), id = String(index + 1);
         return [id, {sha256: 'fresh', edit: {file: 'paper.tex', deferred: true, status: 'pending', versions: ['v1'], requests: []},
@@ -233,23 +233,33 @@ test('same-line candidates share one native card but retain independent actions 
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
             showTextDocument: async () => editor, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}),
             onDidChangeTextEditorSelection: fn => {selectionListener = fn; return {dispose() {}};},
+            showQuickPick: async items => {choices = items;},
             showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x), showWarningMessage: async x => {notices.push(x);}},
         commands: {registerCommand: (name, handler) => {handlers.set(name, handler); return {dispose() {}};},
             getCommands: async () => [], executeCommand: async () => {}}
     };
     const backend = async (command, args, cwd, input) => {
         calls.push({args, input});
-        if (args.includes('cards')) return JSON.stringify({cards: Object.fromEntries(Object.entries(items).filter(([, d]) => d.edit.status === 'pending')),
+        if (args.includes('cards')) return JSON.stringify({session: batch, edits: Object.fromEntries(Object.entries(items).map(([id, data]) => [id, data.edit])), cards: Object.fromEntries(Object.entries(items).filter(([, d]) => d.edit.status === 'pending')),
             sources: Object.fromEntries(Object.values(items).map(d => [d.edit.file, text]))});
         if (args.includes('inspect')) return JSON.stringify({...items[args[args.indexOf('--id') + 1]], source: {...items[args[args.indexOf('--id') + 1]].source, text}});
         if (args.includes('feedback')) {if (pauseFeedback) await pauseFeedback; items[input.id].edit.requests.push({...input, id: 'note-' + calls.length, status: 'open'});
             return JSON.stringify({card: {...items[input.id], source: {...items[input.id].source, text}}, owner_text: 'fixture owner'});}
-        if (args.includes('decide')) {items[args[args.indexOf('--reject') + 1]].edit.status = 'rejected'; return '{}';}
+        if (args.includes('decide')) {
+            const accept = args.includes('--accept');
+            items[args[args.indexOf(accept ? '--accept' : '--reject') + 1]].edit.status = accept ? 'accepted' : 'rejected'; return '{}';
+        }
         throw new Error('Unexpected backend command');
     };
     const ui = createInlineReview(vscode, {subscriptions: []}, backend); await ui.ready;
     const c = {repo: root, owner: 'reply.tex'};
     await ui.refresh(c);
+    const question = {id: 'R1-Q3', file: 'reply.tex', quote: 'Exact original question.'};
+    items['1'].edit.questions = [question]; items['3'].edit.questions = [question];
+    items['2'].edit.questions = [{...question, quote: 'A different original question.'}];
+    await handlers.get('localLatex.inlineRelatedChanges')({...c, id: '1', version: 'v1'});
+    assert.deepEqual(choices.map(item => item.id), ['3'], 'reverse navigation uses exact source/quote association, not adjacent IDs or reviewer labels');
+    assert(choices[0].label.includes('待审'));
     const live = () => threads.filter(t => !t.disposed);
     assert.equal(live().length, 2, 'a native gutter click expands every thread ending on that line, so there must be only one');
     const shared = live()[0], separate = live()[1];
@@ -319,6 +329,12 @@ test('same-line candidates share one native card but retain independent actions 
     await handlers.get('localLatex.inlineToggleSource')({...c, id: '5', version: 'v1'});
     assert(!notices.slice(beforeDisplay).some(message => message.includes('操作尚未结束')), 'display-only actions must not share the writer busy gate');
     finishFeedback(); await pendingSave;
+    const oldThreads = live(); batch = 'batch-2';
+    await ui.refresh(c);
+    assert(oldThreads.every(thread => thread.disposed), 'a fresh batch cannot retain old comment/button contexts with reused 1/a labels');
+    await handlers.get('localLatex.inlineAccept')({...c, id: '1', version: 'v2'});
+    assert.equal(items['1'].edit.status, 'accepted');
+    assert(live().some(thread => thread.label.startsWith('3 ·') && thread.collapsibleState === 1), 'acceptance skips the rejected second item and opens the next actual pending card');
 });
 
 test('hidden full-line plans leave no blank placeholders; complete deletion results and surviving words remain visible', () => {
@@ -337,6 +353,12 @@ test('hidden full-line plans leave no blank placeholders; complete deletion resu
     const rendered = markedWords({candidate: long, changes: []}, 'candidate');
     assert(rendered.includes('\u200b'));
     assert.equal(rendered.replaceAll('\u200b', ''), long, 'wrap opportunities preserve the complete display content');
+    for (const side of ['original', 'candidate']) {
+        const text = '\n\n' + plan + 'A reply with unchanged words.\n';
+        const rendered = markedWords({[side]: text, changes: [{old_start: 0, old_end: Array.from(text).length, new_start: 0, new_end: Array.from(text).length}]}, side);
+        assert(!rendered.includes('<br>'), 'leading/trailing blank lines and hidden plans do not become HTML line breaks in either document');
+        assert(rendered.includes('A reply with unchanged words.'));
+    }
 });
 
 test('cold TeX discovery waits for native Comments registration; code-only projects stay untouched', async () => {

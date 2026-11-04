@@ -39,7 +39,8 @@ PREVIEW_LEGEND = r'''
 \textbf{Legend:} {\color{red}\sout{old}} = removed/replaced;
 {\color{blue}new} = added/rewritten; same = unchanged.
 Math may use color without a strike.
-Original above the rule; revision below. Addition only = no corresponding original text.\par}
+Original above the rule; revision below. Addition only = no corresponding original text.
+\P{} = real paragraph start; type labels describe the source paragraph, not preview line breaks.\par}
 \smallskip
 '''
 
@@ -190,6 +191,15 @@ def sentences(text):
             continue
         if char == '\\':
             token, i = _command(text, i)
+            if token == r'\par' and depth == 0 and not math:
+                if start < i - len(token):
+                    result.append(text[start:i - len(token)])
+                end = i
+                while end < len(text) and text[end].isspace():
+                    end += 1
+                result.append(text[i - len(token):end])
+                start, i = end, end
+                continue
             if token in (r'\(', r'\['):
                 math = token
             elif token in (r'\)', r'\]'):
@@ -260,6 +270,56 @@ def sentence_changes(before, after):
         yield unit['kind'], unit['before'], unit['after']
 
 
+def visible_tex(text):
+    """Remove comments, including comment-only lines, without inventing blank paragraphs."""
+    out, i = [], 0
+    while i < len(text):
+        if text[i] == '\\':
+            _, end = _command(text, i)
+            out.append(text[i:end]); i = end
+        elif text[i] == '%':
+            end = text.find('\n', i)
+            line = text.rfind('\n', 0, i) + 1
+            if not text[line:i].strip():
+                while out and out[-1] in (' ', '\t', '\r'):
+                    out.pop()
+                i = len(text) if end < 0 else end + 1
+            else:
+                i = len(text) if end < 0 else end
+        else:
+            out.append(text[i]); i += 1
+    return ''.join(out)
+
+
+def presentation_type(text, start, end, old, new):
+    """Classify source boundaries before the review renderer introduces its own \u005cpar."""
+    left, right = visible_tex(text[:start]), visible_tex(text[end:])
+    first, second = visible_tex(old), visible_tex(new)
+    boundary = r'\n[ \t\r]*\n|\\par\b'
+    # Section commands also begin new prose; a source newline alone does not.
+    headings = r'\\(?:section|subsection|subsubsection|paragraph|subparagraph)\*?\{[^{}]*\}'
+    def begins(prefix):
+        breaks = list(re.finditer(boundary + '|' + headings, prefix))
+        return not prefix[breaks[-1].end() if breaks else 0:].strip()
+    def ends(suffix):
+        stop = re.search(boundary + '|' + headings, suffix)
+        return not suffix[:stop.start() if stop else len(suffix)].strip()
+    environment = re.match(r'\\begin\{([^{}]+)\}|\\\[|\$\$', (first or second).lstrip())
+    if environment:
+        name = environment[1] or 'equation'
+        kind = 'Figure' if name.startswith('figure') else 'Table' if name.startswith('table') else 'Equation' if name in {'equation', 'equation*', 'align', 'align*', 'gather', 'gather*', 'displaymath'} else 'Environment'
+        return kind, False
+    paragraph_start = begins(left)
+    if not first.strip():
+        leading = second[:len(second) - len(second.lstrip())]
+        trailing = second[len(second.rstrip()):]
+        new_paragraph = begins(left + leading) and ends(trailing + right)
+        return ('New paragraph' if new_paragraph else 'Inline addition'), new_paragraph
+    if paragraph_start and ends(right):
+        return ('Paragraph rewrite' if second.strip() else 'Paragraph deletion'), True
+    return 'Within paragraph', paragraph_start
+
+
 def review_units(before, edits, offset=0):
     """Anchor each comparison to original content, never align a whole changed paragraph."""
     originals = [(u['start'] + len(u['text']) - len(u['text'].lstrip()),
@@ -297,10 +357,13 @@ def review_units(before, edits, offset=0):
         # paragraph. Keep that single decision together, not one pair per sentence.
         prose = len(_unit_spans(old)) > 1 and not re.search(r'\n[ \t]*\n|\\(?:begin|end)\{|\\\[|\\\]|\$\$', old.strip())
         units = [{'kind': 'replace', 'before': old, 'after': new}] if prose else _unit_changes(old, new)
+        position = a
         for unit in units:
             unit['ids'] = [] if unit['kind'] == 'equal' else [window['edits'][0]['id']]
             unit['addition_only'] = not unit['before'].strip() and bool(unit['after'].strip())
             unit['deletion_only'] = bool(unit['before'].strip()) and not unit['after'].strip()
+            unit['change_type'], unit['paragraph_start'] = presentation_type(before, position, position + len(unit['before']), unit['before'], unit['after'])
+            position += len(unit['before'])
             yield unit
         cursor = b
     if cursor < len(before):
@@ -418,7 +481,8 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
                     '\\': r'\textbackslash{}', '{': r'\{', '}': r'\}', '$': r'\$', '&': r'\&', '#': r'\#',
                     '_': r'\_', '%': r'\%', '^': r'\textasciicircum{}', '~': r'\textasciitilde{}'}[m[0]], text)
                 association = ', '.join(map(escaped, question_ids)) if question_ids else 'No linked question'
-                chunks.append('\n\n\\par\\smallskip\\noindent\\textbf{[' + label + ']}\\enspace{\\footnotesize ' + association
+                type_label = (r'\P{} ' if unit['paragraph_start'] else '') + unit['change_type']
+                chunks.append('\n\n\\par\\smallskip\\noindent\\textbf{[' + label + ']}\\enspace{\\footnotesize ' + type_label + ' | ' + association
                               + '}\\par\\nobreak\n\\begin{codexreviewold}\n' + old_marked
                               + '\n\\end{codexreviewold}\n\\par\\nobreak\\smallskip\\noindent{\\color[rgb]{0.65,0.65,0.65}\\rule{\\linewidth}{0.3pt}}\\par\\nobreak\\smallskip\n'
                               + proposed + '\n\\par\\smallskip\n\n')

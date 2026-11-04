@@ -32,6 +32,39 @@ class NativeReview(unittest.TestCase):
         return self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.',
                                      'after': 'The model is reliable and compact.'})['id']
 
+    def test_explicit_new_batch_resets_ids_with_fixed_identity_and_rejects_old_versions(self):
+        original = (self.root / 'main.tex').read_bytes()
+        id_ = self.proposal(); previous = self.review().inspect(id_)
+        self.apply('feedback', {'id': id_, 'version': previous['version'], 'side': 'candidate', 'start': 13, 'end': 21,
+                                'quote': 'reliable', 'text': '再核对一下。'})
+        first = self.review().state['session']
+        self.apply('begin', 'round-1', ['main.tex', 'reply.tex'])
+        state = self.review().state
+        self.assertEqual(state['next'], [1, 1])
+        self.assertEqual(state['edits'], {})
+        self.assertEqual(len(state['rounds']), 1)
+        self.assertRegex(state['session'], r'^[a-f0-9]{32}$')
+        self.assertNotEqual(first, state['session'])
+        self.assertEqual(self.proposal(), '1')
+        self.assertEqual(self.apply('propose', {'file': 'reply.tex', 'kind': 'response', 'before': 'Thank you.', 'after': 'We thank the reviewer.'})['id'], 'a')
+        latest = self.review().inspect('1')
+        self.assertNotEqual(previous['version'], latest['version'], 'identical text in a new batch still has a different immutable version')
+        with self.assertRaisesRegex(Conflict, 'Version does not belong'):
+            self.review().inspect('1', previous['version'])
+        with self.assertRaisesRegex(Conflict, 'stale'):
+            self.review().decide(['1'], [], {'1': previous['version']})
+        self.assertEqual(self.review().state['session'], state['session'], 'reopening does not reset a live batch')
+        self.assertEqual((self.root / 'main.tex').read_bytes(), original)
+
+    def test_new_batch_protects_unpublished_accepted_results_and_accepted_jump_uses_new_text(self):
+        id_ = self.proposal()
+        self.apply('decide', [id_], [])
+        self.assertTrue(self.review().inspect(id_, source=True)['source_match'])
+        owner = (self.root / 'reply.tex').read_bytes()
+        with self.assertRaisesRegex(Conflict, '提交与推送'):
+            self.apply('begin', 'next', ['main.tex', 'reply.tex'])
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
+
     def test_original_question_links_are_explicit_verified_and_retained_on_rework(self):
         (self.root / 'reviewer.txt').write_text('Reviewer 1\nPlease clarify reliability.\n', encoding='utf-8')
         questions = [{'id': 'R1.1', 'file': 'reviewer.txt', 'quote': 'Please clarify reliability.'}]
