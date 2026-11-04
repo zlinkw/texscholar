@@ -1,7 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {apply, restore, overlay, activate} = require('./setup');
+const {apply, restore, overlay, activate, configureChktex} = require('./setup');
+const path = require('node:path');
 const tools = require('./tools');
 function fixture(initial = {}) {
     const values = new Map(Object.entries(initial)), state = new Map(), writes = [];
@@ -64,6 +65,31 @@ test('platform discovery uses Windows executables and macOS TeX/Homebrew paths w
     assert.equal(tools.findExecutable(['latexmk'], macDirs, 'darwin', x => x === '/Library/TeX/texbin/latexmk'), '/Library/TeX/texbin/latexmk');
     assert.equal(tools.samePath('/paper/A.tex', '/paper/a.tex', 'darwin'), false);
     assert.equal(tools.samePath('C:\\Paper\\A.tex', 'c:\\paper\\a.tex', 'win32'), true);
+});
+test('ChkTeX adapter preserves the configured checker/flags, upgrades without nesting and restores original settings', async () => {
+    const executable = 'latex-workshop.linting.chktex.exec.path', args = 'latex-workshop.linting.chktex.exec.args';
+    const flags = ['-wall', '-n22', '-n30', '-e16', '-q', '-l', '/author settings/chktexrc'];
+    const f = fixture({[':' + executable]: '/author tools/chktex', [':' + args]: flags,
+        ':latex-workshop.linting.chktex.enabled': true, ':tinymist.exportPdf': 'onSave'});
+    const found = {pythonPath: '/python tools/python3', chktexPath: '/discovered/chktex'};
+    await configureChktex(f.vscode, f.context, found);
+    const wrapped = f.values.get(':' + args);
+    assert.deepEqual(wrapped, ['-X', 'utf8', path.join(__dirname, 'chktex_filter.py'), '--chktex', '/author tools/chktex', '--', ...flags]);
+    assert.equal(f.values.get(':' + executable), found.pythonPath);
+    const writes = f.writes.length;
+    await configureChktex(f.vscode, f.context, found);
+    assert.equal(f.writes.length, writes, 'repeat activation makes no settings writes');
+    f.values.set(':' + args, [...wrapped.slice(0, 2), path.join('/old extension version', 'chktex_filter.py'), ...wrapped.slice(3)]);
+    await configureChktex(f.vscode, f.context, found);
+    assert.deepEqual(f.values.get(':' + args), wrapped, 'upgrade changes only the adapter path, not checker flags');
+    await restore(f.vscode, f.context);
+    assert.equal(f.values.get(':' + executable), '/author tools/chktex');
+    assert.deepEqual(f.values.get(':' + args), flags);
+    assert.equal(f.values.get(':latex-workshop.linting.chktex.enabled'), true);
+    assert.equal(f.values.get(':tinymist.exportPdf'), 'onSave');
+    const missing = fixture({[':' + executable]: '/native/chktex'});
+    await configureChktex(missing.vscode, missing.context, {});
+    assert.deepEqual(missing.writes, [], 'missing Python must not disable the native checker');
 });
 test('activating in a code-only or untrusted project applies no user settings', async () => {
     for (const trusted of [true, false]) {

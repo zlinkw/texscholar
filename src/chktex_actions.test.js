@@ -274,3 +274,56 @@ test('suggested command details remain usable by native fixes; unknown warnings 
     assert.match(untranslated, /不要直接全文接受/);
     assert.equal(unknown.diagnostics[0].message, 'New plugin-specific warning.', 'original diagnostic remains available to checking and fix consumers');
 });
+
+test('real ChkTeX adapter excludes only complete comment-only machine ledgers and preserves normal diagnostics and source bytes', () => {
+    const python = process.env.LOCAL_LATEX_PYTHON || 'python3';
+    const format = '-f%f:%l:%c:%d:%k:%n:%m\n';
+    const flags = ['-wall', '-w46', '-w41', '-q'];
+    const adapter = path.join(__dirname, 'chktex_filter.py');
+    const checked = (args, input, cwd) => {
+        const result = cp.spawnSync(python, ['-X', 'utf8', adapter, '--chktex', chktex, '--', ...flags, ...args],
+            {input, cwd, windowsHide: true});
+        assert.ifError(result.error);
+        assert(!result.stderr.toString('utf8').includes('Traceback'), result.stderr.toString('utf8'));
+        return result;
+    };
+    const records = raw => raw.toString('utf8').trim().split(/\r?\n/).filter(Boolean);
+    for (const eol of ['\n', '\r\n']) {
+        const ledger = ['% CODEX-REVIEW-STATE-BEGIN', '% 交接状态，保留原样。', '% CODEX-REVIEW-NEXT manuscript=79 response=ao',
+            '% CODEX-REVIEW-DATA {"quote":"$x$", "status":"handoff"}', '% CODEX-REVIEW-STATE-END'].join(eol);
+        const source = (header + ledger + '\n% Ordinary author logic remains checked.\n$x$\n\\vskip1mm' + tail).replace(/\r?\n/g, eol);
+        const native = cp.spawnSync(chktex, [...flags, '-I0', format], {input: source, windowsHide: true});
+        assert.ifError(native.error);
+        const normal = records(native.stdout).filter(line => {const number = Number(/^[^]*?:(\d+):/.exec(line)[1]); return number < 3 || number > 7;});
+        assert(records(native.stdout).length > normal.length, 'baseline checker reports machine comment warnings');
+        const actual = checked(['-I0', format], source);
+        assert.deepEqual(records(actual.stdout), normal);
+        assert(records(actual.stdout).some(line => /:46:/.test(line)), 'normal body warning is retained');
+        assert(records(actual.stdout).some(line => /:41:/.test(line)), 'a different normal warning is retained');
+        assert(records(actual.stdout).some(line => /^stdin:8:.*:22:/.test(line)), 'ordinary author comments are not globally suppressed');
+        const named = checked(['-p', 'editor-buffer.tex', '-I0', format], source);
+        assert.deepEqual(records(named.stdout), normal.map(line => line.replace(/^stdin:/, 'editor-buffer.tex:')), 'the configured pseudoname does not require an on-disk source for stdin checks');
+        for (const malformed of [source.replace('% CODEX-REVIEW-STATE-END', '% incomplete end'),
+            source.replace('% 交接状态，保留原样。', '$y$')]) {
+            const original = cp.spawnSync(chktex, [...flags, '-I0', format], {input: malformed, windowsHide: true});
+            assert.deepEqual(checked(['-I0', format], malformed).stdout, original.stdout, 'malformed markers or real TeX never mask prose');
+        }
+    }
+    const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'chktex-交接 ledger-'));
+    const child = '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA {"note":"handoff"}\n% CODEX-REVIEW-STATE-END\n$x$\n';
+    const main = header + '\\input{child}\n$x$' + tail;
+    fs.writeFileSync(path.join(root, 'main.tex'), main, 'utf8'); fs.writeFileSync(path.join(root, 'child.tex'), child, 'utf8');
+    const native = cp.spawnSync(chktex, [...flags, format, path.join(root, 'main.tex')], {cwd: root, windowsHide: true});
+    assert.ifError(native.error);
+    const normal = records(native.stdout).filter(line => !/child\.tex:[1-3]:/.test(line));
+    const result = checked([format, path.join(root, 'main.tex')], undefined, root);
+    assert.deepEqual(records(result.stdout), normal, 'root and included file warnings are filtered by their own file and line');
+    assert.equal(result.status, native.status, 'root-check exit status is propagated');
+    assert.equal(fs.readFileSync(path.join(root, 'main.tex'), 'utf8'), main);
+    assert.equal(fs.readFileSync(path.join(root, 'child.tex'), 'utf8'), child);
+    const invalid = cp.spawnSync(python, ['-X', 'utf8', adapter, '--chktex', chktex, '--', '--invalid-checker-option', format],
+        {input: '$x$', windowsHide: true});
+    const originalFailure = cp.spawnSync(chktex, ['--invalid-checker-option', format], {input: '$x$', windowsHide: true});
+    assert.equal(invalid.status, originalFailure.status);
+    assert.deepEqual(invalid.stderr, originalFailure.stderr, 'checker failures are not swallowed');
+});

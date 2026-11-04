@@ -1,5 +1,6 @@
 'use strict';
 const tools = require('./tools');
+const path = require('node:path');
 const preset = require('./writing-presets.json');
 const RECOMMENDED = [
     ['james-yu.latex-workshop', 'LaTeX 编译、PDF 与双向跳转'],
@@ -41,7 +42,7 @@ function bindings(found) {
     const pdf = found.latexmkPath || 'latexmk';
     const rows = Object.entries(found).filter(([key]) => !['synctexPath', 'chktexPath', 'texcountPath'].includes(key))
         .map(([key, value]) => ({key: 'localLatex.' + key, value}));
-    for (const [tool, key] of [['ripgrepPath', 'todo-tree.ripgrep.ripgrep'], ['synctexPath', 'latex-workshop.synctex.path'], ['chktexPath', 'latex-workshop.linting.chktex.exec.path'],
+    for (const [tool, key] of [['ripgrepPath', 'todo-tree.ripgrep.ripgrep'], ['synctexPath', 'latex-workshop.synctex.path'],
         ['texcountPath', 'latex-workshop.texcount.path'], ['texcountPath', 'latex-utilities.countWord.path']])
         if (found[tool]) rows.push({key, value: found[tool]});
     rows.push({key: 'latex-workshop.latex.tools', value: [{name: 'local-paper-pdf', command: pdf,
@@ -49,6 +50,32 @@ function bindings(found) {
         env: {LC_ALL: 'C', LC_CTYPE: 'C', LANG: 'C', ...(found.latexmkPath ? {PATH: tools.environment().PATH || tools.environment().Path} : {})}}]},
     {key: 'latex-workshop.latex.recipes', value: [{name: 'Local LaTeX: pdfLaTeX + BibTeX', tools: ['local-paper-pdf']}]});
     return rows;
+}
+async function configureChktex(vscode, context, found) {
+    if (!found.pythonPath) return;
+    const cfg = vscode.workspace.getConfiguration();
+    const pathKey = 'latex-workshop.linting.chktex.exec.path', argsKey = 'latex-workshop.linting.chktex.exec.args';
+    let command = cfg.get(pathKey, found.chktexPath || 'chktex'), args = cfg.get(argsKey, []);
+    if (args[0] === '-X' && args[1] === 'utf8' && path.basename(args[2] || '') === 'chktex_filter.py'
+        && args[3] === '--chktex' && args[5] === '--') {
+        command = args[4]; args = args.slice(6);
+    }
+    if (command === 'chktex' && found.chktexPath) command = found.chktexPath;
+    const incoming = [
+        {key: argsKey, value: ['-X', 'utf8', path.join(__dirname, 'chktex_filter.py'), '--chktex', command, '--', ...args]},
+        {key: pathKey, value: found.pythonPath}
+    ];
+    const saved = {...context.globalState.get('writingSettings', {})};
+    for (const row of incoming) {
+        const own = cfg.inspect(row.key).globalValue;
+        if (equal(own, row.value)) continue;
+        const id = ':' + row.key;
+        const prior = saved[id] || {key: row.key, hadValue: own !== undefined, before: own};
+        // Command and argument lists must be replaced exactly, not array-merged.
+        await cfg.update(row.key, row.value, vscode.ConfigurationTarget.Global, false);
+        saved[id] = {...prior, applied: row.value};
+        await context.globalState.update('writingSettings', saved);
+    }
 }
 async function apply(vscode, context, rows, force = false) {
     const saved = {...context.globalState.get('writingSettings', {})}, result = {applied: [], conflicts: [], unavailable: []};
@@ -103,6 +130,7 @@ async function activate(context, vscode = require('vscode')) {
         output.appendLine('合并写作配置白名单。');
         const rows = [...preset.settings.filter(row => full || !row.optional), ...bindings(discovered.found)];
         const result = await apply(vscode, context, rows, force);
+        await configureChktex(vscode, context, discovered.found);
         output.appendLine(`配置完成：应用 ${result.applied.length} 项；保留已有选择 ${result.conflicts.length} 项；依赖尚未注册 ${result.unavailable.length} 项。`);
         if (result.conflicts.length) output.appendLine('保留的配置项：' + result.conflicts.join('、'));
         if (discovered.missing.length) output.appendLine('未发现工具：' + discovered.missing.join('、'));
@@ -163,4 +191,4 @@ async function activate(context, vscode = require('vscode')) {
     await running;
     return {setup, output};
 }
-module.exports = {activate, apply, restore, merge, overlay, bindings};
+module.exports = {activate, apply, restore, merge, overlay, bindings, configureChktex};
