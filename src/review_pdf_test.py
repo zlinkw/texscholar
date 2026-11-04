@@ -98,6 +98,34 @@ class ReviewPDF(unittest.TestCase):
     apply = NativeReview.apply
     proposal = NativeReview.proposal
 
+    def test_positional_multi_sentence_item_has_one_heading_with_question_ids_and_one_rule(self):
+        main = self.root / 'main.tex'
+        paragraph = 'The model is strong. The context remains unchanged. The model is fast.'
+        after = 'The model is reliable. The context remains unchanged. The model is efficient.'
+        main.write_text('\\documentclass{article}\n\\begin{document}\nOpening context.\n\n' + paragraph
+                        + '\n\nEnding context.\n\\end{document}\n', encoding='utf-8')
+        (self.root / 'questions.txt').write_text('Please clarify reliability.\nPlease explain efficiency.\n', encoding='utf-8')
+        self.apply('begin', 'positional-round', ['main.tex', 'reply.tex'])
+        id_ = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': paragraph, 'after': after})['id']
+        data = self.review().inspect(id_)
+        self.apply('update_questions', id_, data['version'], [
+            {'id': 'R1-Q3', 'file': 'questions.txt', 'quote': 'Please clarify reliability.'},
+            {'id': 'R4-Q5', 'file': 'questions.txt', 'quote': 'Please explain efficiency.'}])
+        before = {p: (self.root / p).read_bytes() for p in ('main.tex', 'reply.tex')}
+        result = preview(self.root, 'reply.tex', main, id_, data['version'], 'missing-git',
+                         str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        source = (Path(result['output']) / 'source/__codex_inline_review__.tex').read_text(encoding='utf-8')
+        self.assertEqual(source.count(r'\textbf{[' + id_ + ']}'), 1)
+        self.assertEqual(source.count(r'\rule{\linewidth}{0.3pt}'), 1)
+        self.assertNotIn('[' + id_ + '] Original', source)
+        self.assertNotIn('[' + id_ + '] Proposed', source)
+        text = ' '.join(' '.join(page.extract_text() for page in PdfReader(result['pdf']).pages).split())
+        self.assertIn('R1-Q3, R4-Q5', text)
+        self.assertEqual(text.count('The context remains unchanged.'), 2)
+        self.assertIn('The model is reliable.', text)
+        self.assertEqual({p: (self.root / p).read_bytes() for p in before}, before)
+        print('COMPACT_POSITIONAL_PDF', result['pdf'])
+
     def test_deletions_show_complete_surviving_candidate_and_explicit_empty_result(self):
         main = self.root / 'main.tex'
         text = ('\\documentclass[twocolumn]{article}\n\\title{Isolated review example}\n\\author{Test}\n\\date{}\n'
@@ -147,9 +175,9 @@ class ReviewPDF(unittest.TestCase):
         result = preview(self.root, 'reply.tex', main, first_id, data['version'], 'missing-git',
                          str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
         tex = (Path(result['output']) / 'source/__codex_inline_review__.tex').read_text(encoding='utf-8')
-        self.assertIn('[' + first_id + '] Original', tex)
-        self.assertIn('[' + second_id + '] Original', tex)
-        self.assertIn('[' + addition + '] Original', tex)
+        self.assertIn(r'\textbf{[' + first_id + ']}', tex)
+        self.assertIn(r'\textbf{[' + second_id + ']}', tex)
+        self.assertIn(r'\textbf{[' + addition + ']}', tex)
         self.assertIn('Addition only; no corresponding original text.', tex)
         self.assertNotRegex(tex, r'\[\d+,\d+')
         text = '\n'.join(page.extract_text() for page in PdfReader(result['pdf']).pages)
@@ -217,8 +245,9 @@ Unique ending context.
                           r'\label{eq:adj}', r'\label{eq:last}']:
             self.assertEqual(source.count(unchanged), 1, unchanged)
         for id_ in map(str, range(1, 9)):
-            self.assertEqual(source.count('[' + id_ + '] Original'), 1)
-            self.assertEqual(source.count('[' + id_ + '] Proposed'), 1)
+            self.assertEqual(source.count(r'\textbf{[' + id_ + ']}'), 1)
+            self.assertNotIn('[' + id_ + '] Original', source)
+            self.assertNotIn('[' + id_ + '] Proposed', source)
         self.assertNotIn('[5,6]', source)
         self.assertEqual(source.count(r'\begin{equation}'), 4)
         aux = (Path(result['output']) / 'pdf/review.aux').read_text(encoding='utf-8')
@@ -250,7 +279,8 @@ Unique ending context.
         self.assertEqual(text.count('Unchanged context after.'), 1)
         self.assertEqual(text.count('The first sentence stays.'), 1)
         self.assertEqual(text.count('The last sentence stays.'), 1)
-        self.assertLess(text.index('Original'), text.index('Proposed'))
+        self.assertLess(text.index('strong'), text.index('reliable'))
+        self.assertEqual(text.count('[' + id_ + ']'), 1)
         self.assertIn('strong', text)
         self.assertIn('reliable', text)
         self.assertEqual(len(list(pdf.parent.glob('*.pdf'))), 1)

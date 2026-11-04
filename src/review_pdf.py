@@ -39,7 +39,7 @@ PREVIEW_LEGEND = r'''
 \textbf{Legend:} {\color{red}\sout{old}} = removed/replaced;
 {\color{blue}new} = added/rewritten; same = unchanged.
 Math may use color without a strike.
-Original $\to$ Proposed; Addition only = no corresponding original text.\par}
+Original above the rule; revision below. Addition only = no corresponding original text.\par}
 \smallskip
 '''
 
@@ -293,7 +293,11 @@ def review_units(before, edits, offset=0):
         for edit in sorted(window['edits'], key=lambda e: e['start'], reverse=True):
             start, end = edit['start'] - offset - a, edit['end'] - offset - a
             new = new[:start] + edit['item']['after'] + new[end:]
-        for unit in _unit_changes(old, new):
+        # A positional prose item may cover adjacent sentences, up to one
+        # paragraph. Keep that single decision together, not one pair per sentence.
+        prose = len(_unit_spans(old)) > 1 and not re.search(r'\n[ \t]*\n|\\(?:begin|end)\{|\\\[|\\\]|\$\$', old.strip())
+        units = [{'kind': 'replace', 'before': old, 'after': new}] if prose else _unit_changes(old, new)
+        for unit in units:
             unit['ids'] = [] if unit['kind'] == 'equal' else [window['edits'][0]['id']]
             unit['addition_only'] = not unit['before'].strip() and bool(unit['after'].strip())
             unit['deletion_only'] = bool(unit['before'].strip()) and not unit['after'].strip()
@@ -407,9 +411,17 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
                 float_pattern = r'\\begin\{(figure|table)\}(?:\[[^\]]*\])?'
                 proposed = re.sub(float_pattern, lambda m: '\\begin{' + m[1] + '}[H]', proposed)
                 old_marked = re.sub(float_pattern, lambda m: '\\begin{' + m[1] + '}[H]', old_marked)
-                chunks.append('\n\n\\par\\smallskip\\noindent\\textbf{[' + label + '] Original}\\par\n\\begin{codexreviewold}\n'
-                              + old_marked + '\n\\end{codexreviewold}\n\\par\\smallskip\\noindent\\textbf{[' + label
-                              + '] Proposed}\\par\n' + proposed + '\n\\par\\smallskip\n\n')
+                questions = [q for id__ in unit['ids'] for q in review.state['edits'][id__].get('questions', [])]
+                review.question_links(questions)
+                question_ids = list(dict.fromkeys(q['id'] for q in questions))
+                escaped = lambda text: re.sub(r'[\\{}$&#_%^~]', lambda m: {
+                    '\\': r'\textbackslash{}', '{': r'\{', '}': r'\}', '$': r'\$', '&': r'\&', '#': r'\#',
+                    '_': r'\_', '%': r'\%', '^': r'\textasciicircum{}', '~': r'\textasciitilde{}'}[m[0]], text)
+                association = ', '.join(map(escaped, question_ids)) if question_ids else 'No linked question'
+                chunks.append('\n\n\\par\\smallskip\\noindent\\textbf{[' + label + ']}\\enspace{\\footnotesize ' + association
+                              + '}\\par\\nobreak\n\\begin{codexreviewold}\n' + old_marked
+                              + '\n\\end{codexreviewold}\n\\par\\nobreak\\smallskip\\noindent{\\color[rgb]{0.65,0.65,0.65}\\rule{\\linewidth}{0.3pt}}\\par\\nobreak\\smallskip\n'
+                              + proposed + '\n\\par\\smallskip\n\n')
                 shown.extend(unit['ids'])
             display = ''.join(chunks)
             reviewed = reviewed[:a] + display + reviewed[b:]
@@ -472,7 +484,7 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
             continue
         content = tex.read_bytes().decode('utf-8')
         for id__ in shown:
-            marker = r'\textbf{[' + id__ + '] Original}'
+            marker = r'\textbf{[' + id__ + ']}'
             position = content.find(marker)
             if position >= 0 and id__ not in targets:
                 targets[id__] = {'file': str(tex), 'line': content.count('\n', 0, position) + 1}
