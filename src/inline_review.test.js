@@ -392,7 +392,16 @@ test('hidden full-line plans leave no blank placeholders; complete deletion resu
         const text = '\n\n' + plan + 'A reply with unchanged words.\n';
         const rendered = markedWords({[side]: text, changes: [{old_start: 0, old_end: Array.from(text).length, new_start: 0, new_end: Array.from(text).length}]}, side);
         assert(!rendered.includes('<br>'), 'leading/trailing blank lines and hidden plans do not become HTML line breaks in either document');
-        assert(rendered.includes('A reply with unchanged words.'));
+        assert(rendered.replace(/<[^>]+>/g, '').includes('A reply with unchanged words.'));
+    }
+    for (const side of ['original', 'candidate']) {
+        const text = 'A fully changed sentence with many ordinary words and ' + 'x'.repeat(90) + '.';
+        const data = {[side]: text, changes: [{old_start: 0, old_end: text.length, new_start: 0, new_end: text.length}]};
+        const html = markedWords(data, side);
+        const spans = [...html.matchAll(/<span[^>]*>([\s\S]*?)<\/span>/g)];
+        assert(spans.length > 1);
+        assert(spans.every(match => !/\s|\u200b/u.test(match[1])), 'native preformatted spans cannot contain the inter-word spaces or break opportunities');
+        assert.equal(html.replace(/<[^>]+>/g, '').replaceAll('\u200b', ''), text, 'display wrapping preserves every original/proposed word');
     }
 });
 

@@ -25,6 +25,18 @@ const utf16 = (text, offset) => Array.from(text).slice(0, offset).join('').lengt
 // Display-only break opportunities for long TeX tokens; never alter stored text
 // or the exact source-selection offsets used for acceptance and annotations.
 const wrapHtml = text => escapeHtml(text.replace(/\S{32,}/gu, word => Array.from(word).join('\u200b'))).replace(/\r?\n/g, '<br>');
+function changedHtml(text, side) {
+    const colored = token => side === 'original'
+        ? `<span style="color:#d32f2f;"><del>${escapeHtml(token)}</del></span>`
+        : `<span style="color:#1565c0;">${escapeHtml(token)}</span>`;
+    // Native comment CSS forces spans to white-space:pre. Keep whitespace and
+    // long-token break opportunities OUTSIDE colored spans so the browser wraps.
+    return text.split(/(\s+)/u).map(token => {
+        if (/^\s*$/u.test(token)) return wrapHtml(token);
+        const chars = Array.from(token);
+        return chars.length >= 32 ? chars.map(colored).join('\u200b') : colored(token);
+    }).join('');
+}
 const label = (data, id) => `${id} · 原文 → 候选 v${data.edit.versions.length}`;
 
 function commentSpans(text) {
@@ -83,7 +95,7 @@ function markedWords(data, side) {
         }
         cursor = b;
     }
-    function visible(start, end) {
+    function visible(start, end, changed = false) {
         start = Math.max(start, displayStart); end = Math.min(end, displayEnd);
         if (start >= end) return '';
         let cursor = start, output = '';
@@ -92,14 +104,14 @@ function markedWords(data, side) {
             output += text.slice(cursor, Math.max(cursor, a));
             cursor = Math.min(end, b);
         }
-        return wrapHtml(output + text.slice(cursor, end));
+        const prose = output + text.slice(cursor, end);
+        return changed ? changedHtml(prose, side) : wrapHtml(prose);
     }
     let offset = 0, result = '';
     for (const change of data.changes) {
         const start = change[prefix + '_start'], end = change[prefix + '_end'];
         result += visible(offset, utf16(text, start));
-        const changed = visible(utf16(text, start), utf16(text, end));
-        if (changed) result += side === 'original' ? `<span style="color:#d32f2f;"><del>${changed}</del></span>` : `<span style="color:#1565c0;">${changed}</span>`;
+        result += visible(utf16(text, start), utf16(text, end), true);
         offset = utf16(text, end);
     }
     return result + visible(offset, text.length);
