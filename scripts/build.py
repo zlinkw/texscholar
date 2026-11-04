@@ -18,6 +18,9 @@ def archive_bytes(files):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name, raw in sorted(files.items()):
+            # All packaged resources are UTF-8 text. Match Git's canonical
+            # line endings so local Windows and cloud builds use the same bytes.
+            raw = raw.replace(b'\r\n', b'\n')
             entry = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(entry, raw)
@@ -68,6 +71,9 @@ def build(output):
         sources['src/' + name] = (ROOT / 'src' / name).read_bytes()
     sources['scripts/build.py'] = Path(__file__).read_bytes()
     sources['scripts/check.py'] = (ROOT / 'scripts/check.py').read_bytes()
+    sources['scripts/publish_release.py'] = (ROOT / 'scripts/publish_release.py').read_bytes()
+    sources['scripts/publish_release_test.py'] = (ROOT / 'scripts/publish_release_test.py').read_bytes()
+    sources['.github/workflows/release.yml'] = (ROOT / '.github/workflows/release.yml').read_bytes()
     write_product(output / ('texscholar-' + metadata['version'] + '-source.zip'), archive_bytes(sources))
 
 

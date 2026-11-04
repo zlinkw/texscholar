@@ -463,6 +463,10 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
         raise ValueError('审核 PDF 导航元数据不能是链接。')
     targets = {}
     for rel in included:
+        # The recorder also lists binary figures and fonts; only TeX sources
+        # can contain the review markers inserted above.
+        if rel.suffix.lower() != '.tex':
+            continue
         tex = derived if rel == relative else source_dir / rel
         if not tex.is_file():
             continue

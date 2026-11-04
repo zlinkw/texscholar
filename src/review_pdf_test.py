@@ -1,9 +1,10 @@
 """Full-paper, stacked original/proposal PDF without Git."""
 from pathlib import Path
+import json
 import os
 import re
 import unittest
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
 from native_review_test import NativeReview
 from review_pdf import preview, sentences, sentence_changes, review_units, with_legend
 
@@ -125,9 +126,14 @@ class ReviewPDF(unittest.TestCase):
     def test_comment_prefixed_replacements_and_addition_labels_in_complete_pdf(self):
         main = self.root / 'main.tex'
         first, second = 'The teacher uses three views.', 'Reliability uses mean probabilities.'
-        main.write_text('\\documentclass[twocolumn]{article}\n\\usepackage{amsmath}\n\\begin{document}\nUnique opening context.\n\n'
+        diagram = self.root / 'diagram.pdf'
+        writer = PdfWriter(); writer.add_blank_page(width=72, height=72)
+        with diagram.open('wb') as stream:
+            writer.write(stream)
+        self.assertRaises(UnicodeDecodeError, diagram.read_bytes().decode, 'utf-8')
+        main.write_text('\\documentclass[twocolumn]{article}\n\\usepackage{amsmath,graphicx}\n\\begin{document}\nUnique opening context.\n\n'
                         '\\section{Method}\n' + first + ' ' + second + ' Tail stays.\n'
-                        '\\begin{equation}z=1\\label{eq:unchanged}\\end{equation}\nUnique ending context.\n\\end{document}\n', encoding='utf-8')
+                        '\\begin{equation}z=1\\label{eq:unchanged}\\end{equation}\n\\includegraphics[width=1cm]{diagram.pdf}\nUnique ending context.\n\\end{document}\n', encoding='utf-8')
         self.apply('begin', 'original-unit-round', ['main.tex', 'reply.tex'])
         plan = '% CODEX-PARAGRAPH-PLAN-BEGIN\n% 中文逻辑注释，保留源文件。\n% CODEX-PARAGRAPH-PLAN-END\n'
         first_id = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': first,
@@ -154,6 +160,10 @@ class ReviewPDF(unittest.TestCase):
         self.assertEqual(normalized.count('Tail stays.'), 1)
         self.assertEqual(normalized.count('Unique opening context.'), 1)
         self.assertEqual(tex.count(r'\label{eq:unchanged}'), 1)
+        self.assertIn('diagram.pdf', (Path(result['output']) / 'pdf/review.fls').read_text(encoding='utf-8'))
+        navigation = json.loads(Path(result['navigation']).read_text(encoding='utf-8'))
+        self.assertEqual(set(navigation['targets']), {first_id, second_id, addition})
+        self.assertTrue(all(target['file'].endswith('.tex') for target in navigation['targets'].values()))
         self.assertEqual(main.read_bytes(), source)
         self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
         print('ORIGINAL_UNIT_PDF', result['pdf'])
