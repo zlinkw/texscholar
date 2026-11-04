@@ -193,6 +193,96 @@ test('prose display preserves escaped percent and inline verbatim; comments rema
     assert(original.includes('hidden note'));
 });
 
+test('same-line candidates share one native card but retain independent actions and drafts', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'shared-line-'));
+    const file = path.join(root, 'paper.tex'), text = 'First sentence. Second sentence.\nThird sentence.';
+    fs.writeFileSync(file, text, 'utf8');
+    const calls = [], threads = [], handlers = new Map(), notices = [];
+    const items = Object.fromEntries(['First sentence.', 'Second sentence.', 'Third sentence.'].map((original, index) => {
+        const start = text.indexOf(original), id = String(index + 1);
+        return [id, {sha256: 'fresh', edit: {file: 'paper.tex', deferred: true, status: 'pending', versions: ['v1'], requests: []},
+            version: 'v1', original, candidate: original.replace('sentence', 'wording'), source_match: true,
+            source: {start, end: start + original.length, side: 'original'}, changes: []}];
+    }));
+    class Range {constructor(start, end) {Object.assign(this, {start, end});} contains(p) {return p >= this.start && p <= this.end;}}
+    const uri = fsPath => ({scheme: 'file', fsPath});
+    const document = {uri: uri(file), languageId: 'latex', isDirty: false, getText: r => r ? text.slice(r.start, r.end) : text,
+        positionAt: x => x, offsetAt: x => x};
+    const editor = {document, selection: {start: 0, end: 0, isEmpty: true}, revealRange() {}, setDecorations() {}};
+    const vscode = {
+        Range, Selection: Range, RelativePattern: class {}, Uri: {file: uri}, ViewColumn: {One: 1}, TextEditorRevealType: {},
+        CommentMode: {Preview: 0}, CommentThreadCollapsibleState: {Expanded: 1, Collapsed: 0},
+        MarkdownString: class {constructor() {this.value = '';} appendMarkdown(s) {this.value += s;} appendText(s) {this.value += s;}},
+        comments: {createCommentController: () => ({dispose() {}, createCommentThread(uri, range, comments) {
+            const thread = {uri, range, comments, dispose() {this.disposed = true;}}; threads.push(thread); return thread;
+        }})},
+        workspace: {isTrusted: true, textDocuments: [document], workspaceFolders: [{uri: uri(root)}],
+            getWorkspaceFolder: () => ({uri: uri(root)}), findFiles: async () => [],
+            getConfiguration: () => ({get: (key, fallback) => fallback}), openTextDocument: async () => document,
+            onDidChangeTextDocument: () => ({dispose() {}})},
+        window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
+            showTextDocument: async () => editor, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}),
+            showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x)},
+        commands: {registerCommand: (name, handler) => {handlers.set(name, handler); return {dispose() {}};},
+            getCommands: async () => [], executeCommand: async () => {}}
+    };
+    const backend = async (command, args, cwd, input) => {
+        calls.push({args, input});
+        if (args.includes('cards')) return JSON.stringify({cards: Object.fromEntries(Object.entries(items).filter(([, d]) => d.edit.status === 'pending')),
+            sources: Object.fromEntries(Object.values(items).map(d => [d.edit.file, text]))});
+        if (args.includes('inspect')) return JSON.stringify({...items[args[args.indexOf('--id') + 1]], source: {...items[args[args.indexOf('--id') + 1]].source, text}});
+        if (args.includes('feedback')) {items[input.id].edit.requests.push({...input, status: 'open'}); return '{}';}
+        if (args.includes('decide')) {items[args[args.indexOf('--reject') + 1]].edit.status = 'rejected'; return '{}';}
+        throw new Error('Unexpected backend command');
+    };
+    const ui = createInlineReview(vscode, {subscriptions: []}, backend); await ui.ready;
+    const c = {repo: root, owner: 'reply.tex'};
+    await ui.refresh(c);
+    const live = () => threads.filter(t => !t.disposed);
+    assert.equal(live().length, 2, 'a native gutter click expands every thread ending on that line, so there must be only one');
+    const shared = live()[0], separate = live()[1];
+    assert(shared.comments[0].body.value.includes('inlineSelectCard'));
+    assert(shared.comments[0].body.value.includes('First sentence.'));
+    assert(!shared.comments[0].body.value.includes('Second sentence.'));
+    const beforeSwitch = calls.length;
+    await handlers.get('localLatex.inlineSelectCard')({...c, id: '2', version: 'v1'});
+    assert.equal(live()[0], shared, 'switching updates the existing card');
+    assert(shared.label.startsWith('2 ·'));
+    assert(shared.comments[0].body.value.includes('Second sentence.'));
+    assert.equal(separate.collapsibleState, 0);
+    assert.equal(calls.length, beforeSwitch, 'switching uses cached candidates without a backend read or PDF compilation');
+    editor.selection = {start: 16, end: 22, isEmpty: false};
+    const draft = await handlers.get('localLatex.inlineAnnotate')(shared);
+    assert.equal(draft, shared);
+    await handlers.get('localLatex.inlineSelectCard')({...c, id: '1', version: 'v1'});
+    assert(notices.some(x => /草稿/.test(x)), 'switching away requires saving/cancelling the unsaved draft');
+    assert(shared.label.startsWith('2 ·'));
+    await ui.refresh(c);
+    assert.equal(draft.disposed, undefined);
+    assert.equal(live().length, 2, 'refresh must not recreate a second same-line card beside the draft');
+    await ui.post({thread: draft, text: '只改第二句。'});
+    assert.equal(items['1'].edit.requests.length, 0);
+    assert.equal(items['2'].edit.requests[0].quote, 'Second');
+    const selected = live().find(t => t.label.startsWith('2 ·'));
+    await handlers.get('localLatex.inlineReject')(selected);
+    assert.equal(items['2'].edit.status, 'rejected');
+    assert.equal(items['1'].edit.status, 'pending');
+    assert.equal(ui.records.size, 2);
+    assert.equal(live().length, 2);
+    assert(live().some(t => t.label.startsWith('1 ·')));
+    assert.equal(fs.readFileSync(file, 'utf8'), text, 'display grouping never rewrites the source');
+    editor.selection = {start: 0, end: 5, isEmpty: false};
+    const fromEditor = await ui.annotate({...c, id: '1', version: 'v1'});
+    assert.equal(live().length, 2, 'source-selection annotation must also reuse the existing shared view');
+    await handlers.get('localLatex.inlineCancelComment')(fromEditor);
+    const otherFile = path.join(root, 'other.tex'); fs.writeFileSync(otherFile, text, 'utf8');
+    const otherDocument = {...document, uri: uri(otherFile)};
+    vscode.workspace.openTextDocument = async target => target.fsPath === otherFile ? otherDocument : document;
+    items['4'] = JSON.parse(JSON.stringify(items['1'])); items['4'].edit.file = 'other.tex';
+    await ui.refresh(c);
+    assert.equal(live().length, 3, 'identical line numbers in different files must never share a view');
+});
+
 test('hidden full-line plans leave no blank placeholders; complete deletion results and surviving words remain visible', () => {
     const plan = '  % CODEX-PARAGRAPH-PLAN-BEGIN\r\n% 中文逻辑。\r\n% CODEX-PARAGRAPH-PLAN-END\r\n';
     const candidate = plan + 'The mean is $p=0.5$.\n\nA real paragraph.';

@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -193,6 +193,11 @@
         "title": "打开指定原文审核卡片",
         "category": "LaTeX 审核",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "localLatex.inlineSelectCard",
+        "title": "切换当前行的审核候选",
+        "category": "LaTeX 审核"
       },
       {
         "command": "localLatex.inlineAccept",
@@ -527,6 +532,10 @@
         },
         {
           "command": "localLatex.inlineReviewAt",
+          "when": "false"
+        },
+        {
+          "command": "localLatex.inlineSelectCard",
           "when": "false"
         }
       ],
