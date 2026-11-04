@@ -37,15 +37,16 @@ h3,p{margin:5px 0 8px}textarea{display:block;width:100%;resize:vertical;white-sp
 <details><summary>查看原文（只读）</summary><pre id="original"></pre></details>
 <label for="candidate">候选完整源码 · 可编辑，可划选单词或句子</label><textarea id="candidate" spellcheck="false" wrap="soft"></textarea>
 <button id="save">保存候选</button><button id="back">返回审核卡片</button>
-<p><small>仅保存待审版本，不替换正式正文。保存新版将清除旧版批注；先保存，再划选并添加新批注。关闭面板前请保存候选。</small></p>
-<strong>已选候选内容</strong><pre id="quote">尚未选中</pre>
-<label for="note">返修要求</label><textarea id="note" placeholder="针对所选文字填写返修要求" spellcheck="false"></textarea>
-<button id="annotate">保存选区批注</button><p id="status" role="status" aria-live="polite">正在读取候选…</p>
+<p><small>仅保存待审版本，不替换正式正文。保存新版将清除旧版批注；先保存，再添加整项或选区批注。关闭面板前请保存候选。</small></p>
+<strong id="scope">批注范围</strong><pre id="quote">默认针对完整原文</pre>
+<label for="note">返修要求</label><textarea id="note" placeholder="填写针对整项原文或所选候选文字的返修要求" spellcheck="false"></textarea>
+<button id="annotate">保存返修批注</button><p id="status" role="status" aria-live="polite">正在读取候选…</p>
 <script nonce="${nonce}">
 const api=acquireVsCodeApi(), byId=id=>document.getElementById(id), candidate=byId('candidate'), note=byId('note');
-let version, saved='', chosen, waiting=false;
+let version, saved='', original='', chosen, waiting=false;
 function update(){byId('save').disabled=waiting||candidate.value===saved;byId('annotate').disabled=waiting||candidate.value!==saved||!chosen||!note.value.trim();byId('back').disabled=waiting;candidate.readOnly=waiting;note.readOnly=waiting;}
-function select(){if(candidate.selectionStart!==candidate.selectionEnd){chosen={start:candidate.selectionStart,end:candidate.selectionEnd};byId('quote').textContent=candidate.value.slice(chosen.start,chosen.end);}update();}
+function whole(){chosen=original.trim()?{side:'original'}:{side:'candidate',start:0,end:candidate.value.length};byId('scope').textContent=original.trim()?'批注范围：整项原文（默认）':'批注范围：整项候选（仅补充，无对应原文）';byId('quote').textContent=original.trim()?original:candidate.value;}
+function select(){if(candidate.selectionStart!==candidate.selectionEnd){chosen={side:'candidate',start:candidate.selectionStart,end:candidate.selectionEnd};byId('scope').textContent='批注范围：候选选区';byId('quote').textContent=candidate.value.slice(chosen.start,chosen.end);}else whole();update();}
 function send(type,extra={}){waiting=true;update();api.postMessage({type,version,...extra});}
 candidate.addEventListener('select',select);candidate.addEventListener('mouseup',select);candidate.addEventListener('keyup',select);
 candidate.addEventListener('input',()=>{chosen=undefined;byId('quote').textContent='内容已修改，请先保存候选再选择。';api.postMessage({type:'dirty',version,dirty:candidate.value!==saved});update();});note.addEventListener('input',update);
@@ -53,7 +54,7 @@ byId('save').addEventListener('click',()=>send('save',{value:candidate.value}));
 byId('annotate').addEventListener('click',()=>send('note',{value:candidate.value,...chosen,text:note.value}));
 byId('back').addEventListener('click',()=>send('back'));
 window.addEventListener('message',({data})=>{waiting=false;byId('status').className=data.error?'error':'';byId('status').textContent=data.message||'';
-if(data.candidate!==undefined){version=data.version;candidate.value=data.candidate;saved=candidate.value;byId('original').textContent=data.original;byId('title').textContent=data.title;chosen=undefined;byId('quote').textContent='尚未选中';}
+if(data.candidate!==undefined){version=data.version;candidate.value=data.candidate;saved=candidate.value;original=data.original;byId('original').textContent=original;byId('title').textContent=data.title;whole();}
 if(data.clearNote)note.value='';update();});api.postMessage({type:'ready'});update();
 </script></body></html>`;
 }
@@ -90,9 +91,12 @@ function createCandidatePanel(vscode, context, services) {
                     return post(content('新版候选已保存，旧批注已清除；正文未接收、未替换。'));
                 }
                 if (message.type === 'note') {
-                    const selected = selection(loaded.candidate, message.value, message.start, message.end);
+                    if (message.value !== normalized(loaded.candidate)) throw new Error('请先保存候选修改，再添加批注。');
+                    const selected = message.side === 'original'
+                        ? {side: 'original', start: 0, end: Array.from(loaded.original).length, quote: loaded.original}
+                        : selection(loaded.candidate, message.value, message.start, message.end);
                     await services.note(current, selected, message.text);
-                    return post({clearNote: true, message: '选区批注已保存；未发送给 Codex。'});
+                    return post({clearNote: true, message: '返修批注已保存；未发送给 Codex。'});
                 }
                 if (message.type === 'back') {await services.back(current); return post({message: '已定位原审核卡片。'});}
                 throw new Error('不支持的候选面板操作。');

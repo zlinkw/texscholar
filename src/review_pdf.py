@@ -8,12 +8,14 @@ import subprocess
 import sys
 import tempfile
 from difflib import SequenceMatcher
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from source_review import Review, PENDING, body, locate, digest
 
 ASSETS = {'.tex', '.bib', '.cls', '.sty', '.bst', '.bbx', '.cbx', '.cfg', '.def', '.fd',
           '.map', '.enc', '.tfm', '.otf', '.ttf', '.pdf', '.png', '.jpg', '.jpeg', '.eps', '.svg', '.ps'}
 EXCLUDED = {'.git', '.codex-review', '.latex-build', 'clean_dir', 'node_modules'}
+DIFF_OPTIONS = ('--encoding=utf8', '--no-del', '--math-markup=3', '--graphics-markup=0', '--config', 'MINWORDSBLOCK=0')
 
 PREVIEW_MACROS = r'''
 \usepackage{float}
@@ -100,18 +102,73 @@ def paragraph_span(text, start, end):
     return a, b
 
 
-def delta_fragment(before, after, preamble, source_dir, out, name, latexdiff):
+def delta_fragment(before, after, preamble, source_dir, out, name, latexdiff, previous=None):
     old, new = source_dir / (name + '-old.tex'), source_dir / (name + '-new.tex')
     for target, text in [(old, before), (new, after)]:
         target.write_text(preamble + '\\begin{document}\n' + text + '\n\\end{document}\n', encoding='utf-8', newline='')
-    # Figures already appear in their original/proposed units; only prose needs word markup.
-    delta = command([latexdiff, '--encoding=utf8', '--no-del', '--math-markup=3', '--graphics-markup=0', '--config', 'MINWORDSBLOCK=0', str(old), str(new)],
-                    source_dir, out / name).decode('utf-8')
+    reused = False
+    if previous:
+        previous_source = previous / source_dir.relative_to(out)
+        cached = [previous_source / old.name, previous_source / new.name, previous / (name + '.stdout.log')]
+        if all(p.is_file() and not p.is_symlink() and not p.is_junction() and p.resolve().is_relative_to(previous.resolve()) for p in cached) and cached[0].read_bytes() == old.read_bytes() and cached[1].read_bytes() == new.read_bytes():
+            delta = cached[2].read_bytes().decode('utf-8')
+            (out / (name + '.stdout.log')).write_bytes(delta.encode('utf-8'))
+            reused = True
+    if not reused:
+        # Figures already appear in their original/proposed units; only prose needs word markup.
+        delta = command([latexdiff, *DIFF_OPTIONS, str(old), str(new)],
+                        source_dir, out / name).decode('utf-8')
     header, marker, rest = delta.partition(r'\begin{document}')
     content, closing, _ = rest.rpartition(r'\end{document}')
     if not marker or not closing:
         raise ValueError('差异工具没有返回完整的 LaTeX 文档，已保留日志。')
-    return header, content
+    return header, content, reused
+
+
+def previous_build(parent, document):
+    navigation = parent / 'current' / (document.stem + '-review.json')
+    if not navigation.exists():
+        return None
+    if navigation.is_symlink() or navigation.is_junction():
+        raise ValueError('审核 PDF 缓存导航不能是链接。')
+    saved = json.loads(navigation.read_text(encoding='utf-8'))
+    compiled = Path(saved['compiled_pdf'])
+    previous = compiled.parent.parent
+    if any(p.is_symlink() or p.is_junction() for p in (previous, compiled.parent, compiled)) or not compiled.resolve().is_relative_to(parent.resolve()) or previous.resolve() == parent.resolve():
+        raise ValueError('上次审核 PDF 的编译缓存越出专用目录。')
+    if not compiled.is_file():
+        return None  # Disposable cache was removed; perform an ordinary cold build.
+    return previous
+
+
+def write_review_file(target, raw, previous=None):
+    target.write_bytes(raw)
+    if previous and previous.is_file() and not previous.is_symlink() and not previous.is_junction() and previous.read_bytes() == raw:
+        stat = previous.stat()
+        os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+
+def seed_compiler_cache(previous, out):
+    """Copy the last successful auxiliary state, never mutate it or the paper."""
+    if not previous:
+        return
+    for source in (previous / 'pdf').rglob('*'):
+        if source.is_symlink() or source.is_junction():
+            raise ValueError('审核 PDF 辅助缓存不能包含链接。')
+        target = out / 'pdf' / source.relative_to(previous / 'pdf')
+        if source.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        if not source.is_file():
+            raise ValueError('审核 PDF 辅助缓存不是普通文件。')
+        raw = source.read_bytes()
+        if source.suffix in {'.fdb_latexmk', '.fls', '.log'}:
+            for old, new in [(str(previous), str(out)), (previous.as_posix(), out.as_posix())]:
+                raw = raw.replace(old.encode('utf-8'), new.encode('utf-8'))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+        stat = source.stat()
+        os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))
 
 
 def _command(text, position):
@@ -391,6 +448,13 @@ def source_graph(root, files):
 
 
 def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
+    # Forward and reverse fragments have separate inputs/logs and no shared
+    # mutable state. Two workers bound local CPU/process use for personal review.
+    with ThreadPoolExecutor(max_workers=2) as differences:
+        return _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences)
+
+
+def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences):
     review = Review(repo, state, git)
     data = review.inspect(id_, version, source=True)
     if version != data['edit']['versions'][-1] or not data['source_match'] or data['edit']['status'] not in PENDING:
@@ -411,12 +475,24 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
         raise ValueError('主文档没有进入源码快照，请检查文件类型与路径。')
     parent = document.parent / '.latex-build' / 'review-diff'
     parent.mkdir(parents=True, exist_ok=True)
+    for component in (parent.parent, parent, parent / 'current'):
+        if component.is_symlink() or component.is_junction():
+            raise ValueError('审核 PDF 输出目录不能是链接。')
+    if not parent.resolve().is_relative_to(review.repo):
+        raise ValueError('审核 PDF 输出越出论文目录。')
+    previous = previous_build(parent, document)
+    previous_diff = None
+    if previous:
+        comparison = previous / 'comparison.json'
+        if comparison.is_file() and not comparison.is_symlink() and not comparison.is_junction() and json.loads(comparison.read_text(encoding='utf-8')).get('diff_command') == [latexdiff, *DIFF_OPTIONS]:
+            previous_diff = previous
     out = Path(tempfile.mkdtemp(prefix=id_ + '-', dir=parent))
     source_dir = out / 'source'
     for rel, raw in files.items():
         destination = source_dir / rel
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(body(raw.decode('utf-8-sig')).encode('utf-8') if rel.suffix.lower() == '.tex' else raw)
+        write_review_file(destination, body(raw.decode('utf-8-sig')).encode('utf-8') if rel.suffix.lower() == '.tex' else raw,
+                          previous / 'source' / rel if previous else None)
     main_text = body(files[relative].decode('utf-8-sig'))
     preamble, marker, _ = main_text.partition(r'\begin{document}')
     if not marker:
@@ -433,7 +509,7 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
         item = review.payload(edit)
         start, end = locate(text, review.live_excerpt(edit, item), item['left'], item['right'])
         grouped.setdefault(rel, []).append({'id': id__, 'start': start, 'end': end, 'item': item, 'deferred': edit.get('deferred', False)})
-    header = None
+    header, reused_fragments = None, 0
     for rel, edits in grouped.items():
         live = body(files[rel].decode('utf-8-sig'))
         original = live
@@ -463,9 +539,16 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
                     chunks.append(new_sentence)
                     continue
                 label = ','.join(unit['ids'])
-                name = 'block-' + str(len(shown)) + '-' + str(n)
-                header, proposed = delta_fragment(old_sentence, new_sentence, preamble, source_dir / relative.parent, out, name + '-new', latexdiff)
-                _, old_marked = delta_fragment(new_sentence, old_sentence, preamble, source_dir / relative.parent, out, name + '-old', latexdiff)
+                name = 'item-' + label + '-' + str(n)
+                tasks = [differences.submit(delta_fragment, old, new, preamble, source_dir / relative.parent, out, name + '-' + side, latexdiff, previous_diff)
+                         for old, new, side in [(old_sentence, new_sentence, 'new'), (new_sentence, old_sentence, 'old')]]
+                wait(tasks)
+                errors = [task.exception() for task in tasks if task.exception() is not None]
+                if errors:
+                    raise errors[0]
+                header, proposed, cached_new = tasks[0].result()
+                _, old_marked, cached_old = tasks[1].result()
+                reused_fragments += int(cached_new) + int(cached_old)
                 if unit['addition_only']:
                     old_marked = r'\emph{Addition only; no corresponding original text.}'
                 if unit['deletion_only']:
@@ -489,15 +572,19 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
                 shown.extend(unit['ids'])
             display = ''.join(chunks)
             reviewed = reviewed[:a] + display + reviewed[b:]
-        (source_dir / rel).write_text(reviewed, encoding='utf-8', newline='')
+        write_review_file(source_dir / rel, reviewed.encode('utf-8'), previous / 'source' / rel if previous else None)
     if header is None:
         raise ValueError('没有可预览的待审正文修改。')
     reviewed_main = (source_dir / relative).read_bytes().decode('utf-8')
     reviewed_body = reviewed_main.partition(r'\begin{document}')[2]
     derived = source_dir / relative.parent / '__codex_inline_review__.tex'
-    derived.write_text('\\PassOptionsToPackage{normalem}{ulem}\n' + header + PREVIEW_MACROS + '\\begin{document}' + with_legend(reviewed_body), encoding='utf-8', newline='')
+    write_review_file(derived, ('\\PassOptionsToPackage{normalem}{ulem}\n' + header + PREVIEW_MACROS + '\\begin{document}' + with_legend(reviewed_body)).encode('utf-8'),
+                      previous / derived.relative_to(out) if previous else None)
     pdf_dir = out / 'pdf'; pdf_dir.mkdir()
-    command([latexmk, '-pdf', '-synctex=1', '-interaction=nonstopmode', '-file-line-error', '-jobname=review',
+    seed_compiler_cache(previous, out)
+    # A fresh generation needs fresh SyncTeX paths. -gt requests one
+    # TeX pass, not forced BibTeX/all rules; latexmk still settles real changes.
+    command([latexmk, '-pdf', '-gt', '-synctex=1', '-interaction=nonstopmode', '-file-line-error', '-jobname=review',
              '-outdir=' + str(pdf_dir), str(derived)], derived.parent, out / 'compile')
     pdf = pdf_dir / 'review.pdf'
     if not pdf.is_file():
@@ -559,7 +646,8 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
         temporary = Path(stream.name)
     os.replace(temporary, navigation)
     os.replace(temporary_pdf, visible)
-    result = {'pdf': str(pdf), 'navigation': str(navigation), 'output': str(out), 'id': id_, 'version': version, 'kind': 'full-paper-sentence-review', 'shown_ids': shown}
+    result = {'pdf': str(pdf), 'navigation': str(navigation), 'output': str(out), 'id': id_, 'version': version, 'kind': 'full-paper-sentence-review', 'shown_ids': shown,
+              'reused_fragments': reused_fragments, 'reused_auxiliary': previous is not None, 'diff_command': [latexdiff, *DIFF_OPTIONS]}
     (out / 'comparison.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     return result
 

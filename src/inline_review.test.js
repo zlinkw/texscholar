@@ -164,6 +164,16 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
     assert(fs.readFileSync(handoff[1].fsPath, 'utf8').includes('审阅框编号：1'));
     assert(fs.readFileSync(handoff[1].fsPath, 'utf8').includes(original));
     assert(fs.readFileSync(handoff[1].fsPath, 'utf8').includes(candidate));
+    for (const mode of ['empty', 'unrelated-selection', 'no-active-editor']) {
+        editor.selection = new Range(original.length + 10, original.length + 15);
+        editor.selection.isEmpty = mode === 'empty';
+        vscode.window.activeTextEditor = mode === 'no-active-editor' ? undefined : editor;
+        const whole = await handlers.get('localLatex.inlineAnnotate')(currentCard);
+        await ui.post({thread: whole, text: '整项原文返修：' + mode});
+        assert.equal(edit.requests.at(-1).quote, original, 'card annotation defaults to its original, not an unrelated editor selection');
+        assert.equal(edit.requests.at(-1).side, 'original');
+    }
+    vscode.window.activeTextEditor = editor;
     assert(!backendCalls.some(x => x.args.some(a => String(a).endsWith('review_pdf.py'))), 'source toggles, annotation and saved notes must not compile');
     await handlers.get('localLatex.inlinePreview')(threads.at(-1));
     const launch = backendCalls.find(x => x.args.includes('--new-window'));

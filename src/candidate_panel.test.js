@@ -60,6 +60,11 @@ test('the shared candidate panel edits pending text and posts exact notes withou
     await Promise.all(queue.splice(0));
     const candidate = element('candidate'), note = element('note');
     assert.equal(candidate.value, data.candidate.replace(/\r\n/g, '\n'));
+    note.value = '针对整项原文的返修要求。'; note.handlers.input();
+    assert.equal(element('annotate').disabled, false, 'no mouse selection is required');
+    element('annotate').handlers.click(); await Promise.all(queue.splice(0));
+    const whole = events.find(event => event[0] === 'note')[2];
+    assert.deepEqual(whole, {side: 'original', start: 0, end: Array.from(data.original).length, quote: data.original});
     candidate.value = '😀 Revised candidate words.\n'; candidate.handlers.input();
     element('save').handlers.click(); await Promise.all(queue.splice(0));
     assert.equal(candidate.value, '😀 Revised candidate words.\n', 'a conflict preserves unsaved text');
@@ -74,11 +79,13 @@ test('the shared candidate panel edits pending text and posts exact notes withou
     note.value = '这里只改候选。'; note.handlers.input();
     assert.equal(element('annotate').disabled, false);
     element('annotate').handlers.click(); await Promise.all(queue.splice(0));
-    const saved = events.find(event => event[0] === 'note');
+    const saved = events.filter(event => event[0] === 'note').at(-1);
     assert.equal(saved[2].quote, 'candidate');
     assert.equal(saved[2].side, 'candidate');
     assert.equal(Array.from(data.candidate).slice(saved[2].start, saved[2].end).join(''), 'candidate');
     assert.equal(note.value, '');
+    candidate.selectionStart = candidate.selectionEnd; candidate.handlers.mouseup();
+    assert.match(element('scope').textContent, /整项原文/);
     assert.equal(data.original, originalSource, 'editing a candidate never applies it to the manuscript');
     assert.equal(htmlWrites, 1, 'save/note operations update controls, not the whole webview DOM');
     assert.equal(disposed, false);

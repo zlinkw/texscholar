@@ -111,7 +111,7 @@ function createInlineReview(vscode, context, execute = run) {
     let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
     const shownPanels = new Set(), openedPDFs = new Set(), expandedQuestions = new Set(), pdfMetadata = new Map();
     context.subscriptions.push(controller, deleted);
-    controller.options = {prompt: '填写针对选中文字的返修要求', placeHolder: '保存后可一键把全部批注加入 Codex；不会自动发送。'};
+    controller.options = {prompt: '填写返修要求（默认针对整项原文，也可选中文字）', placeHolder: '保存后可一键把全部批注加入 Codex；不会自动发送。'};
     const config = () => vscode.workspace.getConfiguration('localLatex');
     const uri = (c, file) => vscode.Uri.file(path.join(c.repo, file));
     const sameFile = require('./tools').samePath;
@@ -449,18 +449,22 @@ function createInlineReview(vscode, context, execute = run) {
     }
     async function annotate(arg) {
         const c = contextFor(arg), data = await current(c), editor = vscode.window.activeTextEditor;
-        if (!editor || !sameFile(editor.document.uri.fsPath, path.join(c.repo, data.edit.file))) throw new Error('请先点击对应编号的原文。');
-        const selection = editor.selection;
-        const at = selection.isEmpty ? range(editor.document, data) : selection;
-        const start = Array.from(editor.document.getText().slice(0, editor.document.offsetAt(at.start))).length - data.source.start;
-        const end = Array.from(editor.document.getText().slice(0, editor.document.offsetAt(at.end))).length - data.source.start;
-        if (start < 0 || end > Array.from(data[data.source.side]).length) throw new Error('请选择该编号原文范围内的文字。候选文字可在批注中明确引用。');
+        const side = data.original.trim() ? 'original' : 'candidate', excerpt = data[side];
+        let note = {c, side, start: 0, end: Array.from(excerpt).length, quote: excerpt};
+        const selected = editor && sameFile(editor.document.uri.fsPath, path.join(c.repo, data.edit.file)) && !editor.selection.isEmpty;
+        if (selected) {
+            const at = editor.selection;
+            const start = Array.from(editor.document.getText().slice(0, editor.document.offsetAt(at.start))).length - data.source.start;
+            const end = Array.from(editor.document.getText().slice(0, editor.document.offsetAt(at.end))).length - data.source.start;
+            if (start >= 0 && start < end && end <= Array.from(data[data.source.side]).length) note = {c, side: data.source.side, start, end, quote: editor.document.getText(at)};
+            else if (!threadContexts.has(arg?.thread || arg) && !arg?.repo) throw new Error('请选择该编号原文范围内的文字，或在该卡片内添加整项批注。');
+        }
         showCard(c);
         const thread = cards.get(c.id);
         thread.contextValue = 'localLatexInlineDraft'; thread.canReply = true;
-        thread.label = `${c.id} · 保存精确选区批注`;
+        thread.label = `${c.id} · 保存返修批注`;
         thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
-        drafts.set(thread, {c, side: data.source.side, start, end, quote: editor.document.getText(at)});
+        drafts.set(thread, note);
         return thread;
     }
     function cancelComment(arg) {

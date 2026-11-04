@@ -112,6 +112,95 @@ class ReviewPDF(unittest.TestCase):
     apply = NativeReview.apply
     proposal = NativeReview.proposal
 
+    def test_incremental_review_reuses_unchanged_regions_and_bibliography_at_personal_scale(self):
+        import time
+        paragraphs = [f'The model for case {i} is strong.\nContext for case {i} remains unchanged.' for i in range(1, 101)]
+        main = self.root / 'main.tex'
+        main.write_text('\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n'
+                        + '\n\n'.join(paragraphs) + '\n\nFixture citation \\cite{fixture}.\n'
+                        + '\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n', encoding='utf-8')
+        (self.root / 'refs.bib').write_text('@article{fixture, author={Fixture, Test}, title={Isolated compilation fixture}, journal={Fixture Journal}, year={2026}}\n', encoding='utf-8')
+        self.apply('begin', 'incremental', ['main.tex', 'reply.tex'])
+        for i in range(1, 101):
+            self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': f'The model for case {i} is strong.',
+                                   'after': f'The model for case {i} is reliable.'})
+        def build():
+            data = self.review().inspect('1')
+            before = main.read_bytes(), (self.root / 'reply.tex').read_bytes()
+            start = time.perf_counter()
+            result = preview(self.root, 'reply.tex', main, '1', data['version'], 'missing-git',
+                             str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+            elapsed = time.perf_counter() - start
+            self.assertEqual((main.read_bytes(), (self.root / 'reply.tex').read_bytes()), before)
+            return result, elapsed
+        first, cold = build()
+        bibliography = (Path(first['output']) / 'pdf/review.bbl').read_bytes()
+        self.apply('propose', {'after': 'The model for case 1 is robust.'}, '1')
+        one, one_seconds = build()
+        self.assertEqual(one['reused_fragments'], 198)
+        self.assertTrue(one['reused_auxiliary'])
+        for i in range(2, 7):
+            self.apply('propose', {'after': f'The model for case {i} is compact and reliable.'}, str(i))
+        five, five_seconds = build()
+        self.assertEqual(five['reused_fragments'], 190)
+        for result in [one, five]:
+            out = Path(result['output'])
+            self.assertEqual((out / 'pdf/review.bbl').read_bytes(), bibliography)
+            self.assertNotRegex((out / 'compile.stdout.log').read_text(encoding='utf-8'), r"applying rule ['\"]bibtex")
+        text = ' '.join(page.extract_text() for page in PdfReader(five['pdf']).pages)
+        self.assertIn('compact and reliable', text)
+        self.assertIn('Isolated compilation fixture', text)
+        self.assertNotIn('citation [?]', text)
+        self.assertEqual(first['pdf'], five['pdf'])
+        print('INCREMENTAL_REVIEW_SECONDS', json.dumps({'items': 100, 'cold': cold, 'update_1': one_seconds,
+                                                     'update_5': five_seconds, 'pdf': five['pdf']}))
+
+    def test_missing_disposable_diff_metadata_rebuilds_and_foreign_auxiliary_path_is_refused(self):
+        from unittest.mock import patch
+        id_ = self.proposal(); data = self.review().inspect(id_)
+        args = (self.root, 'reply.tex', self.root / 'main.tex', id_, data['version'], 'missing-git',
+                str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        first = preview(*args)
+        missing = Path(first['output']) / 'comparison.json'
+        is_file = Path.is_file
+        # Simulate a disposable cache file being absent without deleting artifacts.
+        with patch.object(Path, 'is_file', lambda path: False if path == missing else is_file(path)):
+            rebuilt = preview(*args)
+        self.assertEqual(rebuilt['reused_fragments'], 0)
+        self.assertTrue(rebuilt['reused_auxiliary'])
+        self.assertIn('reliable', ' '.join(page.extract_text() for page in PdfReader(rebuilt['pdf']).pages))
+        pdf = Path(rebuilt['pdf']).read_bytes()
+        source = (self.root / 'main.tex').read_bytes(), (self.root / 'reply.tex').read_bytes()
+        navigation = Path(rebuilt['navigation'])
+        metadata = json.loads(navigation.read_text(encoding='utf-8'))
+        metadata['compiled_pdf'] = str(self.root / 'foreign-cache/pdf/review.pdf')
+        navigation.write_text(json.dumps(metadata), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, '越出专用目录'):
+            preview(*args)
+        self.assertEqual(Path(rebuilt['pdf']).read_bytes(), pdf)
+        self.assertEqual(((self.root / 'main.tex').read_bytes(), (self.root / 'reply.tex').read_bytes()), source)
+
+    def test_changed_citations_and_bibliography_are_not_hidden_by_incremental_auxiliary_state(self):
+        main = self.root / 'main.tex'
+        main.write_text(main.read_text(encoding='utf-8').replace(r'\end{document}',
+            'Reference context \\cite{first}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}'), encoding='utf-8')
+        bib = self.root / 'refs.bib'
+        bib.write_text('@article{first,author={Fixture, First},title={First isolated reference},journal={Fixture},year={2026}}\n', encoding='utf-8')
+        self.apply('begin', 'bibliography-invalidation', ['main.tex', 'reply.tex'])
+        id_ = self.proposal()
+        def build():
+            data = self.review().inspect(id_)
+            return preview(self.root, 'reply.tex', main, id_, data['version'], 'missing-git',
+                           str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        first = build()
+        before = (Path(first['output']) / 'pdf/review.bbl').read_bytes()
+        bib.write_text(bib.read_text(encoding='utf-8') + '@article{second,author={Fixture, Second},title={New isolated reference},journal={Fixture},year={2026}}\n', encoding='utf-8')
+        self.apply('propose', {'after': r'The model is reliable and compact~\cite{second}.'}, id_)
+        changed = build()
+        self.assertTrue(changed['reused_auxiliary'])
+        self.assertNotEqual((Path(changed['output']) / 'pdf/review.bbl').read_bytes(), before)
+        self.assertIn('New isolated reference', ' '.join(page.extract_text() for page in PdfReader(changed['pdf']).pages))
+
     def test_positional_multi_sentence_item_has_one_heading_with_question_ids_and_one_rule(self):
         main = self.root / 'main.tex'
         paragraph = 'The model is strong. The context remains unchanged. The model is fast.'
