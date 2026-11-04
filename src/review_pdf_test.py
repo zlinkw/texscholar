@@ -13,6 +13,32 @@ EXE = '.exe' if os.name == 'nt' else ''
 
 
 class ReviewUnits(unittest.TestCase):
+    def test_paragraph_candidate_displays_only_changed_sentence_runs_with_the_same_id(self):
+        before = 'Opening context stays. The model is strong. Middle context stays. The model is fast. Ending context stays.'
+        for after, pairs in [
+            (before.replace('strong', 'reliable'), [('The model is strong.', 'The model is reliable.')]),
+            (before.replace('strong', 'reliable').replace('fast', 'efficient'),
+             [('The model is strong.', 'The model is reliable.'), ('The model is fast.', 'The model is efficient.')]),
+            ('% 局部写作逻辑\n' + before.replace('strong', 'reliable'), [('The model is strong.', 'The model is reliable.')])
+        ]:
+            edits = [{'id': '9', 'start': 37, 'end': 37 + len(before), 'item': {'after': after}}]
+            units = list(review_units(before, edits, 37))
+            changed = [unit for unit in units if unit['kind'] != 'equal']
+            self.assertEqual([(u['before'].strip(), u['after'].strip()) for u in changed], pairs)
+            self.assertEqual([u['ids'] for u in changed], [['9']] * len(pairs))
+            displayed = ''.join(u['after'] if u['kind'] == 'equal' else u['before'] + u['after'] for u in units)
+            for context in ['Opening context stays.', 'Middle context stays.', 'Ending context stays.']:
+                self.assertEqual(displayed.count(context), 1)
+            self.assertTrue(all(u['change_type'] == 'Within paragraph' for u in changed))
+        adjacent = 'Opening stays. The model is strong. The model is fast. Ending stays.'
+        changed = self.changes(adjacent, [('9', adjacent, adjacent.replace('strong', 'reliable').replace('fast', 'efficient'))])
+        self.assertEqual([(u['before'].strip(), u['after'].strip()) for u in changed],
+                         [('The model is strong. The model is fast.', 'The model is reliable. The model is efficient.')])
+        self.assertEqual(changed[0]['ids'], ['9'])
+        full = self.changes('First old sentence. Second old sentence.', [('9', 'First old sentence. Second old sentence.', 'First new sentence. Second new sentence.')])
+        self.assertEqual(len(full), 1, 'a genuinely rewritten whole paragraph remains one compact pair')
+        self.assertEqual(full[0]['change_type'], 'Paragraph rewrite')
+
     def test_real_paragraph_types_ignore_soft_lines_and_comment_only_lines(self):
         text = 'Opening sentence.\nOld sentence. Tail stays.\n\nWhole old paragraph.\n\nNext stays.'
         changes = self.changes(text, [('1', 'Old sentence.', 'New sentence.'), ('2', 'Whole old paragraph.', 'Whole new paragraph.')])
@@ -201,7 +227,7 @@ class ReviewPDF(unittest.TestCase):
         self.assertNotEqual((Path(changed['output']) / 'pdf/review.bbl').read_bytes(), before)
         self.assertIn('New isolated reference', ' '.join(page.extract_text() for page in PdfReader(changed['pdf']).pages))
 
-    def test_positional_multi_sentence_item_has_one_heading_with_question_ids_and_one_rule(self):
+    def test_positional_multi_sentence_item_repeats_only_changes_with_the_same_question_ids(self):
         main = self.root / 'main.tex'
         paragraph = 'The model is strong. The context remains unchanged. The model is fast.'
         after = 'The model is reliable. The context remains unchanged. The model is efficient.'
@@ -218,15 +244,15 @@ class ReviewPDF(unittest.TestCase):
         result = preview(self.root, 'reply.tex', main, id_, data['version'], 'missing-git',
                          str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
         source = (Path(result['output']) / 'source/__codex_inline_review__.tex').read_text(encoding='utf-8')
-        self.assertEqual(source.count(r'\textbf{[' + id_ + ']}'), 1)
-        self.assertEqual(source.count(r'\rule{\linewidth}{0.3pt}'), 1)
+        self.assertEqual(source.count(r'\textbf{[' + id_ + ']}'), 2)
+        self.assertEqual(source.count(r'\rule{\linewidth}{0.3pt}'), 2)
         self.assertNotIn('[' + id_ + '] Original', source)
         self.assertNotIn('[' + id_ + '] Proposed', source)
         text = ' '.join(' '.join(page.extract_text() for page in PdfReader(result['pdf']).pages).split())
         self.assertIn('R1-Q3, R4-Q5', text)
-        self.assertIn('Paragraph rewrite', text)
-        self.assertIn(r'\P{} Paragraph rewrite', source)
-        self.assertEqual(text.count('The context remains unchanged.'), 2)
+        self.assertIn('Within paragraph', text)
+        self.assertIn(r'\P{} Within paragraph', source)
+        self.assertEqual(text.count('The context remains unchanged.'), 1)
         self.assertIn('The model is reliable.', text)
         self.assertEqual({p: (self.root / p).read_bytes() for p in before}, before)
         print('COMPACT_POSITIONAL_PDF', result['pdf'])

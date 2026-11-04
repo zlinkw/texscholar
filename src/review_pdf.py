@@ -313,7 +313,7 @@ def _pair_units(old, new):
 
 def _unit_changes(before, after):
     old, new = _unit_spans(before), _unit_spans(after)
-    diff = SequenceMatcher(None, [u['text'].strip() for u in old], [u['text'].strip() for u in new], autojunk=False)
+    diff = SequenceMatcher(None, [visible_tex(u['text']).strip() for u in old], [visible_tex(u['text']).strip() for u in new], autojunk=False)
     for kind, a, b, c, d in diff.get_opcodes():
         pairs = [(old[a:b], new[c:d])] if kind == 'equal' else _pair_units(old[a:b], new[c:d])
         for first, second in pairs:
@@ -410,10 +410,17 @@ def review_units(before, edits, offset=0):
         for edit in sorted(window['edits'], key=lambda e: e['start'], reverse=True):
             start, end = edit['start'] - offset - a, edit['end'] - offset - a
             new = new[:start] + edit['item']['after'] + new[end:]
-        # A positional prose item may cover adjacent sentences, up to one
-        # paragraph. Keep that single decision together, not one pair per sentence.
-        prose = len(_unit_spans(old)) > 1 and not re.search(r'\n[ \t]*\n|\\(?:begin|end)\{|\\\[|\\\]|\$\$', old.strip())
-        units = [{'kind': 'replace', 'before': old, 'after': new}] if prose else _unit_changes(old, new)
+        # Decision scope is independent of PDF scope. Unchanged sentences are
+        # emitted once; only adjacent changed prose shares a comparison pair.
+        units = []
+        for unit in _unit_changes(old, new):
+            if units and unit['kind'] != 'equal' and units[-1]['kind'] != 'equal':
+                first, second = units[-1]['before'] + unit['before'], units[-1]['after'] + unit['after']
+                parts = _unit_spans(first) + _unit_spans(second)
+                if all(part['kind'] == 'prose' for part in parts) and not any(re.search(r'\n[ \t\r]*\n|\\par\b', visible_tex(text).strip()) for text in (first, second)):
+                    units[-1] = {'kind': 'replace', 'before': first, 'after': second}
+                    continue
+            units.append(unit)
         position = a
         for unit in units:
             unit['ids'] = [] if unit['kind'] == 'equal' else [window['edits'][0]['id']]
