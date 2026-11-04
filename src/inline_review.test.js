@@ -7,6 +7,27 @@ const path = require('node:path');
 const {createInlineReview, markedWords, displayText, summary, deletionPreview} = require('./inline_review');
 const disposable = () => ({dispose() {}});
 const fileWatcher = () => ({dispose() {}, onDidChange: disposable, onDidCreate: disposable, onDidDelete: disposable});
+const {view, locateDisplay} = require('./review_positions');
+
+test('review positions exclude the mechanical ledger and follow unsaved header edits without changing source', () => {
+    for (const eol of ['\n', '\r\n']) {
+        const state = value => ['% CODEX-REVIEW-STATE-BEGIN', '% 交接状态', '% CODEX-REVIEW-DATA ' + JSON.stringify({quote: 'Actual original sentence.', value}), '% CODEX-REVIEW-STATE-END', ''].join(eol);
+        const prefix = '% 中文科研规则 😀' + eol, tail = '\\begin{document}' + eol + 'Actual original sentence.' + eol + '\\end{document}';
+        const old = prefix + state(1) + tail;
+        const start = old.lastIndexOf('Actual original sentence.'), end = start + 'Actual original sentence.'.length;
+        const data = {original: 'Actual original sentence.', candidate: 'New sentence.', source: {text: old, side: 'original', start: Array.from(old.slice(0, start)).length, end: Array.from(old.slice(0, end)).length}};
+        const updated = prefix + state('longer state record'.repeat(40)).replace('% 交接状态', '% 交接状态' + eol + '% 更多工作记录') + tail;
+        const at = locateDisplay(data, view(updated));
+        assert.equal(updated.slice(at.start, at.end), data.original);
+        assert(at.start > updated.indexOf('% CODEX-REVIEW-STATE-END'));
+        const insertion = {...data, original: '', source: {...data.source, end: data.source.start}};
+        assert.equal(locateDisplay(insertion, view(updated)).start, at.start, 'addition-only anchor is not paired with its quote in state JSON');
+        assert.equal(locateDisplay(data, view(updated.replace('Actual original sentence.' + eol, 'Manually rewritten sentence.' + eol))), undefined, 'manual content changes cannot be fuzzily relocated');
+        assert.equal(locateDisplay(data, view(updated.replace('% CODEX-REVIEW-STATE-END', '% incomplete state marker'))), undefined);
+        const bad = {...data, source: {...data.source, start: Array.from(old.slice(0, old.indexOf('Actual original sentence.'))).length, end: Array.from(old.slice(0, old.indexOf('Actual original sentence.') + data.original.length)).length}};
+        assert.equal(locateDisplay(bad, view(updated)), undefined, 'mechanical JSON quotes never become review locations');
+    }
+});
 
 for (const decision of ['accept', 'reject']) test(`original card toolbar can ${decision}; exact notes join Codex context without sending or diff tabs`, async () => {
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'inline-host-'));
@@ -219,7 +240,7 @@ test('same-line candidates share one native card but retain independent actions 
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'shared-line-'));
     const file = path.join(root, 'paper.tex'), text = 'First sentence. Second sentence.\nThird sentence.';
     fs.writeFileSync(file, text, 'utf8');
-    const calls = [], threads = [], handlers = new Map(), notices = []; let selectionListener, pauseFeedback, finishFeedback, choices, batch = 'batch-1', watchChanged, watchCreated, saveDocument;
+    const calls = [], threads = [], handlers = new Map(), notices = []; let selectionListener, pauseFeedback, finishFeedback, choices, batch = 'batch-1', watchChanged, watchCreated, saveDocument, changeDocument;
     const owner = path.join(root, 'reply.tex'); fs.writeFileSync(owner, 'state-1', 'utf8');
     const items = Object.fromEntries(['First sentence.', 'Second sentence.', 'Third sentence.'].map((original, index) => {
         const start = text.indexOf(original), id = String(index + 1);
@@ -242,7 +263,7 @@ test('same-line candidates share one native card but retain independent actions 
         workspace: {isTrusted: true, textDocuments: [document], workspaceFolders: [{uri: uri(root)}],
             getWorkspaceFolder: () => ({uri: uri(root)}), findFiles: async () => [],
             getConfiguration: () => ({get: (key, fallback) => fallback}), openTextDocument: async () => document,
-            onDidChangeTextDocument: disposable, onDidSaveTextDocument: fn => {saveDocument = fn; return disposable();},
+            onDidChangeTextDocument: fn => {changeDocument = fn; return disposable();}, onDidSaveTextDocument: fn => {saveDocument = fn; return disposable();},
             createFileSystemWatcher: () => ({dispose() {}, onDidChange(fn) {watchChanged = fn; return disposable();}, onDidCreate(fn) {watchCreated = fn; return disposable();}, onDidDelete: disposable})},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
             showTextDocument: async () => editor, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}),
@@ -370,6 +391,28 @@ test('same-line candidates share one native card but retain independent actions 
     await handlers.get('localLatex.inlineAccept')({...c, id: '1', version: 'v2'});
     assert.equal(items['1'].edit.status, 'accepted');
     assert(live().some(thread => thread.label.startsWith('3 ·') && thread.collapsibleState === 1), 'acceptance skips the rejected second item and opens the next actual pending card');
+    const liveDraft = await ui.annotate({...c, id: '3', version: 'v2'});
+    const body = liveDraft.comments[0], beforeRelocation = calls.length;
+    const prefix = '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA {"quote":"Third sentence."}\n% CODEX-REVIEW-STATE-END\n';
+    document.isDirty = true;
+    let unsaved = prefix + text;
+    document.getText = r => r ? unsaved.slice(r.start, r.end) : unsaved;
+    await changeDocument({document});
+    assert.equal(ui.records.get('3').range.start, prefix.length + text.indexOf('Third sentence.'));
+    assert.equal(liveDraft.range, ui.records.get('3').range);
+    assert.equal(liveDraft.comments[0], body, 'reanchoring preserves the existing original/candidate display and draft');
+    assert(live().filter(thread => thread.uri.fsPath === file).every(thread => thread.range.start >= prefix.length), 'no native gutter target lands in this file\'s machine ledger');
+    unsaved = prefix + text.replace('Third sentence.', 'Manually rewritten source.');
+    await changeDocument({document});
+    assert.equal(ui.records.get('3').displayConflict, true);
+    assert.equal(liveDraft.range, undefined, 'unmatched original loses its invalid gutter anchor, not its unsaved draft');
+    assert.equal(liveDraft.disposed, undefined);
+    unsaved = text;
+    await changeDocument({document});
+    assert.equal(ui.records.get('3').displayConflict, false);
+    assert.equal(liveDraft.range.start, text.indexOf('Third sentence.'));
+    assert.equal(calls.length, beforeRelocation, 'dirty-buffer positioning does not read/write the backend or compile');
+    assert.equal(fs.readFileSync(file, 'utf8'), text);
 });
 
 test('hidden full-line plans leave no blank placeholders; complete deletion results and surviving words remain visible', () => {

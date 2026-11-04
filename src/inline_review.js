@@ -4,6 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const cp = require('node:child_process');
 const crypto = require('node:crypto');
+const positions = require('./review_positions');
 const OPEN = new Set(['pending', 'rework']);
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**';
 
@@ -176,7 +177,7 @@ function createInlineReview(vscode, context, execute = run) {
         return selected.c;
     }
     function sourceRecord(editor) {
-        const candidates = [...records.values()].filter(r => sameFile(editor.document.uri.fsPath, path.join(r.c.repo, r.data.edit.file)));
+        const candidates = [...records.values()].filter(r => !r.displayConflict && sameFile(editor.document.uri.fsPath, path.join(r.c.repo, r.data.edit.file)));
         const point = editor.document.offsetAt(editor.selection.start);
         return candidates.find(r => {
             const start = editor.document.offsetAt(r.range.start), end = editor.document.offsetAt(r.range.end);
@@ -411,8 +412,18 @@ function createInlineReview(vscode, context, execute = run) {
             const at = range(doc, data);
             records.set(id, {c: selected, data, range: at});
         }
+        reconcileThreads(c, {oldCards, oldRecords, oldThreads, previous, available, writing}, focus);
+        renderedOwnerHash = state.sha256;
+        candidatePanel.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), c);
+        decorate();
+        await setContext();
+        await showPanel(c.repo, explicitPanel);
+    }
+    function reconcileThreads(c, prior, focus = false, resetFile) {
+        const {oldCards, oldRecords, oldThreads, previous, available, writing} = prior;
         const groups = new Map();
         for (const record of records.values()) {
+            if (record.displayConflict) continue;
             const key = lineKey(record);
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key).push(record);
@@ -421,7 +432,8 @@ function createInlineReview(vscode, context, execute = run) {
         for (const [key, members] of groups) {
             const draft = writing.get(key);
             const record = draft?.record || (focus && members.find(r => r.c.id === c.id))
-                || members.find(r => r.c.id === previous.get(key)) || members[0];
+                || members.find(r => r.c.id === previous.get(key))
+                || members.find(r => threadContexts.get(oldCards.get(r.c.id))?.id === r.c.id) || members[0];
             let thread = draft?.thread || available.get(key);
             if (!thread || used.has(thread)) thread = members.map(r => oldCards.get(r.c.id)).find(t => t && oldThreads.has(t) && !used.has(t));
             const old = thread && oldRecords.get(threadContexts.get(thread).id);
@@ -430,23 +442,56 @@ function createInlineReview(vscode, context, execute = run) {
             used.add(thread);
             threadMembers.set(thread, members.map(r => r.c.id));
             for (const member of members) cards.set(member.c.id, thread);
+            // Whole-buffer edits can move native tracked decorations even when
+            // the extension's cached Range compares equal. Rebind via the public
+            // file-comment position, preserving the thread and its draft/body.
+            if (resetFile && sameFile(resetFile, thread.uri.fsPath)) thread.range = undefined;
             renderCard(thread, record, old, !!draft, oldMembers);
             if (!draft && !old) {
                 thread.collapsibleState = record.c.id === c.id ? vscode.CommentThreadCollapsibleState.Expanded : vscode.CommentThreadCollapsibleState.Collapsed;
             } else if (focus && record.c.id === c.id) thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
         }
-        for (const thread of oldThreads) if (!used.has(thread)) thread.dispose();
-        renderedOwnerHash = state.sha256;
-        candidatePanel.sync(records, c);
-        decorate();
-        await setContext();
-        await showPanel(c.repo, explicitPanel);
+        for (const thread of oldThreads) if (!used.has(thread)) {
+            const selected = threadContexts.get(thread), record = records.get(selected.id);
+            if (drafts.has(thread) && record?.displayConflict) {
+                thread.range = undefined;
+                thread.label = `${selected.id} · 原文位置待核对，批注草稿仍保留`;
+                cards.set(selected.id, thread);
+            } else thread.dispose();
+        }
+    }
+    function relocateDocument(document) {
+        const text = document.getText(), currentView = positions.view(text), oldViews = new Map();
+        const prior = {oldCards: new Map(cards), oldRecords: new Map(records), oldThreads: new Set(cards.values()), previous: new Map(), available: new Map(), writing: new Map()};
+        let affected = false;
+        for (const [id, record] of records) {
+            if (!sameFile(document.uri.fsPath, path.join(record.c.repo, record.data.edit.file))) continue;
+            affected = true;
+            if (!oldViews.has(record.data.source.text)) oldViews.set(record.data.source.text, positions.view(record.data.source.text));
+            const span = positions.locateDisplay(record.data, currentView, oldViews.get(record.data.source.text));
+            if (!span) {records.set(id, {...record, displayConflict: true}); continue;}
+            const source = {...record.data.source, text, start: Array.from(text.slice(0, span.start)).length, end: Array.from(text.slice(0, span.end)).length};
+            records.set(id, {...record, displayConflict: false, data: {...record.data, source}, range: new vscode.Range(document.positionAt(span.start), document.positionAt(span.end))});
+        }
+        if (!affected) return;
+        if (document.isDirty) deferredFiles.add(document.uri.fsPath);
+        for (const thread of prior.oldThreads) {
+            const selected = threadContexts.get(thread), record = records.get(selected.id);
+            if (!record || record.displayConflict) continue;
+            prior.previous.set(lineKey(record), selected.id);
+            prior.available.set(lineKey(record), thread);
+            if (drafts.has(thread)) prior.writing.set(lineKey(record), {thread, record});
+        }
+        cards.clear();
+        reconcileThreads(watchedScope, prior, false, document.uri.fsPath);
+        candidatePanel.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), watchedScope);
     }
     function decorate() {
         for (const editor of vscode.window.visibleTextEditors) {
             if (editor.document.uri.scheme !== 'file') continue;
             const spans = [];
-            if (!editor.document.isDirty) for (const {c, data} of records.values()) {
+            if (!editor.document.isDirty) for (const {c, data, displayConflict} of records.values()) {
+                if (displayConflict) continue;
                 if (!sameFile(editor.document.uri.fsPath, path.join(c.repo, data.edit.file))) continue;
                 if (editor.document.getText() !== data.source.text) continue;
                 const side = data.source.side === 'original' ? 'old' : 'new';
@@ -783,10 +828,11 @@ function createInlineReview(vscode, context, execute = run) {
                 startup = startup.then(() => enableReview()).catch(error => vscode.window.showErrorMessage(error.message));
             return;
         }
-        if (sameFile(event.document.uri.fsPath, path.join(activeScope.repo, activeScope.owner)) && event.document.getText() === ownerAfterWrite) return;
         const relevant = sameFile(event.document.uri.fsPath, path.join(activeScope.repo, activeScope.owner))
             || [...records.values()].some(r => sameFile(event.document.uri.fsPath, path.join(r.c.repo, r.data.edit.file)));
         if (!relevant) return;
+        relocateDocument(event.document);
+        if (sameFile(event.document.uri.fsPath, path.join(activeScope.repo, activeScope.owner)) && event.document.getText() === ownerAfterWrite) return;
         if (event.document.isDirty) {decorate(); return;}
         return requestRefresh(event.document.uri.fsPath);
     }));
