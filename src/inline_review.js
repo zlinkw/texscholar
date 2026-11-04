@@ -3,6 +3,7 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const cp = require('node:child_process');
+const crypto = require('node:crypto');
 const OPEN = new Set(['pending', 'rework']);
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**';
 
@@ -109,6 +110,8 @@ function createInlineReview(vscode, context, execute = run) {
     const controller = vscode.comments.createCommentController('localLatexInlineReview', '原文内修订审核');
     const deleted = vscode.window.createTextEditorDecorationType({color: '#d32f2f', textDecoration: 'line-through'});
     let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
+    let watchedScope, watcher, autoRefresh, renderedOwnerHash, refreshChain = Promise.resolve();
+    const changedFiles = new Set(), reviewFiles = new Set(), deferredFiles = new Set();
     const shownPanels = new Set(), openedPDFs = new Set(), expandedQuestions = new Set(), pdfMetadata = new Map();
     context.subscriptions.push(controller, deleted);
     controller.options = {prompt: '填写返修要求（默认针对整项原文，也可选中文字）', placeHolder: '保存后可一键把全部批注加入 Codex；不会自动发送。'};
@@ -135,9 +138,11 @@ function createInlineReview(vscode, context, execute = run) {
         }
     }
     async function current(c) {
-        const data = await backend(c, ['inspect', '--id', c.id, '--version', c.version, '--source']);
-        if (!OPEN.has(data.edit.status)) throw new Error('该编号已有决定。请刷新或查看下一项。');
-        if (data.edit.versions.at(-1) !== c.version) throw new Error('候选已经更新，请先刷新卡片。');
+        const data = await backend(c, ['inspect', '--id', c.id, '--source']);
+        if (!OPEN.has(data.edit.status) || data.edit.versions.at(-1) !== c.version) {
+            await refresh(c);
+            throw new Error('该项已有新版或审核决定，显示已自动更新。请核对后再次操作；未代为接收或覆盖。');
+        }
         if (!data.source_match) throw new Error('原文被手动修改，需先核对；没有覆盖任何内容。');
         cleanBuffers(c, data.edit.file);
         const shown = vscode.workspace.textDocuments.find(doc => doc.uri.scheme === 'file' && sameFile(doc.uri.fsPath, path.join(c.repo, data.edit.file)));
@@ -292,8 +297,62 @@ function createInlineReview(vscode, context, execute = run) {
         thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
         activeScope = record.c;
     }
-    async function refresh(c, explicitPanel = false, focus = false) {
+    function relevantFile(file) {
+        return watchedScope && (sameFile(file, path.join(watchedScope.repo, watchedScope.owner))
+            || [...reviewFiles].some(p => sameFile(file, p)));
+    }
+    function requestRefresh(file) {
+        if (relevantFile(file)) changedFiles.add(file);
+        return flushRefresh();
+    }
+    async function changedSinceRender(files) {
+        for (const file of files) {
+            if (!relevantFile(file)) continue;
+            if ([...deferredFiles].some(p => sameFile(file, p))) return true;
+            const raw = await fs.readFile(file), text = raw.toString('utf8').replace(/^\uFEFF/, '');
+            if (sameFile(file, path.join(watchedScope.repo, watchedScope.owner))) {
+                // Compare the actual owner version with the backend packet, or
+                // our own exact write, before starting another Python process.
+                if (text !== ownerAfterWrite && crypto.createHash('sha256').update(raw).digest('hex') !== renderedOwnerHash) return true;
+            } else {
+                const cached = [...records.values()].find(r => sameFile(file, path.join(r.c.repo, r.data.edit.file)));
+                if (!cached || cached.data.source.text !== text) return true;
+            }
+        }
+        return false;
+    }
+    function flushRefresh() {
+        if (busy || autoRefresh || !changedFiles.size) return autoRefresh || Promise.resolve();
+        autoRefresh = (async () => {
+            while (changedFiles.size && !busy) {
+                const files = [...changedFiles]; changedFiles.clear();
+                if (await changedSinceRender(files)) await refresh(watchedScope);
+            }
+        })().catch(error => vscode.window.showErrorMessage(error.message)).finally(() => {
+            autoRefresh = undefined;
+            if (changedFiles.size && !busy) return flushRefresh();
+        });
+        return autoRefresh;
+    }
+    function watchScope(c) {
+        if (watchedScope && sameFile(watchedScope.repo, c.repo) && watchedScope.owner === c.owner) return;
+        watcher?.dispose(); changedFiles.clear(); reviewFiles.clear(); deferredFiles.clear(); renderedOwnerHash = undefined; ownerAfterWrite = undefined;
+        watchedScope = {repo: c.repo, owner: c.owner};
+        watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(c.repo, '**/*.tex'));
+        const changed = resource => requestRefresh(resource.fsPath);
+        context.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed));
+    }
+    function refresh(c, explicitPanel = false, focus = false) {
+        const task = refreshChain.then(() => renderRefresh(c, explicitPanel, focus));
+        // Recover the sequencing tail only; the caller still receives failures.
+        refreshChain = task.catch(() => {});
+        return task;
+    }
+    async function renderRefresh(c, explicitPanel = false, focus = false) {
+        watchScope(c);
         const state = await backend(c, ['cards']);
+        reviewFiles.clear(); deferredFiles.clear();
+        for (const edit of Object.values(state.edits)) if (OPEN.has(edit.status)) reviewFiles.add(path.join(c.repo, edit.file));
         if (batch && batch !== state.session) {
             expandedSources.clear(); expandedQuestions.clear(); pdfMetadata.clear();
             for (const thread of new Set(cards.values())) {drafts.delete(thread); thread.dispose();}
@@ -303,11 +362,17 @@ function createInlineReview(vscode, context, execute = run) {
         const documents = new Map();
         const previous = new Map(), writing = new Map(), available = new Map();
         const oldCards = new Map(cards), oldRecords = new Map(records), oldThreads = new Set(cards.values());
+        const blocked = new Set();
+        for (const [file, text] of Object.entries(state.sources)) {
+            const doc = await vscode.workspace.openTextDocument(uri(c, file));
+            documents.set(file, doc);
+            if (doc.isDirty || doc.getText() !== text) {blocked.add(file); deferredFiles.add(path.join(c.repo, file));}
+        }
         for (const thread of new Set(cards.values())) {
             const selected = threadContexts.get(thread); let record = records.get(selected.id);
             previous.set(lineKey(record), selected.id);
             const replacement = state.cards[selected.id];
-            if (drafts.has(thread) && (!replacement || replacement.version === selected.version)) {
+            if (drafts.has(thread) && state.edits[selected.id] && OPEN.has(state.edits[selected.id].status) && (!replacement || replacement.version === selected.version)) {
                 if (replacement) record = {...record, data: {...record.data, edit: {...record.data.edit, questions: replacement.edit.questions}}};
                 writing.set(lineKey(record), {thread, record});
             } else if (drafts.has(thread)) {
@@ -321,6 +386,7 @@ function createInlineReview(vscode, context, execute = run) {
         // Ordinary refresh/metadata updates keep the draft. A genuine new
         // candidate generation replaces its old disposable review interaction.
         for (const {record} of writing.values()) records.set(record.c.id, record);
+        for (const [id, record] of oldRecords) if (blocked.has(record.data.edit.file) && state.cards[id]) records.set(id, record);
         for (const [id, data] of Object.entries(state.cards)) {
             if (records.has(id)) continue;
             const edit = data.edit;
@@ -358,6 +424,8 @@ function createInlineReview(vscode, context, execute = run) {
             } else if (focus && record.c.id === c.id) thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
         }
         for (const thread of oldThreads) if (!used.has(thread)) thread.dispose();
+        renderedOwnerHash = state.sha256;
+        candidatePanel.sync(records, c);
         decorate();
         await setContext();
         await showPanel(c.repo, explicitPanel);
@@ -517,7 +585,7 @@ function createInlineReview(vscode, context, execute = run) {
     async function exclusive(action) {
         if (busy) throw new Error('当前审核操作尚未结束。');
         busy = true;
-        try {return await action();} finally {busy = false;}
+        try {return await action();} finally {busy = false; await flushRefresh();}
     }
     const candidatePanel = require('./candidate_panel').createCandidatePanel(vscode, context, {
         read: current,
@@ -594,7 +662,7 @@ function createInlineReview(vscode, context, execute = run) {
             if (busy && !displayOnly) return vscode.window.showWarningMessage('当前审核操作尚未结束。');
             if (!displayOnly) busy = true;
             try { return await handler(...args); } catch (error) { vscode.window.showErrorMessage(error.message); }
-            finally { if (!displayOnly) busy = false; }
+            finally { if (!displayOnly) {busy = false; await flushRefresh();} }
         }));
     }
     command('localLatex.inlineReview', () => select());
@@ -708,7 +776,10 @@ function createInlineReview(vscode, context, execute = run) {
             || [...records.values()].some(r => sameFile(event.document.uri.fsPath, path.join(r.c.repo, r.data.edit.file)));
         if (!relevant) return;
         if (event.document.isDirty) {decorate(); return;}
-        if (!busy) refresh(activeScope).catch(error => vscode.window.showErrorMessage(error.message));
+        return requestRefresh(event.document.uri.fsPath);
+    }));
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
+        if (document.uri.scheme === 'file') return requestRefresh(document.uri.fsPath);
     }));
     startup = enableReview().catch(error => {vscode.window.showErrorMessage(error.message);});
     return {open, refresh, accept, reject, annotate, post, preview, addRequests, controller, records, ready: startup};

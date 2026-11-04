@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {createInlineReview, markedWords, displayText, summary, deletionPreview} = require('./inline_review');
+const disposable = () => ({dispose() {}});
+const fileWatcher = () => ({dispose() {}, onDidChange: disposable, onDidCreate: disposable, onDidDelete: disposable});
 
 for (const decision of ['accept', 'reject']) test(`original card toolbar can ${decision}; exact notes join Codex context without sending or diff tabs`, async () => {
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'inline-host-'));
@@ -47,7 +49,7 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
         workspace: {isTrusted: true, textDocuments: [document], getWorkspaceFolder: () => ({uri: uri(root)}),
             workspaceFolders: [{uri: uri(root)}], findFiles: async () => automatic ? [uri(file), uri(owner)] : [],
             getConfiguration: () => ({get: (key, fallback) => fallback}), openTextDocument: async () => document,
-            onDidChangeTextDocument: () => ({dispose() {}})},
+            onDidChangeTextDocument: disposable, onDidSaveTextDocument: disposable, createFileSystemWatcher: fileWatcher},
         languages: {registerCodeLensProvider(selector, provider) {lensProvider = provider; return {dispose() {}};}},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
             async showTextDocument(target, options) {calls.push(['showTextDocument', target, options]); return editor;},
@@ -217,7 +219,8 @@ test('same-line candidates share one native card but retain independent actions 
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'shared-line-'));
     const file = path.join(root, 'paper.tex'), text = 'First sentence. Second sentence.\nThird sentence.';
     fs.writeFileSync(file, text, 'utf8');
-    const calls = [], threads = [], handlers = new Map(), notices = []; let selectionListener, pauseFeedback, finishFeedback, choices, batch = 'batch-1';
+    const calls = [], threads = [], handlers = new Map(), notices = []; let selectionListener, pauseFeedback, finishFeedback, choices, batch = 'batch-1', watchChanged, watchCreated, saveDocument;
+    const owner = path.join(root, 'reply.tex'); fs.writeFileSync(owner, 'state-1', 'utf8');
     const items = Object.fromEntries(['First sentence.', 'Second sentence.', 'Third sentence.'].map((original, index) => {
         const start = text.indexOf(original), id = String(index + 1);
         return [id, {sha256: 'fresh', edit: {file: 'paper.tex', deferred: true, status: 'pending', versions: ['v1'], requests: []},
@@ -239,7 +242,8 @@ test('same-line candidates share one native card but retain independent actions 
         workspace: {isTrusted: true, textDocuments: [document], workspaceFolders: [{uri: uri(root)}],
             getWorkspaceFolder: () => ({uri: uri(root)}), findFiles: async () => [],
             getConfiguration: () => ({get: (key, fallback) => fallback}), openTextDocument: async () => document,
-            onDidChangeTextDocument: () => ({dispose() {}})},
+            onDidChangeTextDocument: disposable, onDidSaveTextDocument: fn => {saveDocument = fn; return disposable();},
+            createFileSystemWatcher: () => ({dispose() {}, onDidChange(fn) {watchChanged = fn; return disposable();}, onDidCreate(fn) {watchCreated = fn; return disposable();}, onDidDelete: disposable})},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
             showTextDocument: async () => editor, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}),
             onDidChangeTextEditorSelection: fn => {selectionListener = fn; return {dispose() {}};},
@@ -250,7 +254,7 @@ test('same-line candidates share one native card but retain independent actions 
     };
     const backend = async (command, args, cwd, input) => {
         calls.push({args, input});
-        if (args.includes('cards')) return JSON.stringify({session: batch, edits: Object.fromEntries(Object.entries(items).map(([id, data]) => [id, data.edit])), cards: Object.fromEntries(Object.entries(items).filter(([, d]) => d.edit.status === 'pending')),
+        if (args.includes('cards')) return JSON.stringify({session: batch, sha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(owner)).digest('hex'), edits: Object.fromEntries(Object.entries(items).map(([id, data]) => [id, data.edit])), cards: Object.fromEntries(Object.entries(items).filter(([, d]) => d.edit.status === 'pending')),
             sources: Object.fromEntries(Object.values(items).map(d => [d.edit.file, text]))});
         if (args.includes('inspect')) return JSON.stringify({...items[args[args.indexOf('--id') + 1]], source: {...items[args[args.indexOf('--id') + 1]].source, text}});
         if (args.includes('feedback')) {if (pauseFeedback) await pauseFeedback; items[input.id].edit.requests.push({...input, id: 'note-' + calls.length, status: 'open'});
@@ -315,15 +319,30 @@ test('same-line candidates share one native card but retain independent actions 
     assert.equal(live().length, 3, 'identical line numbers in different files must never share a view');
     const pendingDraft = await ui.annotate({...c, id: '1', version: 'v1'});
     items['1'].edit.questions = [{id: 'R1-Q3', file: 'paper.tex', quote: 'First sentence.'}];
-    await ui.refresh(c);
+    fs.writeFileSync(owner, 'state-question-metadata', 'utf8');
+    await watchCreated(uri(owner));
     assert.equal(pendingDraft.disposed, undefined, 'association-only updates preserve same-version drafts');
     assert(pendingDraft.comments[0].body.value.includes('R1-Q3'));
     items['1'].edit.versions.push('v2'); items['1'].version = 'v2';
     items['1'].candidate = 'First revised wording.'; items['1'].edit.requests = [];
-    await ui.refresh(c);
+    fs.writeFileSync(owner, 'state-new-candidate', 'utf8');
+    await watchChanged(uri(owner));
     assert.equal(pendingDraft.disposed, true, 'a new AI candidate must not be hidden behind an old forced draft');
     assert.equal(ui.records.get('1').c.version, 'v2');
     assert(live().some(t => t.comments[0].body.value.includes('First revised wording.') && t.canReply === false));
+    const decisions = calls.filter(call => call.args.includes('decide')).length;
+    await handlers.get('localLatex.inlineAccept')({...c, id: '1', version: 'v1'});
+    assert.equal(calls.filter(call => call.args.includes('decide')).length, decisions, 'refreshing a stale button never retries acceptance on a different candidate');
+    assert(notices.some(message => message.includes('显示已自动更新')));
+    const duplicate = calls.filter(call => call.args.includes('cards')).length;
+    await watchChanged(uri(owner));
+    assert.equal(calls.filter(call => call.args.includes('cards')).length, duplicate, 'duplicate OS events do not reread the backend');
+    otherDocument.isDirty = true;
+    items['4'].version = 'v2'; items['4'].edit.versions.push('v2');
+    fs.writeFileSync(owner, 'state-dirty-file', 'utf8'); await watchChanged(uri(owner));
+    assert.equal(ui.records.get('4').c.version, 'v1', 'unsaved source buffers keep their current card until save');
+    otherDocument.isDirty = false; await saveDocument(otherDocument);
+    assert.equal(ui.records.get('4').c.version, 'v2', 'a save event finishes deferred refresh even if source bytes stayed equal');
     items['5'] = {...JSON.parse(JSON.stringify(items['1'])), version: 'v1', original: ' ', candidate: 'Added sentence.',
         edit: {...items['1'].edit, versions: ['v1']}, source: {start: 15, end: 16, side: 'original'}};
     await ui.refresh(c);
@@ -338,7 +357,13 @@ test('same-line candidates share one native card but retain independent actions 
     const beforeDisplay = notices.length;
     await handlers.get('localLatex.inlineToggleSource')({...c, id: '5', version: 'v1'});
     assert(!notices.slice(beforeDisplay).some(message => message.includes('操作尚未结束')), 'display-only actions must not share the writer busy gate');
+    items['3'].version = 'v2'; items['3'].edit.versions.push('v2'); items['3'].candidate = 'Third updated wording.';
+    fs.writeFileSync(owner, 'state-during-feedback', 'utf8');
+    const beforeQueued = calls.filter(call => call.args.includes('cards')).length;
+    await watchChanged(uri(owner));
+    assert.equal(calls.filter(call => call.args.includes('cards')).length, beforeQueued, 'a busy writer queues the event instead of running a competing refresh');
     finishFeedback(); await pendingSave;
+    assert.equal(ui.records.get('3').c.version, 'v2', 'the queued event is drained immediately after the operation without polling');
     const oldThreads = live(); batch = 'batch-2';
     await ui.refresh(c);
     assert(oldThreads.every(thread => thread.disposed), 'a fresh batch cannot retain old comment/button contexts with reused 1/a labels');
@@ -388,7 +413,7 @@ test('cold TeX discovery waits for native Comments registration; code-only proje
                 registerUriHandler: () => disposable, onDidChangeActiveTextEditor: () => disposable, onDidChangeTextEditorSelection: () => disposable,
                 showErrorMessage: x => errors.push(x)},
             workspace: {isTrusted: true, workspaceFolders: [folder], findFiles: async () => tex ? [{fsPath: file}] : [],
-                getConfiguration: () => ({get: (_, fallback) => fallback}), onDidChangeTextDocument: () => disposable},
+                getConfiguration: () => ({get: (_, fallback) => fallback}), onDidChangeTextDocument: () => disposable, onDidSaveTextDocument: () => disposable, createFileSystemWatcher: fileWatcher},
             languages: {registerCodeLensProvider: () => disposable},
             commands: {registerCommand: (name, handler) => {handlers.set(name, handler); return disposable;},
                 getCommands: async () => commentsRegistered ? ['workbench.action.focusCommentsPanel'] : [],
