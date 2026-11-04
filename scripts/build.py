@@ -17,11 +17,11 @@ RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', '
 def archive_bytes(files):
     stream = io.BytesIO()
     # Store the small text resources without compressor-version differences
-    # between the local Python runtime and the hosted runner.
+    # between local Python runtimes.
     with zipfile.ZipFile(stream, 'w', zipfile.ZIP_STORED) as archive:
         for name, raw in sorted(files.items()):
             # All packaged resources are UTF-8 text. Match Git's canonical
-            # line endings so local Windows and cloud builds use the same bytes.
+            # line endings so local Windows and Mac builds use the same bytes.
             raw = raw.replace(b'\r\n', b'\n')
             entry = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_STORED

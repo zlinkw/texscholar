@@ -1,4 +1,4 @@
-"""Publish already built, tag-verified packages; safely resume missing uploads."""
+"""Upload existing local, tag-verified packages; never build or launch Actions."""
 from pathlib import Path
 import argparse
 import hashlib
@@ -6,6 +6,8 @@ import json
 import os
 import re
 import subprocess
+import sys
+import time
 
 
 def gh(*args, payload=None):
@@ -18,13 +20,20 @@ def api(endpoint, payload=None, missing=False, method='POST'):
     args = ['api', '--hostname', 'github.com', endpoint]
     if payload is not None:
         args += ['--method', method, '--input', '-']
-    result = gh(*args, payload=payload)
-    if result.returncode:
-        error = result.stderr.decode('utf-8', errors='replace')
+    # GETs have actually failed with gateway errors/EOF on this connection.
+    # Retry only those reads; mutation failures still require reconciliation.
+    attempts = 3 if payload is None else 1
+    for attempt in range(attempts):
+        result = gh(*args, payload=payload)
+        if not result.returncode:
+            return json.loads(result.stdout)
+        error = result.stderr.decode('utf-8', errors='replace').strip()
         if missing and '(HTTP 404)' in error:
             return None
-        raise RuntimeError(error.strip())
-    return json.loads(result.stdout)
+        if attempt + 1 == attempts or not re.search(r'\bHTTP (?:502|503|504)\b|:\s*EOF\b|unexpected EOF\b', error):
+            raise RuntimeError(error)
+        print(f'GitHub read failed; retry {attempt + 1}/{attempts - 1}: {error}', file=sys.stderr)
+        time.sleep(attempt + 1)
 
 
 def verify_artifacts(root, directory, tag):
@@ -76,11 +85,19 @@ def publish(repo, tag, files):
     print(release['html_url'])
 
 
-if __name__ == '__main__':
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tag', required=True)
     parser.add_argument('--repo', default=os.environ.get('GITHUB_REPOSITORY'), required=not os.environ.get('GITHUB_REPOSITORY'))
     parser.add_argument('--artifacts', type=Path, default=Path('dist'))
-    args = parser.parse_args()
+    parser.add_argument('--proxy', help='HTTP proxy for this publisher process only; does not change system settings.')
+    args = parser.parse_args(argv)
+    if args.proxy:
+        os.environ['HTTPS_PROXY'] = args.proxy
+        os.environ['HTTP_PROXY'] = args.proxy
     files = verify_artifacts(Path(__file__).resolve().parent.parent, args.artifacts, args.tag)
     publish(args.repo, args.tag, files)
+
+
+if __name__ == '__main__':
+    main()

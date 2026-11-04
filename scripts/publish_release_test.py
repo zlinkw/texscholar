@@ -81,6 +81,36 @@ class Publish(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'tested artifact digest'):
                 release.verify_artifacts(root, root, 'v1.0.0')
 
+    @patch.object(release, 'publish')
+    @patch.object(release, 'verify_artifacts')
+    def test_local_cli_uploads_existing_artifacts_and_sets_only_process_proxy(self, verify, publish):
+        verify.return_value = self.files
+        with patch.dict(os.environ, {}, clear=True):
+            release.main(['--tag', 'v1.0.0', '--repo', 'example/paper', '--artifacts', 'dist/v1.0.0',
+                          '--proxy', 'http://127.0.0.1:12345'])
+            self.assertEqual(os.environ['HTTPS_PROXY'], 'http://127.0.0.1:12345')
+            self.assertEqual(os.environ['HTTP_PROXY'], 'http://127.0.0.1:12345')
+        verify.assert_called_once_with(Path(release.__file__).resolve().parent.parent, Path('dist/v1.0.0'), 'v1.0.0')
+        publish.assert_called_once_with('example/paper', 'v1.0.0', self.files)
+
+    @patch.object(release.time, 'sleep')
+    @patch.object(release, 'gh')
+    def test_transient_read_is_retried_without_repeating_a_write(self, gh, sleep):
+        gh.side_effect = [subprocess.CompletedProcess([], 1, b'', b'Get "https://api.github.com/example": EOF'),
+                          subprocess.CompletedProcess([], 0, b'{"id": 1}', b'')]
+        self.assertEqual(release.api('example'), {'id': 1})
+        self.assertEqual(gh.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    @patch.object(release.time, 'sleep')
+    @patch.object(release, 'gh')
+    def test_post_gateway_error_is_never_blindly_retried(self, gh, sleep):
+        gh.return_value = subprocess.CompletedProcess([], 1, b'', b'HTTP 502: Bad Gateway')
+        with self.assertRaisesRegex(RuntimeError, '502'):
+            release.api('example', {'tag_name': 'v1.0.0'})
+        gh.assert_called_once()
+        sleep.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
