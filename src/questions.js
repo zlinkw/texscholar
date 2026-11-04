@@ -1,6 +1,13 @@
 'use strict';
 const path = require('node:path');
 const fs = require('node:fs/promises');
+function notifyProblem(vscode, reason) {
+    return vscode.window.showWarningMessage('原始审稿问题关联有问题：' + reason, '一键复制给 AI', '查看规则').then(async choice => {
+        const guide = path.join(__dirname, 'question-linking-guide.md');
+        if (choice === '一键复制给 AI') await vscode.env.clipboard.writeText(await fs.readFile(guide, 'utf8'));
+        else if (choice === '查看规则') await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(guide));
+    });
+}
 function validateTarget(repo, question) {
     if (!question || !['id', 'file', 'quote'].every(k => typeof question[k] === 'string' && question[k].trim()))
         throw new Error('没有完整的原始审稿意见关联；不能按编号猜测。');
@@ -24,7 +31,7 @@ async function jump(vscode, repo, question) {
     }
     const editor = await vscode.window.showTextDocument(doc, {preview: false});
     if (hits.length !== 1) {
-        vscode.window.showWarningMessage('问题原文已变化或不唯一，已打开源文件但没有猜测定位；请核对关联。'); return;
+        notifyProblem(vscode, '问题原文已变化或不唯一，已打开源文件但没有猜测定位。').catch(error => vscode.window.showErrorMessage(error.message)); return;
     }
     const [start] = hits;
     editor.selection = new vscode.Selection(doc.positionAt(start), doc.positionAt(start + question.quote.length));
@@ -38,10 +45,11 @@ function links(text) {
 }
 function activate(context, vscode = require('vscode')) {
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.jumpQuestion', async spec => {
+        if (!vscode.workspace.isTrusted || !vscode.workspace.getWorkspaceFolder(vscode.Uri.file(spec.repo)))
+            return vscode.window.showErrorMessage('请在对应的受信任论文项目内打开问题。');
         try {
-            if (!vscode.workspace.isTrusted || !vscode.workspace.getWorkspaceFolder(vscode.Uri.file(spec.repo))) throw new Error('请在对应的受信任论文项目内打开问题。');
             await jump(vscode, spec.repo, spec.question);
-        } catch (error) {vscode.window.showErrorMessage(error.message);}
+        } catch (error) {notifyProblem(vscode, error.message).catch(problem => vscode.window.showErrorMessage(problem.message));}
     }));
     context.subscriptions.push(vscode.languages.registerHoverProvider({language: 'latex', scheme: 'file'}, {
         provideHover(document, position) {
@@ -66,4 +74,4 @@ function activate(context, vscode = require('vscode')) {
         }
     }));
 }
-module.exports = {activate, jump, links, validateTarget};
+module.exports = {activate, jump, links, validateTarget, notifyProblem};

@@ -51,7 +51,7 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
         languages: {registerCodeLensProvider(selector, provider) {lensProvider = provider; return {dispose() {}};}},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
             async showTextDocument(target, options) {calls.push(['showTextDocument', target, options]); return editor;},
-            async withProgress(options, action) {return action();}, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}),
+            async withProgress(options, action) {return action();}, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}), onDidChangeTextEditorSelection: () => ({dispose() {}}),
             showQuickPick: async () => {throw new Error('No ID picker should be opened');},
             showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x)},
         commands: {registerCommand: (name, handler) => {handlers.set(name, handler); return {dispose() {}};},
@@ -73,7 +73,9 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
         }
         if (args.includes('inspect')) return JSON.stringify(data);
         if (args.includes('status')) return JSON.stringify(state);
-        if (args.includes('feedback')) {edit.requests.push({...input, status: 'open'}); return '{}';}
+        if (args.includes('feedback-context')) return JSON.stringify({items: [{id: '1', file: edit.file, version: 'v1', current_version: 'v1', original, candidate, requests: edit.requests}]});
+        if (args.includes('feedback')) {edit.requests.push({...input, id: 'note-' + edit.requests.length, status: 'open'});
+            return JSON.stringify({card: data, owner_text: 'fixture owner'});}
         if (args.includes('decide')) {
             if (args.includes('--accept')) {value = candidate; edit.status = 'accepted';}
             else {edit.status = 'rejected';}
@@ -146,7 +148,12 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
     await ui.refresh(c);
     assert.equal(draft.disposed, undefined, 'refresh must preserve an unsaved draft inside its card');
     assert.equal(draft.canReply, true);
+    const unchangedCandidateComment = draft.comments[0];
+    const cardsBeforePost = backendCalls.filter(x => x.args.includes('cards')).length;
     await ui.post({thread: draft, text: '保留 fast，只调整选中的词。'});
+    assert.equal(draft.disposed, undefined, 'saving feedback must not reopen or recreate the card');
+    assert.equal(draft.comments[0], unchangedCandidateComment, 'saving feedback updates the lower note only, not the original/candidate content');
+    assert.equal(backendCalls.filter(x => x.args.includes('cards')).length, cardsBeforePost, 'posting must not reread every project candidate');
     assert.equal(edit.requests[0].quote, 'strong');
     assert.equal(edit.requests[0].start, oldStart);
     assert.equal(value, original);
@@ -154,6 +161,9 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
     const handoff = calls.find(x => x[0] === 'chatgpt.addFileToThread');
     assert(handoff);
     assert(fs.readFileSync(handoff[1].fsPath, 'utf8').includes('保留 fast，只调整选中的词。'));
+    assert(fs.readFileSync(handoff[1].fsPath, 'utf8').includes('审阅框编号：1'));
+    assert(fs.readFileSync(handoff[1].fsPath, 'utf8').includes(original));
+    assert(fs.readFileSync(handoff[1].fsPath, 'utf8').includes(candidate));
     assert(!backendCalls.some(x => x.args.some(a => String(a).endsWith('review_pdf.py'))), 'source toggles, annotation and saved notes must not compile');
     await handlers.get('localLatex.inlinePreview')(threads.at(-1));
     const launch = backendCalls.find(x => x.args.includes('--new-window'));
@@ -197,7 +207,7 @@ test('same-line candidates share one native card but retain independent actions 
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'shared-line-'));
     const file = path.join(root, 'paper.tex'), text = 'First sentence. Second sentence.\nThird sentence.';
     fs.writeFileSync(file, text, 'utf8');
-    const calls = [], threads = [], handlers = new Map(), notices = [];
+    const calls = [], threads = [], handlers = new Map(), notices = []; let selectionListener, pauseFeedback, finishFeedback;
     const items = Object.fromEntries(['First sentence.', 'Second sentence.', 'Third sentence.'].map((original, index) => {
         const start = text.indexOf(original), id = String(index + 1);
         return [id, {sha256: 'fresh', edit: {file: 'paper.tex', deferred: true, status: 'pending', versions: ['v1'], requests: []},
@@ -210,7 +220,7 @@ test('same-line candidates share one native card but retain independent actions 
         positionAt: x => x, offsetAt: x => x};
     const editor = {document, selection: {start: 0, end: 0, isEmpty: true}, revealRange() {}, setDecorations() {}};
     const vscode = {
-        Range, Selection: Range, RelativePattern: class {}, Uri: {file: uri}, ViewColumn: {One: 1}, TextEditorRevealType: {},
+        Range, Selection: Range, RelativePattern: class {}, Uri: {file: uri}, ViewColumn: {One: 1}, TextEditorRevealType: {}, TextEditorSelectionChangeKind: {Mouse: 2},
         CommentMode: {Preview: 0}, CommentThreadCollapsibleState: {Expanded: 1, Collapsed: 0},
         MarkdownString: class {constructor() {this.value = '';} appendMarkdown(s) {this.value += s;} appendText(s) {this.value += s;}},
         comments: {createCommentController: () => ({dispose() {}, createCommentThread(uri, range, comments) {
@@ -222,7 +232,8 @@ test('same-line candidates share one native card but retain independent actions 
             onDidChangeTextDocument: () => ({dispose() {}})},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
             showTextDocument: async () => editor, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}),
-            showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x)},
+            onDidChangeTextEditorSelection: fn => {selectionListener = fn; return {dispose() {}};},
+            showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x), showWarningMessage: async x => {notices.push(x);}},
         commands: {registerCommand: (name, handler) => {handlers.set(name, handler); return {dispose() {}};},
             getCommands: async () => [], executeCommand: async () => {}}
     };
@@ -231,7 +242,8 @@ test('same-line candidates share one native card but retain independent actions 
         if (args.includes('cards')) return JSON.stringify({cards: Object.fromEntries(Object.entries(items).filter(([, d]) => d.edit.status === 'pending')),
             sources: Object.fromEntries(Object.values(items).map(d => [d.edit.file, text]))});
         if (args.includes('inspect')) return JSON.stringify({...items[args[args.indexOf('--id') + 1]], source: {...items[args[args.indexOf('--id') + 1]].source, text}});
-        if (args.includes('feedback')) {items[input.id].edit.requests.push({...input, status: 'open'}); return '{}';}
+        if (args.includes('feedback')) {if (pauseFeedback) await pauseFeedback; items[input.id].edit.requests.push({...input, id: 'note-' + calls.length, status: 'open'});
+            return JSON.stringify({card: {...items[input.id], source: {...items[input.id].source, text}}, owner_text: 'fixture owner'});}
         if (args.includes('decide')) {items[args[args.indexOf('--reject') + 1]].edit.status = 'rejected'; return '{}';}
         throw new Error('Unexpected backend command');
     };
@@ -292,6 +304,21 @@ test('same-line candidates share one native card but retain independent actions 
     assert.equal(pendingDraft.disposed, true, 'a new AI candidate must not be hidden behind an old forced draft');
     assert.equal(ui.records.get('1').c.version, 'v2');
     assert(live().some(t => t.comments[0].body.value.includes('First revised wording.') && t.canReply === false));
+    items['5'] = {...JSON.parse(JSON.stringify(items['1'])), version: 'v1', original: ' ', candidate: 'Added sentence.',
+        edit: {...items['1'].edit, versions: ['v1']}, source: {start: 15, end: 16, side: 'original'}};
+    await ui.refresh(c);
+    editor.selection = {start: 15, end: 16, isEmpty: false};
+    selectionListener({kind: 2, textEditor: editor});
+    assert(live().some(t => t.label.startsWith('5 ·') && t.comments[0].body.value.includes('Added sentence.')));
+    const boundaryDraft = await ui.annotate();
+    assert(boundaryDraft.label.startsWith('5 ·'), 'the boundary belongs to the next item, not the preceding inclusive range');
+    pauseFeedback = new Promise(resolve => {finishFeedback = resolve;});
+    const pendingSave = handlers.get('localLatex.inlinePostComment')({thread: boundaryDraft, text: '检查补充内容。'});
+    await new Promise(setImmediate);
+    const beforeDisplay = notices.length;
+    await handlers.get('localLatex.inlineToggleSource')({...c, id: '5', version: 'v1'});
+    assert(!notices.slice(beforeDisplay).some(message => message.includes('操作尚未结束')), 'display-only actions must not share the writer busy gate');
+    finishFeedback(); await pendingSave;
 });
 
 test('hidden full-line plans leave no blank placeholders; complete deletion results and surviving words remain visible', () => {
@@ -326,7 +353,7 @@ test('cold TeX discovery waits for native Comments registration; code-only proje
             comments: {createCommentController: () => ({dispose() {}, createCommentThread() {throw new Error('No state, no cards');}})},
             EventEmitter: class {fire() {} dispose() {}},
             window: {visibleTextEditors: [], createTextEditorDecorationType: () => disposable,
-                registerUriHandler: () => disposable, onDidChangeActiveTextEditor: () => disposable,
+                registerUriHandler: () => disposable, onDidChangeActiveTextEditor: () => disposable, onDidChangeTextEditorSelection: () => disposable,
                 showErrorMessage: x => errors.push(x)},
             workspace: {isTrusted: true, workspaceFolders: [folder], findFiles: async () => tex ? [{fsPath: file}] : [],
                 getConfiguration: () => ({get: (_, fallback) => fallback}), onDidChangeTextDocument: () => disposable},

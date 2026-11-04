@@ -93,7 +93,7 @@ def validate_review_unit(text):
     if whole_environment or whole_display:
         return
     if re.search(r'\n[ \t]*\n', visible) or re.search(r'\\(?:begin|end)\{|\\par\b|\\\[|\\\]|\$\$', visible):
-        raise Conflict('修订范围过大：请优先按句子拆分，最多一个自然段；公式、图表或其他独立环境必须单独编号，不能与前后正文打包。原文和已发编号未改变。')
+        raise Conflict('修订范围过大：请按相邻修改位置分组，最多一个自然段；公式、图注、表注或其他独立格式必须单独编号，不能与前后正文打包。原文和已发编号未改变。')
 
 
 def split_state(text):
@@ -820,6 +820,30 @@ class Review:
             result['cards'][id_] = data
         return result
 
+    def feedback_context(self):
+        """Read exact immutable old/new text for each open note generation."""
+        self.assert_ready()
+        groups = {}
+        for id_, edit in self.state['edits'].items():
+            if edit['status'] not in PENDING:
+                continue
+            for note in edit.get('requests', []):
+                if note['status'] != 'open':
+                    continue
+                version = note['version']
+                if version not in edit['versions']:
+                    raise Conflict('Feedback refers to a missing candidate generation; preserve it for reconciliation')
+                key = (id_, version)
+                if key not in groups:
+                    groups[key] = {'id': id_, 'file': edit['file'], 'version': version,
+                                   'current_version': edit['versions'][-1],
+                                   'original': self.contents(version, 'original.tex'),
+                                   'candidate': self.contents(version, 'candidate.tex'), 'requests': []}
+                groups[key]['requests'].append(copy.deepcopy(note))
+        if self.state_path.read_bytes() != self.raw:
+            raise Conflict('Concurrent review modification while reading feedback context')
+        return {'items': list(groups.values()), 'sha256': digest(self.raw)}
+
     def view(self, id_, code=None):
         self.assert_ready()
         if code:
@@ -869,6 +893,7 @@ def main():
     p.add_argument("--version", help="Displayed immutable version, for a single-item GUI decision")
     sub.add_parser("status")
     sub.add_parser("cards", help="Read pending UI cards with shared live-source text; no PDF or writes")
+    sub.add_parser('feedback-context', help='Read open notes with their exact original/candidate generation; no writes')
     sub.add_parser("feedback", help="UTF-8 JSON anchored author annotation on stdin")
     p = sub.add_parser("inspect")
     p.add_argument("--id", required=True)
@@ -894,6 +919,8 @@ def dispatch(r, args):
         result = r.status()
     elif args.command == "cards":
         result = r.cards()
+    elif args.command == 'feedback-context':
+        result = r.feedback_context()
     elif args.command == "inspect":
         result = r.inspect(args.id, args.version, args.source)
     elif args.command == "show":
@@ -929,6 +956,9 @@ def dispatch(r, args):
             updated, result = r.decide(args.accept, args.reject, {ids[0]: args.version} if args.version else None)
         if args.apply:
             r.persist(updated, args.expect)
+            if args.command == 'feedback':
+                result['card'] = r.inspect(result['id'], source=True)
+                result['owner_text'] = r.encode(r.embedded()).decode('utf-8-sig')
         result.update({"applied": args.apply, "expected_sha256": digest(r.raw)})
     return result
 

@@ -132,6 +132,21 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(state['next'], before['next'])
         self.assertEqual((self.root / 'main.tex').read_bytes(), original)
 
+    def test_feedback_context_contains_exact_original_and_candidate_for_each_note_generation(self):
+        id_ = self.proposal(); data = self.review().inspect(id_)
+        self.apply('feedback', {'id': id_, 'version': data['version'], 'side': 'original', 'start': 13, 'end': 19,
+                                'quote': 'strong', 'text': '修改这里。'})
+        self.apply('propose', {'after': 'The model is reliable and fast.'}, id_)
+        before = {p: (self.root / p).read_bytes() for p in ('main.tex', 'reply.tex')}
+        context = self.review().feedback_context()['items'][0]
+        self.assertEqual(context['id'], id_)
+        self.assertEqual(context['original'], data['original'])
+        self.assertEqual(context['candidate'], data['candidate'])
+        self.assertEqual(context['version'], data['version'])
+        self.assertNotEqual(context['version'], context['current_version'])
+        self.assertEqual(context['requests'][0]['quote'], 'strong')
+        self.assertEqual({p: (self.root / p).read_bytes() for p in before}, before)
+
     def test_cards_cli_is_read_only_and_shares_source_for_multiple_pending_items(self):
         import json
         first = self.proposal()

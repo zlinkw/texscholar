@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const {links, validateTarget, jump} = require('./questions');
+const {links, validateTarget, jump, notifyProblem} = require('./questions');
 test('AI-authored explicit question markers are recognized without guessing question numbering', async () => {
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'questions-'));
     const q = {id: 'Reviewer 2, Comment 3', file: '原始意见.txt', quote: 'Please clarify the selection rule.'};
@@ -18,8 +18,9 @@ test('AI-authored explicit question markers are recognized without guessing ques
     const warnings = [];
     const api = {Uri: {file: file => file}, Selection: class {constructor(start, end) {Object.assign(this, {start, end});}},
         TextEditorRevealType: {InCenterIfOutsideViewport: 1}, workspace: {openTextDocument: async target => {assert.equal(target, file); return doc;}},
-        window: {showTextDocument: async () => editor, showWarningMessage: value => warnings.push(value)}};
+        window: {showTextDocument: async () => editor, showWarningMessage: async value => {warnings.push(value);}}};
     await jump(api, root, q);
+    assert.equal(warnings.length, 0, 'valid associations must not notify');
     assert.equal(editor.selection.start, source.indexOf(q.quote));
     assert.equal(editor.selection.end - editor.selection.start, q.quote.length);
     doc.getText = () => 'Author changed the reviewer source.';
@@ -34,4 +35,16 @@ test('AI-authored explicit question markers are recognized without guessing ques
     doc.getText = () => embedded + q.quote;
     await jump(api, root, q);
     assert.equal(warnings.length, 2, 'two real original matches remain ambiguous');
+});
+
+test('association warning copies reusable global-skill rules only after the author clicks', async () => {
+    let copied, choices;
+    const api = {window: {showWarningMessage: async (...args) => {choices = args; return '一键复制给 AI';}},
+        env: {clipboard: {writeText: async text => {copied = text;}}}};
+    await notifyProblem(api, '尚未关联');
+    assert(choices.includes('查看规则'));
+    assert(copied.includes('全局科研写作 SKILL'));
+    assert(copied.includes('link-questions'));
+    assert(copied.includes('不能按候选编号'));
+    assert(copied.includes('最多一个自然段'));
 });
