@@ -294,13 +294,13 @@ function createInlineReview(vscode, context, execute = run) {
         markdown.supportHtml = true;
         markdown.isTrusted = false;
         const enabledCommands = [];
-        enabledCommands.push('localLatex.inlineTranslate');
+        enabledCommands.push('localLatex.inlineTranslate', 'localLatex.inlineTranslationSource');
         const translationAction = translation?.loading ? '正在翻译…' : translation && Object.keys(translation.errors).length ? '重试未完成翻译'
             : translation ? translation.expanded ? '收起中文' : '展开中文' : '翻译本条为中文';
-        markdown.appendMarkdown(`[${translationAction}（${TRANSLATORS[provider]}）](command:localLatex.inlineTranslate?${encodeURIComponent(JSON.stringify([c]))})`);
+        let translationLinks = `[${translationAction}（${TRANSLATORS[provider]}）](command:localLatex.inlineTranslate?${encodeURIComponent(JSON.stringify([c]))})`;
         if (translation?.expanded && Object.keys(translation.errors).length)
-            markdown.appendMarkdown(` · [收起中文](command:localLatex.inlineTranslate?${encodeURIComponent(JSON.stringify([{...c, hideTranslation: true}]))})`);
-        markdown.appendMarkdown('\n\n');
+            translationLinks += ` · [收起中文](command:localLatex.inlineTranslate?${encodeURIComponent(JSON.stringify([{...c, hideTranslation: true}]))})`;
+        translationLinks += ` · [切换翻译源](command:localLatex.inlineTranslationSource?${encodeURIComponent(JSON.stringify([c]))})`;
         const chinese = key => {
             if (!translation?.expanded) return '';
             const value = translation.results[key], error = translation.errors[key];
@@ -322,6 +322,7 @@ function createInlineReview(vscode, context, execute = run) {
             : `本句／本项已删除。删除后衔接（仅预览）：<br>${wrapHtml(deletionPreview(data))}`;
         const between = appearance.cardLayout === 'compact' ? '<br>' : '</div>\n\n<div>';
         markdown.appendMarkdown(`<div><strong>原文：</strong> ${old}${chinese('original')}${between}<strong>候选：</strong> ${proposed}${chinese('candidate')}</div>\n`);
+        markdown.appendMarkdown('\n\n' + translationLinks);
         if (data.edit.questions?.length) {
             enabledCommands.push('localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges');
             const toggle = encodeURIComponent(JSON.stringify([c]));
@@ -347,11 +348,13 @@ function createInlineReview(vscode, context, execute = run) {
         const {c, data} = record;
         const sameBody = previous && previous.c.id === c.id && previous.c.version === c.version
             && previous.data.edit.deferred === data.edit.deferred
+            && previous.data.edit.location === data.edit.location
             && JSON.stringify(previous.data.edit.questions) === JSON.stringify(data.edit.questions)
             && JSON.stringify(previousMembers) === JSON.stringify(threadMembers.get(thread))
             && (displayText(data.candidate) || deletionPreview(previous.data) === deletionPreview(data));
         const comments = [sameBody ? thread.comments[0]
-            : {body: cardBody(data, c.id, c), mode: vscode.CommentMode.Preview, author: {name: ''}}];
+            : {body: cardBody(data, c.id, c), mode: vscode.CommentMode.Preview,
+                author: {name: `${c.id} · ${data.edit.location || data.edit.file}`}}];
         const oldNotes = new Map((previous?.data.edit.requests || []).map((note, index) => [note.id, {note, comment: thread.comments[index + 1]}]));
         for (const note of data.edit.requests || []) {
             const old = oldNotes.get(note.id);
@@ -907,6 +910,19 @@ function createInlineReview(vscode, context, execute = run) {
     });
     command('localLatex.inlineAddRequests', addRequests);
     command('localLatex.inlineTranslate', translateCard, true);
+    command('localLatex.inlineTranslationSource', async arg => {
+        const c = contextFor(arg); trusted(c);
+        const currentProvider = config().get('translation.provider', 'google');
+        const options = Object.entries(TRANSLATORS).map(([provider, label]) => ({provider, label,
+            description: (provider === currentProvider ? '当前来源；' : '')
+                + (provider === 'google' ? '可能返回 429 限流' : provider === 'bing' ? '匿名请求可能返回 401' : '免密钥网页接口，可能失效')}));
+        const chosen = await vscode.window.showQuickPick(options, {placeHolder: '手动切换翻译源；切换本身不发送文字，之后点击翻译'});
+        if (chosen && chosen.provider !== currentProvider) {
+            const cfg = config(), target = cfg.inspect('translation.provider').workspaceValue === undefined
+                ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
+            await cfg.update('translation.provider', chosen.provider, target);
+        }
+    }, true);
     command('localLatex.inlineToggleSource', async c => {
         const selected = contextFor(c);
         const record = records.get(selected.id), thread = cards.get(selected.id);

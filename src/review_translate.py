@@ -197,7 +197,9 @@ def translate_text(text, provider):
 
 def failure(error):
     if isinstance(error, urllib.error.HTTPError):
-        return 'HTTP ' + str(error.code) + ('：服务要求验证或限制匿名请求，可手动换源。' if error.code in (401, 403, 429) else '：翻译服务请求失败。')
+        if error.code == 429:
+            return 'HTTP 429：翻译服务限流，本次已停止请求。请稍后再试，或点击“切换翻译源”；不会自动换源。'
+        return 'HTTP ' + str(error.code) + ('：服务要求验证或限制匿名请求，可手动换源。' if error.code in (401, 403) else '：翻译服务请求失败。')
     if isinstance(error, (urllib.error.URLError, TimeoutError, OSError)):
         return '翻译连接失败或超时；请检查网络、代理及所选服务。'
     return str(error)

@@ -45,7 +45,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     const data = {sha256: 'fresh', edit, version: 'v1', original, candidate, source_match: true,
         source: {text: original, start: 0, end: Array.from(original).length, side: 'original'},
         changes: [{old_start: oldStart, old_end: oldStart + 6, new_start: oldStart, new_end: oldStart + 8}]};
-    let value = original, lensProvider, commentsRegistered = false, configurationChanged, provider = 'google', releaseTranslation;
+    let value = original, lensProvider, commentsRegistered = false, configurationChanged, provider = 'google', releaseTranslation, sourceChoice;
     const calls = [], threads = [], notices = [], backendCalls = [], handlers = new Map();
     class Range {
         constructor(start, end) {Object.assign(this, {start, end});}
@@ -59,7 +59,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
         env: {appRoot: path.join(root, 'vscode-app')},
         Range, Selection: Range, RelativePattern: class {}, Uri: {file: uri}, ViewColumn: {One: 1, Two: 2}, TextEditorRevealType: {InCenterIfOutsideViewport: 1},
         CommentMode: {Preview: 0}, CommentThreadCollapsibleState: {Expanded: 1, Collapsed: 0},
-        ProgressLocation: {Notification: 1},
+        ProgressLocation: {Notification: 1}, ConfigurationTarget: {Global: 1, Workspace: 2},
         EventEmitter: class {fire() {} dispose() {}},
         MarkdownString: class {constructor() {this.value = '';} appendMarkdown(t) {this.value += t;} appendText(t) {this.value += t;}},
         CodeLens: class {constructor(range, command) {Object.assign(this, {range, command});}},
@@ -69,14 +69,18 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
         }};}},
         workspace: {isTrusted: true, textDocuments: [document], getWorkspaceFolder: () => ({uri: uri(root)}),
             workspaceFolders: [{uri: uri(root)}], findFiles: async () => automatic ? [uri(file), uri(owner)] : [],
-            getConfiguration: () => ({get: (key, fallback) => key === 'translation.provider' ? provider : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback}),
+            getConfiguration: () => ({get: (key, fallback) => key === 'translation.provider' ? provider : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback,
+                inspect: () => ({workspaceValue: autoPDF ? provider : undefined}),
+                update: async (key, value, target) => {assert.equal(key, 'translation.provider'); assert.equal(target, autoPDF ? 2 : 1); provider = value;
+                    configurationChanged({affectsConfiguration: key => key === 'localLatex.translation'});}}),
             onDidChangeConfiguration: callback => {configurationChanged = callback; return disposable();}, openTextDocument: async () => document,
             onDidChangeTextDocument: disposable, onDidSaveTextDocument: disposable, createFileSystemWatcher: fileWatcher},
         languages: {registerCodeLensProvider(selector, provider) {lensProvider = provider; return {dispose() {}};}},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
             async showTextDocument(target, options) {calls.push(['showTextDocument', target, options]); return editor;},
             async withProgress(options, action) {return action();}, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}), onDidChangeTextEditorSelection: () => ({dispose() {}}),
-            showQuickPick: async () => {throw new Error('No ID picker should be opened');},
+            showQuickPick: async options => {assert(options.every(item => item.provider), 'only the explicit source picker, never a review ID picker');
+                return options.find(item => item.provider === sourceChoice);},
             showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x)},
         commands: {registerCommand: (name, handler) => {handlers.set(name, handler); return {dispose() {}};},
             getCommands: async () => ['chatgpt.addFileToThread', ...(commentsRegistered ? ['workbench.action.focusCommentsPanel'] : [])],
@@ -142,18 +146,18 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert.equal(value, original);
     assert.equal(calls.find(x => x[0] === 'showTextDocument')[1].fsPath, file);
     let card = threads.at(-1).comments[0].body;
-    assert(card.value.startsWith('[翻译本条为中文（Google）]'));
+    assert(card.value.startsWith('<div><strong>原文：</strong>'), 'Comments preview starts with actual review content, not a translation action');
     assert(card.value.includes('<div><strong>原文：</strong>'));
     assert(!card.value.includes('修改后：'));
     assert(!card.value.includes('<code>'));
     assert(!card.value.includes('<pre>'));
     assert(!card.value.includes('图例：'));
-    assert.equal(threads.at(-1).comments[0].author.name, '', 'no duplicate number-only author row');
+    assert.equal(threads.at(-1).comments[0].author.name, '1 · paper.tex', 'the native author row identifies the item and location instead of reserving an empty line');
     assert(threads.at(-1).label.includes('− 删除/替换 · ＋ 新增/改写 · ＝ 未改'));
     assert(!card.value.includes('红色删除线'));
     assert(!card.value.includes('中文段落逻辑'));
     assert(card.value.includes('展开完整源码（含注释）'));
-    assert.deepEqual(card.isTrusted, {enabledCommands: ['localLatex.inlineTranslate', 'localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges', 'localLatex.inlineToggleSource']});
+    assert.deepEqual(card.isTrusted, {enabledCommands: ['localLatex.inlineTranslate', 'localLatex.inlineTranslationSource', 'localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges', 'localLatex.inlineToggleSource']});
     assert(card.value.includes('Please clarify reliability.'), 'linked original questions start expanded');
     const beforeQuestion = backendCalls.length;
     await handlers.get('localLatex.inlineQuestions')(c);
@@ -190,8 +194,11 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert(!threads.at(-1).comments[0].body.value.includes('问题中文：'));
     await handlers.get('localLatex.inlineTranslate')(c);
     assert.equal(translatedCalls, completedCalls, 'expansion reuses current-version in-memory translations');
-    provider = 'transmart';
-    configurationChanged({affectsConfiguration: key => key === 'localLatex.translation'});
+    await handlers.get('localLatex.inlineTranslationSource')(c);
+    assert.equal(provider, 'google', 'cancelling the source picker changes nothing');
+    sourceChoice = 'transmart';
+    await handlers.get('localLatex.inlineTranslationSource')(c);
+    assert.equal(provider, 'transmart');
     assert(!threads.at(-1).comments[0].body.value.includes('问题中文：'), 'changing recipient invalidates displayed translation without sending');
     assert.equal(translatedCalls, completedCalls);
     releaseTranslation = true;
