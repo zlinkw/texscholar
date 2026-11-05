@@ -157,6 +157,44 @@ class ReviewPDF(unittest.TestCase):
     apply = NativeReview.apply
     proposal = NativeReview.proposal
 
+    def test_display_preferences_and_acceptance_refresh_preserve_source_and_remove_finished_pairs(self):
+        first = self.proposal()
+        second = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript',
+                                       'before': 'Unchanged context after.', 'after': 'The final context is updated.'})['id']
+        main = self.root / 'main.tex'
+        first_data, second_data = self.review().inspect(first), self.review().inspect(second)
+        style = {'removedColor': '#884400', 'addedColor': '#008844', 'unchangedColor': '#222222',
+                 'strikeDeleted': False, 'showLegend': False}
+        args = (self.root, 'reply.tex', main, first, first_data['version'], 'missing-git',
+                str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        source = main.read_bytes(), (self.root / 'reply.tex').read_bytes()
+        result = preview(*args, style=style)
+        derived = (Path(result['output']) / 'source/__codex_inline_review__.tex').read_text(encoding='utf-8')
+        self.assertIn(r'\definecolor{codexremovedColor}{rgb}{0.533333,0.266667,0.000000}', derived)
+        self.assertIn(r'\definecolor{codexaddedColor}{rgb}{0.000000,0.533333,0.266667}', derived)
+        self.assertNotIn(r'\sout{##1}', derived)
+        self.assertNotIn(r'\textbf{Legend:}', derived)
+        self.assertEqual((main.read_bytes(), (self.root / 'reply.tex').read_bytes()), source)
+        self.apply('decide', [first], [])
+        accepted = main.read_bytes(), (self.root / 'reply.tex').read_bytes()
+        with self.assertRaisesRegex(ValueError, '候选或原文已经变化'):
+            preview(*args, style=style)
+        updated = preview(*args, style=style, refresh_accepted=True)
+        self.assertEqual(updated['shown_ids'], [second])
+        text = ' '.join(page.extract_text() for page in PdfReader(updated['pdf']).pages)
+        self.assertNotIn('strong and fast', text)
+        self.assertIn('reliable and compact', text)
+        self.assertEqual((main.read_bytes(), (self.root / 'reply.tex').read_bytes()), accepted)
+        self.apply('decide', [second], [])
+        all_accepted = main.read_bytes(), (self.root / 'reply.tex').read_bytes()
+        finished = preview(self.root, 'reply.tex', main, second, second_data['version'], 'missing-git',
+                           str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)), style=style, refresh_accepted=True)
+        self.assertEqual(finished['shown_ids'], [])
+        final_source = (Path(finished['output']) / 'source/__codex_inline_review__.tex').read_text(encoding='utf-8')
+        self.assertNotIn('codexreviewold', final_source)
+        self.assertEqual((main.read_bytes(), (self.root / 'reply.tex').read_bytes()), all_accepted)
+        self.assertEqual(finished['pdf'], result['pdf'])
+
     def test_abstract_and_quote_keep_their_wrappers_once_and_compare_only_modified_sentences(self):
         main = self.root / 'main.tex'
         source = (r'\documentclass[twocolumn]{article}' + '\n' +
@@ -267,6 +305,17 @@ class ReviewPDF(unittest.TestCase):
             restored = preview(*args)
         self.assertEqual(restored['pdf'], str(visible))
         self.assertFalse(restored['reused_pdf'], 'missing stable PDF is rebuilt without touching the source')
+        # A TeX package/font recorded by the compiler is a real render input,
+        # even though it is outside the paper snapshot. Do not mutate that file.
+        from types import SimpleNamespace
+        dependency = Path(next(iter(restored['dependencies'])))
+        original_stat = Path.stat
+        def changed_dependency(path, *a, **kw):
+            stat = original_stat(path, *a, **kw)
+            return SimpleNamespace(st_mode=stat.st_mode, st_size=stat.st_size, st_mtime_ns=stat.st_mtime_ns + 1) if path == dependency else stat
+        with patch.object(Path, 'stat', changed_dependency):
+            dependency_update = preview(*args)
+        self.assertFalse(dependency_update['reused_pdf'], 'changed compiler dependency invalidates whole-PDF reuse')
         pdf = Path(rebuilt['pdf']).read_bytes()
         source = (self.root / 'main.tex').read_bytes(), (self.root / 'reply.tex').read_bytes()
         navigation = Path(rebuilt['navigation'])

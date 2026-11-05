@@ -5,6 +5,7 @@ const fs = require('node:fs/promises');
 const cp = require('node:child_process');
 const crypto = require('node:crypto');
 const positions = require('./review_positions');
+const reviewStyle = require('./review_style');
 const OPEN = new Set(['pending', 'rework']);
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**';
 
@@ -26,10 +27,9 @@ const utf16 = (text, offset) => Array.from(text).slice(0, offset).join('').lengt
 // Display-only break opportunities for long TeX tokens; never alter stored text
 // or the exact source-selection offsets used for acceptance and annotations.
 const wrapHtml = text => escapeHtml(text.replace(/\S{32,}/gu, word => Array.from(word).join('\u200b'))).replace(/\r?\n/g, '<br>');
-function changedHtml(text, side) {
-    const colored = token => side === 'original'
-        ? `<span style="color:#d32f2f;"><del>${escapeHtml(token)}</del></span>`
-        : `<span style="color:#1565c0;">${escapeHtml(token)}</span>`;
+function changedHtml(text, side, style = reviewStyle.defaults) {
+    const color = side === 'original' ? style.removedColor : side === 'candidate' ? style.addedColor : style.unchangedColor;
+    const colored = token => `<span style="color:${color};">${side === 'original' && style.strikeDeleted ? '<del>' : ''}${escapeHtml(token)}${side === 'original' && style.strikeDeleted ? '</del>' : ''}</span>`;
     // Native comment CSS forces spans to white-space:pre. Keep whitespace and
     // long-token break opportunities OUTSIDE colored spans so the browser wraps.
     return text.split(/(\s+)/u).map(token => {
@@ -84,7 +84,7 @@ function deletionPreview(data) {
     return context;
 }
 
-function markedWords(data, side) {
+function markedWords(data, side, style = reviewStyle.defaults) {
     const text = data[side], prefix = side === 'original' ? 'old' : 'new';
     const comments = commentSpans(text);
     let cursor = 0, displayStart = text.length, displayEnd = 0;
@@ -106,7 +106,7 @@ function markedWords(data, side) {
             cursor = Math.min(end, b);
         }
         const prose = output + text.slice(cursor, end);
-        return changed ? changedHtml(prose, side) : wrapHtml(prose);
+        return changed ? changedHtml(prose, side, style) : style.unchangedColor ? changedHtml(prose, 'unchanged', style) : wrapHtml(prose);
     }
     let offset = 0, result = '';
     for (const change of data.changes) {
@@ -121,11 +121,14 @@ function markedWords(data, side) {
 function createInlineReview(vscode, context, execute = run) {
     const cards = new Map(), records = new Map(), drafts = new WeakMap(), threadContexts = new WeakMap(), threadMembers = new WeakMap(), expandedSources = new Set();
     const controller = vscode.comments.createCommentController('localLatexInlineReview', '原文内修订审核');
-    const deleted = vscode.window.createTextEditorDecorationType({color: '#d32f2f', textDecoration: 'line-through'});
+    const style = () => reviewStyle.read(vscode.workspace.getConfiguration('localLatex'));
+    let deleted = vscode.window.createTextEditorDecorationType({color: style().removedColor, textDecoration: style().strikeDeleted ? 'line-through' : 'none'});
     let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
     let watchedScope, watcher, autoRefresh, renderedOwnerHash, refreshChain = Promise.resolve();
     const changedFiles = new Set(), reviewFiles = new Set(), deferredFiles = new Set();
     const shownPanels = new Set(), openedPDFs = new Set(), expandedQuestions = new Set(), pdfMetadata = new Map();
+    const pendingPDFUpdates = new Map();
+    let pdfChain = Promise.resolve(), automaticPDFRun;
     context.subscriptions.push(controller, deleted);
     controller.options = {prompt: '填写返修要求（默认针对整项原文，也可选中文字）', placeHolder: '保存后可一键把全部批注加入 Codex；不会自动发送。'};
     const config = () => vscode.workspace.getConfiguration('localLatex');
@@ -233,6 +236,7 @@ function createInlineReview(vscode, context, execute = run) {
         return label(data, id) + (members.length > 1 ? ' · 本行：' + members.join('、') : '');
     };
     function cardBody(data, id, c) {
+        const appearance = style();
         const markdown = new vscode.MarkdownString();
         markdown.supportHtml = true;
         markdown.isTrusted = false;
@@ -244,12 +248,13 @@ function createInlineReview(vscode, context, execute = run) {
                 : `[${member}](command:localLatex.inlineSelectCard?${encodeURIComponent(JSON.stringify([records.get(member).c]))})`).join(' · ') + '\n\n');
         }
         if (!data.edit.deferred) markdown.appendMarkdown('旧式记录：候选此前已在源码中；本工具不会静默撤回。\n\n');
-        const old = displayText(data.original) ? markedWords(data, 'original').trim() : '仅补充，无对应原句。';
-        const proposed = displayText(data.candidate) ? markedWords(data, 'candidate').trim()
+        const old = displayText(data.original) ? markedWords(data, 'original', appearance).trim() : '仅补充，无对应原句。';
+        const proposed = displayText(data.candidate) ? markedWords(data, 'candidate', appearance).trim()
             : `本句／本项已删除。删除后衔接（仅预览）：<br>${wrapHtml(deletionPreview(data))}`;
-        markdown.appendMarkdown(`<div><strong>原文：</strong> ${old}<br><strong>候选：</strong> ${proposed}</div>\n`);
-        markdown.appendMarkdown('<div>图例：<span style="color:#d32f2f;"><del>old</del></span>＝删除／替换；'
-            + '<span style="color:#1565c0;">new</span>＝新增／改写；same＝未改；公式可仅标色。'
+        const between = appearance.cardLayout === 'compact' ? '<br>' : '</div>\n\n<div>';
+        markdown.appendMarkdown(`<div><strong>原文：</strong> ${old}${between}<strong>候选：</strong> ${proposed}</div>\n`);
+        if (appearance.showLegend) markdown.appendMarkdown('<div>图例：' + changedHtml('old', 'original', appearance) + '＝删除／替换；'
+            + changedHtml('new', 'candidate', appearance) + '＝新增／改写；' + (appearance.unchangedColor ? changedHtml('same', 'unchanged', appearance) : 'same') + '＝未改；公式可仅标色。'
             + ' → 原文到候选；Addition only＝无对应原句。</div>');
         if (data.edit.questions?.length) {
             enabledCommands.push('localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges');
@@ -570,6 +575,7 @@ function createInlineReview(vscode, context, execute = run) {
     }
     async function accept(arg) {
         const c = contextFor(arg), data = await current(c);
+        const navigation = pdfMetadata.get(c.repo + '|' + c.id) || context.workspaceState?.get('reviewPDFMeta', {})[c.repo + '|' + c.id];
         const ordered = orderedRecords(), index = ordered.findIndex(record => record.c.id === c.id);
         const following = ordered.slice(index + 1).map(record => record.c.id);
         await backend(c, ['decide', '--accept', c.id, '--version', c.version], undefined, data.sha256);
@@ -581,7 +587,8 @@ function createInlineReview(vscode, context, execute = run) {
             editor.revealRange(next.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
             showCard(next.c);
         }
-        vscode.window.showInformationMessage(`${c.id} 已接收并替换正文；未提交 Git 或推送。已打开的审核 PDF 保留为本次审核快照。`);
+        if (navigation && config().get('reviewPDF.autoUpdateAfterAccept', true)) await queueAcceptedPDF(c, navigation);
+        vscode.window.showInformationMessage(`${c.id} 已接收并替换正文；未提交 Git 或推送。`);
     }
     async function reject(arg) {
         const c = contextFor(arg), data = await current(c);
@@ -662,6 +669,7 @@ function createInlineReview(vscode, context, execute = run) {
         try {return await action();} finally {busy = false; await flushRefresh();}
     }
     const candidatePanel = require('./candidate_panel').createCandidatePanel(vscode, context, {
+        style,
         read: current,
         save: (c, after) => exclusive(async () => {
             const data = await current(c);
@@ -678,8 +686,35 @@ function createInlineReview(vscode, context, execute = run) {
             showCard(c);
         }
     });
+    function serializePDF(action) {
+        const task = pdfChain.then(action);
+        pdfChain = task.catch(() => {});
+        return task;
+    }
+    async function queueAcceptedPDF(c, navigation) {
+        const saved = JSON.parse(await fs.readFile(navigation, 'utf8'));
+        if (!saved.document) {
+            vscode.window.showInformationMessage('此审核 PDF 来自旧版，请手动生成一次以建立自动更新关联。');
+            return;
+        }
+        pendingPDFUpdates.set(saved.document, c);
+        startAutomaticPDF();
+    }
+    function startAutomaticPDF() {
+        if (automaticPDFRun) return;
+        automaticPDFRun = (async () => {
+            while (pendingPDFUpdates.size) {
+                const [document, selected] = pendingPDFUpdates.entries().next().value;
+                pendingPDFUpdates.delete(document);
+                // Setting changes take effect even for requests already queued.
+                if (!config().get('reviewPDF.autoUpdateAfterAccept', true)) continue;
+                try {await serializePDF(() => generatePDF(selected, document, true));}
+                catch (error) {vscode.window.showErrorMessage('接收已保存，但审核 PDF 自动更新失败：' + error.message);}
+            }
+        })().finally(() => {automaticPDFRun = undefined; if (pendingPDFUpdates.size) startAutomaticPDF();});
+    }
     async function preview(arg) {
-        const c = contextFor(arg), data = await current(c), cfg = config();
+        const c = contextFor(arg), data = await current(c);
         let document = path.join(c.repo, data.edit.file);
         if (!/^\s*\\documentclass\b/m.test(data.source.text)) {
             const files = await vscode.workspace.findFiles(new vscode.RelativePattern(c.repo, '**/*.tex'), '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**');
@@ -689,11 +724,17 @@ function createInlineReview(vscode, context, execute = run) {
             if (!picked) return;
             document = picked.file;
         }
-        await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: '生成完整论文的句子级审核 PDF（新窗口）'}, async () => {
+        return serializePDF(() => generatePDF(c, document, false));
+    }
+    async function generatePDF(c, document, automatic) {
+        const cfg = config();
+        await vscode.window.withProgress({location: vscode.ProgressLocation.Notification,
+            title: automatic ? '接收后更新审核 PDF（后台，不阻塞下一项）' : '生成／更新完整论文审核 PDF'}, async () => {
             const result = JSON.parse(await execute(cfg.get('pythonPath', 'python'), ['-X', 'utf8', path.join(__dirname, 'review_pdf.py'),
                 '--repo', c.repo, '--state', c.owner, '--document', document, '--id', c.id, '--version', c.version,
-                '--git', cfg.get('gitPath', 'git'), '--latexdiff', cfg.get('latexdiffPath'), '--latexmk', cfg.get('latexmkPath')], c.repo));
-            await current(c);
+                '--git', cfg.get('gitPath', 'git'), '--latexdiff', cfg.get('latexdiffPath'), '--latexmk', cfg.get('latexmkPath'),
+                '--style', JSON.stringify(style()), ...(automatic ? ['--refresh-accepted'] : [])], c.repo));
+            if (!automatic) await current(c);
             if (result.navigation) {
                 const saved = {...context.workspaceState?.get('reviewPDFMeta', {})};
                 for (const [key, file] of Object.entries(saved)) if (file === result.navigation) delete saved[key];
@@ -707,12 +748,13 @@ function createInlineReview(vscode, context, execute = run) {
             // Same supported launcher as VS Code's own code.cmd; avoid shell quoting
             // and keep the source window intact. Existing PDF associations select Workshop.
             const opened = openedPDFs.has(result.pdf) || context.workspaceState?.get('reviewPDFs', []).includes(result.pdf);
-            if (!opened) {
+            if (!opened && !automatic) {
                 await execute(process.execPath, [path.join(vscode.env.appRoot, 'out', 'cli.js'), '--new-window', result.pdf],
                     c.repo, undefined, {ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: ''});
                 openedPDFs.add(result.pdf);
                 if (context.workspaceState) await context.workspaceState.update('reviewPDFs', [...new Set([...context.workspaceState.get('reviewPDFs', []), result.pdf])]);
-            } else vscode.window.showInformationMessage('已更新同一份审核 PDF；现有预览窗口会重新加载。窗口已关闭时，可用“重新打开审核 PDF 窗口”。');
+            } else if (!automatic) vscode.window.showInformationMessage(result.reused_pdf ? '审核内容未变化，已复用核验后的 PDF，没有重新编译。'
+                : '已更新同一份审核 PDF；现有预览窗口会重新加载。窗口已关闭时，可用“重新打开审核 PDF 窗口”。');
         });
     }
     async function addRequests() {
@@ -856,8 +898,24 @@ function createInlineReview(vscode, context, execute = run) {
     context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
         if (document.uri.scheme === 'file') return requestRefresh(document.uri.fsPath);
     }));
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (!event.affectsConfiguration('localLatex.reviewStyle')) return;
+        try {
+            const appearance = style();
+            deleted.dispose();
+            deleted = vscode.window.createTextEditorDecorationType({color: appearance.removedColor, textDecoration: appearance.strikeDeleted ? 'line-through' : 'none'});
+            context.subscriptions.push(deleted);
+            for (const thread of new Set(cards.values())) {
+                const c = threadContexts.get(thread), record = records.get(c.id);
+                thread.comments = [{...thread.comments[0], body: cardBody(record.data, c.id, c)}, ...thread.comments.slice(1)];
+            }
+            candidatePanel.updateStyle();
+            decorate();
+        } catch (error) {vscode.window.showErrorMessage(error.message);}
+    }));
     startup = enableReview().catch(error => {vscode.window.showErrorMessage(error.message);});
-    return {open, refresh, accept, reject, annotate, post, preview, addRequests, controller, records, ready: startup};
+    return {open, refresh, accept, reject, annotate, post, preview, addRequests, controller, records,
+        whenPDFIdle: () => automaticPDFRun || pdfChain, ready: startup};
 }
 function activate(context) { return createInlineReview(require('vscode'), context); }
 module.exports = {activate, createInlineReview, markedWords, displayText, summary, deletionPreview};

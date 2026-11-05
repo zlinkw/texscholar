@@ -49,12 +49,38 @@ Original above the rule; revision below. Addition only = no corresponding origin
 '''
 
 
-def with_legend(text):
+def with_legend(text, legend=PREVIEW_LEGEND):
     # Standard title commands must run before the visible legend (not inside
     # their title material). Ignore commented-out commands when locating one.
     title = re.search(r'(?m)^[ \t]*\\maketitle[ \t]*(?:%[^\r\n]*)?(?:\r?\n|$)', text)
     position = title.end() if title else 0
-    return text[:position] + PREVIEW_LEGEND + text[position:]
+    return text[:position] + legend + text[position:]
+
+
+def display_style(value=None):
+    """Only the derived review PDF uses these preferences, never paper source."""
+    value = json.loads(value) if isinstance(value, str) else ({} if value is None else value)
+    if not isinstance(value, dict):
+        raise ValueError('审核样式必须为 JSON 对象。')
+    defaults = {'removedColor': '#d32f2f', 'addedColor': '#1565c0', 'unchangedColor': '',
+                'strikeDeleted': True, 'showLegend': True}
+    style = {key: value.get(key, default) for key, default in defaults.items()}
+    for key in ('removedColor', 'addedColor', 'unchangedColor'):
+        color = style[key]
+        if not (key == 'unchangedColor' and color == '') and (not isinstance(color, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', color)):
+            raise ValueError('审核颜色须为 #RRGGBB 格式。')
+    if type(style['strikeDeleted']) is not bool or type(style['showLegend']) is not bool:
+        raise ValueError('审核删除线和图例设置必须为布尔值。')
+    colors = '\n'.join('\\definecolor{codex' + key + '}{rgb}{' + ','.join(format(int(style[key][i:i + 2], 16) / 255, '.6f') for i in (1, 3, 5)) + '}'
+                       for key in ('removedColor', 'addedColor', 'unchangedColor') if style[key]) + '\n'
+    macros = PREVIEW_MACROS.replace(r'\color{red}', r'\color{codexremovedColor}').replace(r'\color{blue}', r'\color{codexaddedColor}')
+    legend = PREVIEW_LEGEND.replace(r'\color{red}', r'\color{codexremovedColor}').replace(r'\color{blue}', r'\color{codexaddedColor}')
+    if not style['strikeDeleted']:
+        macros = macros.replace(r'\sout{##1}', '##1')
+        legend = legend.replace(r'\sout{old}', 'old')
+    if style['unchangedColor']:
+        macros += '\n\\AtBeginDocument{\\color{codexunchangedColor}}\n'
+    return style, colors + macros, legend if style['showLegend'] else ''
 
 
 def command(args, cwd, log):
@@ -477,18 +503,20 @@ def source_graph(root, files):
     return included
 
 
-def preview(repo, state, document, id_, version, git, latexdiff, latexmk):
+def preview(repo, state, document, id_, version, git, latexdiff, latexmk, style=None, refresh_accepted=False):
     # Forward and reverse fragments have separate inputs/logs and no shared
     # mutable state. Two workers bound local CPU/process use for personal review.
     with ThreadPoolExecutor(max_workers=2) as differences:
-        return _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences)
+        return _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences, style, refresh_accepted)
 
 
-def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences):
+def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences, style=None, refresh_accepted=False):
     review = Review(repo, state, git)
     data = review.inspect(id_, version, source=True)
-    if version != data['edit']['versions'][-1] or not data['source_match'] or data['edit']['status'] not in PENDING:
+    allowed = PENDING | {'accepted'} if refresh_accepted else PENDING
+    if version != data['edit']['versions'][-1] or not data['source_match'] or data['edit']['status'] not in allowed:
         raise ValueError('候选或原文已经变化，请刷新原文卡片。')
+    appearance, preview_macros, preview_legend = display_style(style)
     document = review.path(str(Path(document).resolve(strict=True).relative_to(review.repo)))
     relative = document.relative_to(review.repo)
     files = {}
@@ -525,7 +553,7 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
                         for rel, raw in files.items()}
     scope = source_graph(relative, files)
     inputs = {'renderer': digest(Path(__file__).read_bytes()), 'document': relative.as_posix(),
-              'commands': [latexdiff, *DIFF_OPTIONS, latexmk],
+              'commands': [latexdiff, *DIFF_OPTIONS, latexmk], 'style': appearance,
               'files': {rel.as_posix(): digest(raw) for rel, raw in normalized_files.items()}, 'items': {}}
     for item_id, edit in review.state['edits'].items():
         if edit['status'] in PENDING and Path(edit['file']) in scope:
@@ -533,7 +561,18 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
             inputs['items'][item_id] = {'file': edit['file'], 'version': edit['versions'][-1],
                                        'payload': review.payload(edit), 'deferred': edit.get('deferred', False),
                                        'questions': edit.get('questions', [])}
-    if previous_result and previous_result.get('inputs') == inputs:
+    dependency_stamps = previous_result.get('dependencies') if previous_result else None
+    dependencies_unchanged = dependency_stamps is not None
+    for name, stamp in (dependency_stamps or {}).items():
+        dependency = Path(name)
+        if not dependency.is_file():
+            dependencies_unchanged = False
+            break
+        stat = dependency.stat()
+        if [stat.st_mtime_ns, stat.st_size] != stamp:
+            dependencies_unchanged = False
+            break
+    if previous_result and previous_result.get('inputs') == inputs and dependencies_unchanged:
         navigation = parent / 'current' / (document.stem + '-review.json')
         visible = parent / 'current' / (document.stem + '-review.pdf')
         nav = json.loads(navigation.read_text(encoding='utf-8'))
@@ -629,12 +668,13 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
             display = ''.join(chunks)
             reviewed = reviewed[:a] + display + reviewed[b:]
         write_review_file(source_dir / rel, reviewed.encode('utf-8'), previous / 'source' / rel if previous else None)
-    if header is None:
+    if header is None and not refresh_accepted:
         raise ValueError('没有可预览的待审正文修改。')
     reviewed_main = (source_dir / relative).read_bytes().decode('utf-8')
     reviewed_body = reviewed_main.partition(r'\begin{document}')[2]
     derived = source_dir / relative.parent / '__codex_inline_review__.tex'
-    write_review_file(derived, ('\\PassOptionsToPackage{normalem}{ulem}\n' + header + PREVIEW_MACROS + '\\begin{document}' + with_legend(reviewed_body)).encode('utf-8'),
+    derived_text = ('\\PassOptionsToPackage{normalem}{ulem}\n' + header + preview_macros + '\\begin{document}' + with_legend(reviewed_body, preview_legend)) if header else main_text
+    write_review_file(derived, derived_text.encode('utf-8'),
                       previous / derived.relative_to(out) if previous else None)
     pdf_dir = out / 'pdf'; pdf_dir.mkdir()
     seed_compiler_cache(previous, out)
@@ -647,7 +687,7 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
         raise ValueError('编译没有生成完整审核 PDF。')
     # A chosen root must actually include the selected target; a reply is not part of the manuscript PDF.
     recorder = (pdf_dir / 'review.fls').read_text(encoding='utf-8', errors='replace')
-    included = {relative}
+    included, dependencies = {relative}, {}
     for row in recorder.splitlines():
         if row.startswith('INPUT '):
             p = Path(row[6:])
@@ -655,6 +695,9 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
             p = p.resolve()
             if p.is_relative_to(source_dir):
                 included.add(p.relative_to(source_dir))
+            elif not p.is_relative_to(out) and p.is_file():
+                stat = p.stat()
+                dependencies[str(p)] = [stat.st_mtime_ns, stat.st_size]
     if Path(data['edit']['file']) not in included:
         raise ValueError('所选主文档没有包含该修改所在文件；请选择实际所属的手稿或回复信主文档。')
     shown = [id__ for id__ in dict.fromkeys(shown) if Path(review.state['edits'][id__]['file']) in included]
@@ -695,7 +738,7 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
             position = content.find(marker)
             if position >= 0 and id__ not in targets:
                 targets[id__] = {'file': str(tex), 'line': content.count('\n', 0, position) + 1}
-    nav = {'pdf': str(pdf), 'pdf_digest': digest(pdf_raw), 'compiled_pdf': str(pdf_dir / 'review.pdf'), 'targets': targets,
+    nav = {'pdf': str(pdf), 'document': str(document), 'pdf_digest': digest(pdf_raw), 'compiled_pdf': str(pdf_dir / 'review.pdf'), 'targets': targets,
            'versions': {id__: review.state['edits'][id__]['versions'][-1] for id__ in shown}}
     with tempfile.NamedTemporaryFile(prefix=document.stem + '-', suffix='.json.tmp', dir=current, delete=False) as stream:
         stream.write(json.dumps(nav, ensure_ascii=False).encode('utf-8'))
@@ -704,7 +747,7 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
     os.replace(temporary_pdf, visible)
     result = {'pdf': str(pdf), 'navigation': str(navigation), 'output': str(out), 'id': id_, 'version': version, 'kind': 'full-paper-sentence-review', 'shown_ids': shown,
               'reused_fragments': reused_fragments, 'reused_auxiliary': previous is not None, 'diff_command': [latexdiff, *DIFF_OPTIONS],
-              'inputs': inputs, 'reused_pdf': False}
+              'inputs': inputs, 'dependencies': dependencies, 'reused_pdf': False}
     (out / 'comparison.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     return result
 
@@ -713,6 +756,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ['repo', 'state', 'document', 'id', 'version', 'git', 'latexdiff', 'latexmk']:
         parser.add_argument('--' + name, required=True)
+    parser.add_argument('--style', help='Display-only JSON preferences')
+    parser.add_argument('--refresh-accepted', action='store_true', help='Refresh an existing preview after explicit author acceptance')
     args = vars(parser.parse_args())
     args['id_'] = args.pop('id')
     try:

@@ -1,6 +1,7 @@
 'use strict';
 const path = require('node:path');
 function activate(context, vscode = require('vscode')) {
+    const onboarding = require('./ai_setup').activate(context, vscode);
     const guide = vscode.Uri.file(path.join(__dirname, 'writing-guide.md'));
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.openWritingGuide', async () =>
         vscode.commands.executeCommand('markdown.showPreview', guide)));
@@ -27,5 +28,6 @@ function activate(context, vscode = require('vscode')) {
             vscode.window.showInformationMessage('需要与文件树放在一起时，可在章节树标题右键“移动视图”至资源管理器；这是原生布局状态，不改论文。');
         } else if (picked) await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(path.join(__dirname, '..', 'README.md')));
     }));
+    return onboarding;
 }
 module.exports = {activate};

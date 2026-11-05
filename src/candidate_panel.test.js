@@ -20,7 +20,7 @@ test('candidate selection keeps exact CRLF, repeated words and Unicode code-poin
 });
 
 test('the shared candidate panel edits pending text and posts exact notes without replacing its DOM', async () => {
-    const events = [], messages = [], elements = new Map();
+    const events = [], messages = [], elements = new Map(), styleProperties = new Map();
     let receive, dispose, htmlWrites = 0, savedFailure = true, disposed = false;
     const data = {version: 'v1', original: 'Original words.', candidate: '😀 Candidate words.\r\n', edit: {file: 'reply.tex', versions: ['v1']}};
     const originalSource = data.original;
@@ -34,6 +34,7 @@ test('the shared candidate panel edits pending text and posts exact notes withou
         events.push(['open', type, title, column]); return view;
     }}};
     const services = {
+        style: () => require('./review_style').defaults,
         read: async c => {assert.equal(c.version, data.version); return structuredClone(data);},
         save: async (c, after) => {
             assert.equal(c.version, data.version);
@@ -55,9 +56,16 @@ test('the shared candidate panel edits pending text and posts exact notes withou
         return elements.get(id);
     };
     const script = /<script nonce="[a-f0-9]+">([\s\S]*?)<\/script>/.exec(view.webview.source)[1];
-    vm.runInNewContext(script, {document: {getElementById: element}, window: {addEventListener(type, handler) {browserMessage = handler;}},
+    vm.runInNewContext(script, {document: {documentElement: {style: {setProperty: (key, value) => styleProperties.set(key, value)}}, getElementById: element}, window: {addEventListener(type, handler) {browserMessage = handler;}},
         acquireVsCodeApi: () => ({postMessage(message) {queue.push(receive(message));}})});
     await Promise.all(queue.splice(0));
+    const beforeStyle = element('candidate').value;
+    services.style = () => ({...require('./review_style').defaults, candidateFontSize: 20, candidateLineHeight: 1.8});
+    panel.updateStyle();
+    assert.equal(styleProperties.get('--review-font-size'), '20px');
+    assert.equal(styleProperties.get('--review-line-height'), '1.8');
+    assert.equal(element('candidate').value, beforeStyle);
+    assert.equal(htmlWrites, 1, 'changing appearance preserves the existing DOM and candidate text');
     const candidate = element('candidate'), note = element('note');
     assert.equal(candidate.value, data.candidate.replace(/\r\n/g, '\n'));
     note.value = '针对整项原文的返修要求。'; note.handlers.input();

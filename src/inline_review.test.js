@@ -29,7 +29,7 @@ test('review positions exclude the mechanical ledger and follow unsaved header e
     }
 });
 
-for (const decision of ['accept', 'reject']) test(`original card toolbar can ${decision}; exact notes join Codex context without sending or diff tabs`, async () => {
+for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]) test(`original card toolbar can ${decision}; automatic PDF ${autoPDF}; exact notes join Codex without sending`, async () => {
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'inline-host-'));
     const file = path.join(root, 'paper.tex');
     const original = '\\documentclass{article}\n% 中文段落逻辑，完整保留。\n😀 The model is strong and fast.';
@@ -69,7 +69,7 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
         }};}},
         workspace: {isTrusted: true, textDocuments: [document], getWorkspaceFolder: () => ({uri: uri(root)}),
             workspaceFolders: [{uri: uri(root)}], findFiles: async () => automatic ? [uri(file), uri(owner)] : [],
-            getConfiguration: () => ({get: (key, fallback) => fallback}), openTextDocument: async () => document,
+            getConfiguration: () => ({get: (key, fallback) => key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback}), onDidChangeConfiguration: disposable, openTextDocument: async () => document,
             onDidChangeTextDocument: disposable, onDidSaveTextDocument: disposable, createFileSystemWatcher: fileWatcher},
         languages: {registerCodeLensProvider(selector, provider) {lensProvider = provider; return {dispose() {}};}},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
@@ -88,7 +88,11 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
     const backend = async (command, args, cwd, input, env) => {
         backendCalls.push({command, args, input, env});
         if (args.includes('--new-window')) return '';
-        if (args.some(x => String(x).endsWith('review_pdf.py'))) return JSON.stringify({pdf: path.join(root, 'review.pdf')});
+        if (args.some(x => String(x).endsWith('review_pdf.py'))) {
+            const navigation = path.join(root, 'review.json');
+            fs.writeFileSync(navigation, JSON.stringify({document: file}), 'utf8');
+            return JSON.stringify({pdf: path.join(root, 'review.pdf'), navigation, shown_ids: edit.status === 'accepted' ? [] : ['1']});
+        }
         if (args.includes('cards')) {
             const detail = JSON.parse(JSON.stringify(data));
             delete detail.source.text;
@@ -220,12 +224,15 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
     editor.selection = new Range(original.length + 10, original.length + 10);
     editor.selection.isEmpty = true;
     await handlers.get(decision === 'accept' ? 'localLatex.inlineAccept' : 'localLatex.inlineReject')(threads.at(-1));
+    await ui.whenPDFIdle();
     assert.equal(value, decision === 'accept' ? candidate : original, 'toolbar targets its own card, not the unrelated source caret');
     assert.equal(edit.status, decision === 'accept' ? 'accepted' : 'rejected');
     assert.equal(ui.records.size, 0);
     assert.equal(backendCalls.filter(x => x.args.includes('decide')).length, 1);
     assert(backendCalls.find(x => x.args.includes('decide')).args.includes('--' + decision));
-    assert.equal(backendCalls.filter(x => x.args.some(a => String(a).endsWith('review_pdf.py'))).length, 2, 'only the two explicit PDF requests compiled, never acceptance');
+    const pdfCalls = backendCalls.filter(x => x.args.some(a => String(a).endsWith('review_pdf.py')));
+    assert.equal(pdfCalls.length, 2 + Number(decision === 'accept' && autoPDF), 'only enabled acceptance updates an existing PDF');
+    assert.equal(pdfCalls.at(-1).args.includes('--refresh-accepted'), decision === 'accept' && autoPDF);
     assert(!calls.some(x => /diff|send|submit|paste/i.test(x[0])));
     assert(!fs.existsSync(path.join(root, '.git')));
 });
@@ -239,11 +246,27 @@ test('prose display preserves escaped percent and inline verbatim; comments rema
     assert(original.includes('hidden note'));
 });
 
+test('review style changes only display markup and validates colors before embedding HTML', () => {
+    const styling = require('./review_style');
+    const style = styling.read({get: (key, fallback) => ({'reviewStyle.removedColor': '#884400', 'reviewStyle.addedColor': '#008844',
+        'reviewStyle.strikeDeleted': false}[key] ?? fallback)});
+    const data = {original: 'The old word stays.', candidate: 'The new word stays.',
+        changes: [{old_start: 4, old_end: 7, new_start: 4, new_end: 7}]};
+    const saved = JSON.stringify(data);
+    assert(markedWords(data, 'original', style).includes('color:#884400;">old</span>'));
+    assert(!markedWords(data, 'original', style).includes('<del>'));
+    assert(markedWords(data, 'candidate', style).includes('color:#008844;">new</span>'));
+    assert(!markedWords(data, 'candidate', style).includes('>stays.</span>'));
+    assert.equal(JSON.stringify(data), saved);
+    assert.throws(() => styling.read({get: (key, fallback) => key === 'reviewStyle.removedColor' ? 'red; bad html' : fallback}), /RRGGBB/);
+});
+
 test('same-line candidates share one native card but retain independent actions and drafts', async () => {
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'shared-line-'));
     const file = path.join(root, 'paper.tex'), text = 'First sentence. Second sentence.\nThird sentence.';
     fs.writeFileSync(file, text, 'utf8');
-    const calls = [], threads = [], handlers = new Map(), notices = []; let selectionListener, pauseFeedback, finishFeedback, choices, batch = 'batch-1', watchChanged, watchCreated, saveDocument, changeDocument;
+    const calls = [], threads = [], handlers = new Map(), notices = []; let selectionListener, pauseFeedback, finishFeedback, choices, batch = 'batch-1', watchChanged, watchCreated, saveDocument, changeDocument, pausePDF, releasePDF, failPDF = true;
+    const workspaceState = new Map();
     const owner = path.join(root, 'reply.tex'); fs.writeFileSync(owner, 'state-1', 'utf8');
     const items = Object.fromEntries(['First sentence.', 'Second sentence.', 'Third sentence.'].map((original, index) => {
         const start = text.indexOf(original), id = String(index + 1);
@@ -257,7 +280,7 @@ test('same-line candidates share one native card but retain independent actions 
         positionAt: x => x, offsetAt: x => x};
     const editor = {document, selection: {start: 0, end: 0, isEmpty: true}, revealRange() {}, setDecorations() {}};
     const vscode = {
-        Range, Selection: Range, RelativePattern: class {}, Uri: {file: uri}, ViewColumn: {One: 1}, TextEditorRevealType: {}, TextEditorSelectionChangeKind: {Mouse: 2},
+        Range, Selection: Range, RelativePattern: class {}, Uri: {file: uri}, ViewColumn: {One: 1}, TextEditorRevealType: {}, TextEditorSelectionChangeKind: {Mouse: 2}, ProgressLocation: {Notification: 1},
         CommentMode: {Preview: 0}, CommentThreadCollapsibleState: {Expanded: 1, Collapsed: 0},
         MarkdownString: class {constructor() {this.value = '';} appendMarkdown(s) {this.value += s;} appendText(s) {this.value += s;}},
         comments: {createCommentController: () => ({dispose() {}, createCommentThread(uri, range, comments) {
@@ -265,11 +288,11 @@ test('same-line candidates share one native card but retain independent actions 
         }})},
         workspace: {isTrusted: true, textDocuments: [document], workspaceFolders: [{uri: uri(root)}],
             getWorkspaceFolder: () => ({uri: uri(root)}), findFiles: async () => [],
-            getConfiguration: () => ({get: (key, fallback) => fallback}), openTextDocument: async () => document,
+            getConfiguration: () => ({get: (key, fallback) => fallback}), onDidChangeConfiguration: disposable, openTextDocument: async () => document,
             onDidChangeTextDocument: fn => {changeDocument = fn; return disposable();}, onDidSaveTextDocument: fn => {saveDocument = fn; return disposable();},
             createFileSystemWatcher: () => ({dispose() {}, onDidChange(fn) {watchChanged = fn; return disposable();}, onDidCreate(fn) {watchCreated = fn; return disposable();}, onDidDelete: disposable})},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
-            showTextDocument: async () => editor, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}),
+            withProgress: async (_, action) => action(), showTextDocument: async () => editor, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}),
             onDidChangeTextEditorSelection: fn => {selectionListener = fn; return {dispose() {}};},
             showQuickPick: async items => {choices = items;},
             showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x), showWarningMessage: async x => {notices.push(x);}},
@@ -278,6 +301,11 @@ test('same-line candidates share one native card but retain independent actions 
     };
     const backend = async (command, args, cwd, input) => {
         calls.push({args, input});
+        if (args.some(x => String(x).endsWith('review_pdf.py'))) {
+            if (pausePDF) await pausePDF;
+            if (failPDF) {failPDF = false; throw new Error('isolated background compiler failure');}
+            return JSON.stringify({pdf: path.join(root, 'review.pdf'), navigation: path.join(root, 'review.json'), shown_ids: []});
+        }
         if (args.includes('cards')) return JSON.stringify({session: batch, sha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(owner)).digest('hex'), edits: Object.fromEntries(Object.entries(items).map(([id, data]) => [id, data.edit])), cards: Object.fromEntries(Object.entries(items).filter(([, d]) => d.edit.status === 'pending')),
             sources: Object.fromEntries(Object.values(items).map(d => [d.edit.file, text]))});
         if (args.includes('inspect')) return JSON.stringify({...items[args[args.indexOf('--id') + 1]], source: {...items[args[args.indexOf('--id') + 1]].source, text}});
@@ -289,7 +317,8 @@ test('same-line candidates share one native card but retain independent actions 
         }
         throw new Error('Unexpected backend command');
     };
-    const ui = createInlineReview(vscode, {subscriptions: []}, backend); await ui.ready;
+    const ui = createInlineReview(vscode, {subscriptions: [], workspaceState: {
+        get: (key, fallback) => workspaceState.get(key) ?? fallback, update: async (key, value) => workspaceState.set(key, value)}}, backend); await ui.ready;
     const c = {repo: root, owner: 'reply.tex'};
     await ui.refresh(c);
     const question = {id: 'R1-Q3', file: 'reply.tex', quote: 'Exact original question.'};
@@ -416,6 +445,19 @@ test('same-line candidates share one native card but retain independent actions 
     assert.equal(liveDraft.range.start, text.indexOf('Third sentence.'));
     assert.equal(calls.length, beforeRelocation, 'dirty-buffer positioning does not read/write the backend or compile');
     assert.equal(fs.readFileSync(file, 'utf8'), text);
+    await handlers.get('localLatex.inlineCancelComment')(liveDraft);
+    document.isDirty = false;
+    const navigation = path.join(root, 'review.json');
+    fs.writeFileSync(navigation, JSON.stringify({document: file}), 'utf8');
+    workspaceState.set('reviewPDFMeta', Object.fromEntries(['3', '4', '5'].map(id => [root + '|' + id, navigation])));
+    pausePDF = new Promise(resolve => {releasePDF = resolve;});
+    for (const id of ['3', '4', '5']) await handlers.get('localLatex.inlineAccept')({...c, id, version: items[id].version});
+    assert(['3', '4', '5'].every(id => items[id].edit.status === 'accepted'), 'background PDF must not hold the writer busy gate');
+    releasePDF(); await ui.whenPDFIdle();
+    const updates = calls.filter(call => call.args.some(x => String(x).endsWith('review_pdf.py')));
+    assert.equal(updates.length, 2, 'one active update plus one latest queued request, not one compilation per click');
+    assert.equal(updates.at(-1).args[updates.at(-1).args.indexOf('--id') + 1], '5');
+    assert(notices.some(message => message.includes('isolated background compiler failure')), 'background failures remain visible without undoing accepted results');
 });
 
 test('hidden full-line plans leave no blank placeholders; complete deletion results and surviving words remain visible', () => {
@@ -468,7 +510,7 @@ test('cold TeX discovery waits for native Comments registration; code-only proje
                 registerUriHandler: () => disposable, onDidChangeActiveTextEditor: () => disposable, onDidChangeTextEditorSelection: () => disposable,
                 showErrorMessage: x => errors.push(x)},
             workspace: {isTrusted: true, workspaceFolders: [folder], findFiles: async () => tex ? [{fsPath: file}] : [],
-                getConfiguration: () => ({get: (_, fallback) => fallback}), onDidChangeTextDocument: () => disposable, onDidSaveTextDocument: () => disposable, createFileSystemWatcher: fileWatcher},
+                getConfiguration: () => ({get: (_, fallback) => fallback}), onDidChangeConfiguration: () => disposable, onDidChangeTextDocument: () => disposable, onDidSaveTextDocument: () => disposable, createFileSystemWatcher: fileWatcher},
             languages: {registerCodeLensProvider: () => disposable},
             commands: {registerCommand: (name, handler) => {handlers.set(name, handler); return disposable;},
                 getCommands: async () => commentsRegistered ? ['workbench.action.focusCommentsPanel'] : [],

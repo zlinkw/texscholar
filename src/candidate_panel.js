@@ -32,7 +32,7 @@ function html(nonce) {
 <style nonce="${nonce}">
 *{box-sizing:border-box}body{padding:10px 14px;color:var(--vscode-editor-foreground);background:var(--vscode-editor-background);font:var(--vscode-font-size)/1.5 var(--vscode-font-family)}
 h3,p{margin:5px 0 8px}textarea{display:block;width:100%;resize:vertical;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;tab-size:2;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,transparent);padding:8px;font:var(--vscode-editor-font-size)/1.5 var(--vscode-editor-font-family)}
-#candidate{height:42vh;min-height:150px}#note{height:80px;min-height:50px}pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;margin:5px 0}button{margin:5px 6px 5px 0;padding:5px 9px;border:0;color:var(--vscode-button-foreground);background:var(--vscode-button-background);cursor:pointer}button:disabled{opacity:.5;cursor:default}#status{color:var(--vscode-descriptionForeground)}#status.error{color:var(--vscode-errorForeground)}#quote{max-height:100px;overflow:auto;border-left:2px solid var(--vscode-focusBorder);padding-left:8px}details{margin-bottom:10px}small{color:var(--vscode-descriptionForeground)}
+#candidate{height:42vh;min-height:150px}#note{height:80px;min-height:50px}pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;margin:5px 0}textarea,pre{font-size:var(--review-font-size,16px);line-height:var(--review-line-height,1.5)}button{margin:5px 6px 5px 0;padding:5px 9px;border:0;color:var(--vscode-button-foreground);background:var(--vscode-button-background);cursor:pointer}button:disabled{opacity:.5;cursor:default}#status{color:var(--vscode-descriptionForeground)}#status.error{color:var(--vscode-errorForeground)}#quote{max-height:100px;overflow:auto;border-left:2px solid var(--vscode-focusBorder);padding-left:8px}details{margin-bottom:10px}small{color:var(--vscode-descriptionForeground)}
 </style></head><body><h3 id="title">候选编辑与精确批注</h3>
 <details><summary>查看原文（只读）</summary><pre id="original"></pre></details>
 <label for="candidate">候选完整源码 · 可编辑，可划选单词或句子</label><textarea id="candidate" spellcheck="false" wrap="soft"></textarea>
@@ -54,7 +54,7 @@ byId('save').addEventListener('click',()=>send('save',{value:candidate.value}));
 byId('annotate').addEventListener('click',()=>send('note',{value:candidate.value,...chosen,text:note.value}));
 byId('back').addEventListener('click',()=>send('back'));
 byId('latest').addEventListener('click',()=>send('latest'));
-window.addEventListener('message',({data})=>{waiting=false;byId('status').className=data.error?'error':'';byId('status').textContent=data.message||'';
+window.addEventListener('message',({data})=>{if(data.style){document.documentElement.style.setProperty('--review-font-size',data.style.candidateFontSize+'px');document.documentElement.style.setProperty('--review-line-height',String(data.style.candidateLineHeight));if(data.type==='style')return;}waiting=false;byId('status').className=data.error?'error':'';byId('status').textContent=data.message||'';
 if(data.conflict!==undefined)conflict=data.conflict;if(data.unavailable!==undefined)unavailable=data.unavailable;
 if(data.candidate!==undefined&&candidate.value!==saved&&candidate.value!==data.candidate.replace(/\\r\\n/g,'\\n')&&!data.forceContent){conflict=true;byId('status').textContent='检测到新版候选，未覆盖你的手动编辑。可点击“载入最新候选”核对。';api.postMessage({type:'retainDraft'});update();return;}
 if(data.candidate!==undefined){version=data.version;candidate.value=data.candidate;saved=candidate.value;original=data.original;byId('original').textContent=original;byId('title').textContent=data.title;whole();}
@@ -78,7 +78,7 @@ function createCandidatePanel(vscode, context, services) {
         const entry = {c: current, dirty: false, handling: false, hasPending: false};
         active = entry;
         const post = message => view.webview.postMessage(message);
-        const content = message => ({title: `${current.id} · ${loaded.edit.file} · 候选 v${loaded.edit.versions.length}`,
+        const content = message => ({title: `${current.id} · ${loaded.edit.file} · 候选 v${loaded.edit.versions.length}`, style: services.style(),
             version: current.version, original: loaded.original, candidate: loaded.candidate, message});
         const apply = record => {
             if (entry.handling) {entry.pending = record; entry.hasPending = true; return;}
@@ -97,6 +97,7 @@ function createCandidatePanel(vscode, context, services) {
             post({...content('候选已自动更新；请核对新版后继续审核。'), clearNote: true, conflict: false, unavailable: false});
         };
         entry.apply = apply;
+        entry.updateStyle = () => post({type: 'style', style: services.style()});
         view.webview.onDidReceiveMessage(async message => {
             try {
                 if (message.type === 'ready') return post(content('候选尚未接收。可以直接编辑，或划选文字添加批注。'));
@@ -142,7 +143,7 @@ function createCandidatePanel(vscode, context, services) {
         view.onDidDispose(() => {if (panel === view) {panel = undefined; active = undefined;}});
         view.webview.html = html(crypto.randomBytes(16).toString('hex'));
     }
-    return {show, sync(records, scope) {
+    return {show, updateStyle() {active?.updateStyle();}, sync(records, scope) {
         if (active && active.c.repo === scope.repo && active.c.owner === scope.owner) active.apply(records.get(active.c.id));
     }};
 }

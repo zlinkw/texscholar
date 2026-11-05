@@ -191,4 +191,4 @@ async function activate(context, vscode = require('vscode')) {
     await running;
     return {setup, output};
 }
-module.exports = {activate, apply, restore, merge, overlay, bindings, configureChktex};
+module.exports = {activate, apply, restore, merge, overlay, bindings, configureChktex, RECOMMENDED};

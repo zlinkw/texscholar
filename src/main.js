@@ -7,7 +7,7 @@ exports.activate = async context => {
     require('./navigation').activate(context);
     require('./chktex_actions').activate(context);
     require('./questions').activate(context);
-    require('./writing').activate(context);
+    await require('./writing').activate(context).ready;
     require('./pdf_navigation').activate(context);
     return require('./inline_review').activate(context);
 };
