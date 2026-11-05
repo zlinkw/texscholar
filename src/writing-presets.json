@@ -2,6 +2,11 @@
   "revision": 1,
   "settings": [
     {
+      "key": "comments.maxHeight",
+      "value": false,
+      "optional": true
+    },
+    {
       "key": "ltex.additionalRules.motherTongue",
       "value": "zh-CN",
       "optional": false
