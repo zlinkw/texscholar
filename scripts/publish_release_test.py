@@ -81,6 +81,11 @@ class Publish(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'tested artifact digest'):
                 release.verify_artifacts(root, root, 'v1.0.0')
 
+    def test_readme_png_resources_keep_their_binary_bytes(self):
+        png = b'\x89PNG\r\n\x1a\n' + b'example\r\npayload'
+        with zipfile.ZipFile(io.BytesIO(archive_bytes({'docs/images/example.png': png}))) as archive:
+            self.assertEqual(archive.read('docs/images/example.png'), png)
+
     @patch.object(release, 'publish')
     @patch.object(release, 'verify_artifacts')
     def test_local_cli_uploads_existing_artifacts_and_sets_only_process_proxy(self, verify, publish):

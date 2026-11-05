@@ -20,9 +20,10 @@ def archive_bytes(files):
     # between local Python runtimes.
     with zipfile.ZipFile(stream, 'w', zipfile.ZIP_STORED) as archive:
         for name, raw in sorted(files.items()):
-            # All packaged resources are UTF-8 text. Match Git's canonical
-            # line endings so local Windows and Mac builds use the same bytes.
-            raw = raw.replace(b'\r\n', b'\n')
+            # Normalize text to Git's canonical line endings, but preserve PNG
+            # tutorial screenshots byte for byte (including their signature).
+            if not name.endswith('.png'):
+                raw = raw.replace(b'\r\n', b'\n')
             entry = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_STORED
             archive.writestr(entry, raw)
@@ -54,6 +55,7 @@ def build(output):
     content_types = '''<?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="json" ContentType="application/json"/><Default Extension="js" ContentType="application/javascript"/>
+<Default Extension="png" ContentType="image/png"/>
 <Default Extension="py" ContentType="text/x-python"/><Default Extension="md" ContentType="text/markdown"/>
 <Default Extension="code-snippets" ContentType="application/json"/><Default Extension="vsixmanifest" ContentType="text/xml"/>
 </Types>'''
@@ -63,9 +65,12 @@ def build(output):
              '[Content_Types].xml': content_types.encode('utf-8'),
              'extension.vsixmanifest': manifest.encode('utf-8')}
     files.update({'extension/src/' + name: (ROOT / 'src' / name).read_bytes() for name in RUNTIME})
+    images = {'docs/images/' + image.name: image.read_bytes() for image in (ROOT / 'docs' / 'images').glob('*.png')}
+    files.update({'extension/' + name: raw for name, raw in images.items()})
     output.mkdir(parents=True, exist_ok=True)
     write_product(output / ('texscholar-' + metadata['version'] + '.vsix'), archive_bytes(files))
     sources = {name: (ROOT / name).read_bytes() for name in ('package.json', 'README.md', 'LICENSE', 'DEVELOPMENT.md', '.gitignore', '.gitattributes')}
+    sources.update(images)
     sources.update({'src/' + name: (ROOT / 'src' / name).read_bytes() for name in RUNTIME})
     for name in ('review_archive.py', 'native_review_test.py', 'source_review_test.py', 'review_pdf_test.py', 'review_translate_test.py',
                  'inline_review.test.js', 'candidate_panel.test.js', 'setup.test.js', 'questions.test.js', 'extension.test.js',
