@@ -12,7 +12,8 @@ import urllib.request
 
 from review_pdf import _command, _environment_end
 
-PROVIDERS = {'google': 'Google', 'bing': 'Bing', 'deepl': 'DeepL 网页版', 'transmart': '腾讯 TranSmart'}
+PROVIDERS = {'google': 'Google', 'googleapi': 'Google（googleapis）', 'bing': 'Bing',
+             'deepl': 'DeepL 网页版', 'transmart': '腾讯 TranSmart'}
 # Comment Translate's Google adapter uses 500-character requests; keep complete
 # content by splitting rather than truncating. A card is translated only on click.
 REQUEST_CHARS = 500
@@ -105,6 +106,20 @@ def chunks(text, pattern, limit=REQUEST_CHARS):
         start = end
 
 
+def google_token(text):
+    """Compute the gtx request token over UTF-8 bytes with 32-bit arithmetic."""
+    value = 406644
+    for byte in text.encode('utf-8'):
+        value = (value + byte) & 0xffffffff
+        value = (value + (value << 10)) & 0xffffffff
+        value ^= value >> 6
+    value = (value + (value << 3)) & 0xffffffff
+    value ^= value >> 11
+    value = (value + (value << 15)) & 0xffffffff
+    value = (value ^ 3293161072) % 1000000
+    return f'{value}.{value ^ 406644}'
+
+
 class Provider:
     def __init__(self, name, proxy=None):
         if name not in PROVIDERS:
@@ -122,23 +137,29 @@ class Provider:
         with self.opener.open(request, timeout=20) as response:
             return response.read().decode('utf-8')
 
-    def json_request(self, url, value):
-        return json.loads(self.request(url, json.dumps(value, ensure_ascii=False).encode('utf-8'), 'application/json'))
+    def json_request(self, url, value, headers=None):
+        return json.loads(self.request(url, json.dumps(value, ensure_ascii=False).encode('utf-8'), 'application/json', headers))
 
     def translate(self, text):
-        if self.name == 'google':
-            form = urllib.parse.urlencode({'sl': 'en', 'tl': 'zh-CN', 'q': text}).encode('utf-8')
-            result = json.loads(self.request('https://translate.google.com/translate_a/single?client=at&dt=t&dt=rm&dj=1', form, 'application/x-www-form-urlencoded;charset=utf-8'))
-            rows = result.get('sentences') if isinstance(result, dict) else None
-            if not isinstance(rows, list):
+        if self.name in ('google', 'googleapi'):
+            # Match Translate for Zotero's public request protocol. The two
+            # hosts are explicit choices, never an automatic fallback.
+            host = 'translate.google.com' if self.name == 'google' else 'translate.googleapis.com'
+            params = [('client', 'gtx'), ('sl', 'en'), ('tl', 'zh-CN'), ('hl', 'en')]
+            params += [('dt', part) for part in ('at', 'bd', 'ex', 'ld', 'md', 'qca', 'rw', 'rm', 'ss', 't')]
+            params += [('source', 'bh'), ('ssel', '0'), ('tsel', '0'), ('kc', '1'), ('tk', google_token(text)), ('q', text)]
+            query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+            result = json.loads(self.request('https://' + host + '/translate_a/single?' + query))
+            rows = result[0] if isinstance(result, list) and result else None
+            if not isinstance(rows, list) or any(row and (not isinstance(row, list) or not isinstance(row[0], (str, type(None)))) for row in rows):
                 raise ValueError('Google 返回格式已变化。')
-            parts = [row['trans'] for row in rows if isinstance(row, dict) and isinstance(row.get('trans'), str)]
-            value = ''.join(parts)
+            value = ''.join(row[0] for row in rows if row and row[0])
         elif self.name == 'bing':
-            # Current anonymous Microsoft route used by bing-translate-api's
-            # MET adapter; no scraping, cookie, token refresh or legacy retry.
+            # Same anonymous endpoint and Edge User-Agent as Translate for
+            # Zotero; no page scraping or browser credentials.
             url = 'https://edge.microsoft.com/translate/translatetext?' + urllib.parse.urlencode({'from': 'en', 'to': 'zh-Hans', 'isEnterpriseClient': 'false'})
-            result = self.json_request(url, [text])
+            result = self.json_request(url, [text], {'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 Edg/113.0.1774.42'})
             rows = result[0].get('translations') if isinstance(result, list) and result and isinstance(result[0], dict) else None
             if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
                 raise ValueError('Bing 返回验证要求或未知结果。')

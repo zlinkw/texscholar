@@ -8,7 +8,7 @@ const positions = require('./review_positions');
 const reviewStyle = require('./review_style');
 const OPEN = new Set(['pending', 'rework']);
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**';
-const TRANSLATORS = {google: 'Google', bing: 'Bing', deepl: 'DeepL 网页版', transmart: '腾讯 TranSmart'};
+const TRANSLATORS = {google: 'Google', googleapi: 'Google（googleapis）', bing: 'Bing', deepl: 'DeepL 网页版', transmart: '腾讯 TranSmart'};
 
 function run(command, args, cwd, input, extraEnv) {
     return new Promise((resolve, reject) => {

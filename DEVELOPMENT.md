@@ -30,6 +30,8 @@ python scripts/build.py --output dist
 
 translation 组以模拟响应检查各来源协议、完整分块、数学／引用保护、失败与不换源行为，不访问网络。实际服务可用性另用合成文字检查，不发送论文；接口返回 401／限流须如实报告，不能把协议单测当服务连通证明。翻译使用 Python 标准库，不依赖第三方翻译插件的私有接口。
 
+Google／Bing 的请求协议以 Translate for Zotero 的 `src/modules/services/google.ts` 与 `bing.ts` 为参考，Python 适配独立实现。Google token 按 UTF-8 字节执行 32 位整数运算，非 ASCII 与补充平面字符均须保留；Google 两个主机不自动切换。请求头相同不代表 Python 网络栈与 Zotero 完全相同，也不能据此保证匿名服务稳定性。维护时对照请求格式，不直接搬入 AGPL 插件实现或引入浏览器凭据。
+
 ## 保护与验证目标
 
 用隔离样例验证配置合并／恢复、重复导入、Typst 与无 TeX 项目不变、首次打开评论、单卡片源码展开、批注与接收、原始问题关联、同一 PDF 更新、编译失败保留旧 PDF、普通缩进、私有 Git 备份与缓存引用保护。伪造的 GitHub 传输只用于隔离备份测试；公共源码仓库与论文私有备份要求不可混淆。

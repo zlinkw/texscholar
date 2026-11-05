@@ -1,7 +1,9 @@
 """Translation contracts, using synthetic text and no remote services."""
+import io
 import json
 import unittest
 import urllib.error
+import urllib.parse
 from review_translate import Provider, chunks, protect_tex, restore_tex, translate_many, translate_text
 
 
@@ -49,22 +51,22 @@ class Translation(unittest.TestCase):
         self.assertEqual(translate_text(r'$x+y$', NoNetwork()), r'$x+y$')
 
     def test_each_provider_uses_its_selected_service_and_validates_output(self):
-        for name in ('google', 'bing', 'deepl', 'transmart'):
+        for name in ('google', 'googleapi', 'bing', 'deepl', 'transmart'):
             with self.subTest(name=name):
                 provider = Provider(name, '')
                 requests = []
                 def request(url, data=None, content_type=None, headers=None):
                     requests.append((url, data))
-                    if '/translator' in url:
-                        return 'IG:"fixture"; data-iid="translator.1"; params_AbusePreventionHelper = [123,"token",10000];'
-                    responses = {'google': {'sentences': [{'trans': '合成译文'}]},
+                    responses = {'google': [[['合成', 'Synthetic'], None, ['译文', 'text.']]],
+                                 'googleapi': [[['合成', 'Synthetic'], None, ['译文', 'text.']]],
                                  'bing': [{'translations': [{'text': '合成译文'}]}],
                                  'deepl': {'translations': [{'text': '合成译文'}]},
                                  'transmart': {'auto_translation': ['合成译文']}}
                     return json.dumps(responses[name])
                 provider.request = request
                 self.assertEqual(provider.translate('Synthetic text.'), '合成译文')
-                expected = {'google': 'translate.google.com', 'bing': 'edge.microsoft.com/translate/translatetext',
+                expected = {'google': 'translate.google.com', 'googleapi': 'translate.googleapis.com',
+                            'bing': 'edge.microsoft.com/translate/translatetext',
                             'deepl': 'oneshot-free.www.deepl.com', 'transmart': 'transmart.qq.com'}[name]
                 self.assertTrue(all(expected in url for url, _ in requests), 'no unselected service receives the text')
                 if name == 'bing':
@@ -73,6 +75,41 @@ class Translation(unittest.TestCase):
                 provider.request = lambda *a, **kw: '{}'
                 with self.assertRaises(ValueError):
                     provider.translate('Another synthetic text.')
+
+    def test_zotero_compatible_http_requests_preserve_unicode_and_keep_hosts_explicit(self):
+        source = 'Medical segmentation: café 😀.'
+        requests = []
+        class Opener:
+            def open(self, request, timeout):
+                requests.append(request)
+                response = [{'translations': [{'text': '医学分割'}]}] if request.get_method() == 'POST' else [[['医学分割', source]]]
+                return io.BytesIO(json.dumps(response).encode('utf-8'))
+        for name, host in [('google', 'translate.google.com'), ('googleapi', 'translate.googleapis.com')]:
+            provider = Provider(name, '')
+            provider.opener = Opener()
+            self.assertEqual(provider.translate(source), '医学分割')
+            request = requests[-1]
+            url = urllib.parse.urlsplit(request.full_url)
+            query = urllib.parse.parse_qs(url.query)
+            self.assertEqual((url.scheme, url.netloc, url.path), ('https', host, '/translate_a/single'))
+            self.assertEqual(request.get_method(), 'GET')
+            self.assertIsNone(request.data)
+            self.assertEqual(query['q'], [source])
+            self.assertEqual(query['client'], ['gtx'])
+            self.assertEqual(query['tk'], ['776745.912989'])
+            self.assertEqual((query['sl'], query['tl']), (['en'], ['zh-CN']))
+            self.assertEqual(query['dt'], ['at', 'bd', 'ex', 'ld', 'md', 'qca', 'rw', 'rm', 'ss', 't'])
+        provider = Provider('bing', '')
+        provider.opener = Opener()
+        self.assertEqual(provider.translate(source), '医学分割')
+        request = requests[-1]
+        self.assertEqual(request.get_method(), 'POST')
+        self.assertEqual(json.loads(request.data), [source])
+        self.assertEqual(request.get_header('Content-type'), 'application/json')
+        self.assertIn('Edg/113.0.1774.42', request.get_header('User-agent'))
+        self.assertIsNone(request.get_header('Cookie'), 'never imports browser credentials')
+        self.assertIsNone(request.get_header('Authorization'))
+        self.assertEqual(len(requests), 3, 'each selected source sends exactly one request for this short input')
 
     def test_success_deduplication_and_partial_failure_do_not_retry_or_switch_source(self):
         calls = []

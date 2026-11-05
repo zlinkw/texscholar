@@ -207,6 +207,11 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert.equal(translatedCalls, completedCalls, 'expansion reuses current-version in-memory translations');
     await handlers.get('localLatex.inlineTranslationSource')(c);
     assert.equal(provider, 'google', 'cancelling the source picker changes nothing');
+    sourceChoice = 'googleapi';
+    await handlers.get('localLatex.inlineTranslationSource')(c);
+    assert.equal(provider, 'googleapi', 'the second Google host is an explicit user choice');
+    assert(threads.at(-1).comments[0].body.value.includes('Google（googleapis）'));
+    assert.equal(translatedCalls, completedCalls, 'choosing another host does not send text');
     sourceChoice = 'transmart';
     await handlers.get('localLatex.inlineTranslationSource')(c);
     assert.equal(provider, 'transmart');

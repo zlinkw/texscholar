@@ -10,7 +10,7 @@
 
 点击原文／候选内容后的 **翻译本条为中文**，原文、候选和所有关联审稿意见下分别展开中文；原始意见默认展开，仍可单独收起。标题使用纯文本图例 `编号 · 原文 → 候选 v版本 ｜ − 删除/替换 · ＋ 新增/改写 · ＝ 未改`。原生作者栏保留简短“编号 · 修改位置／文件”用于定位，不再空置，也不重复完整候选摘要。底部评论列表显示编号、位置和实际内容，不再把翻译操作当摘要；固定原生边距不能通过公开接口完全移除。
 
-设置中搜索 `localLatex.translation.provider`，或点击卡片的 **切换翻译源**，可选 Google（默认）、Bing／微软、DeepL、腾讯 TranSmart。切换优先更新已有项目级来源，否则更新当前 Profile；不发送文字，之后由用户点击翻译。原 Bing 网页会话返回 401 后，已参考 [bing-translate-api 的 MET 实现](https://github.com/plainheart/bing-translate-api/blob/master/src/met/index.js)，改用微软 Edge 的免密钥翻译路径，不再抓取 Bing 网页令牌或 Cookie；本轮合成文字及原生卡片检查可用。Google 仍可能返回 429；DeepL、TranSmart 的合成文字检查也可用，但匿名接口都可能限流或变化，不代表论文长文本或未来请求一定成功。保留明确错误，不自动重试、轮换 IP 或转发其他供应商。有道等需要账号／密钥的免费额度不等于免密钥服务，当前不包含。
+设置中搜索 `localLatex.translation.provider`，或点击卡片的 **切换翻译源**，可选 Google（默认）、Google（googleapis）、Bing／微软、DeepL、腾讯 TranSmart。切换优先更新已有项目级来源，否则更新当前 Profile；不发送文字，之后由用户点击翻译。Google 参照 [Translate for Zotero 的请求协议](https://github.com/windingwind/zotero-pdf-translate/blob/main/src/modules/services/google.ts)，使用 `client=gtx` 的 GET 请求、UTF-8 文本 token 和逐片段译文解析；两个 Google 域名分别选择，googleapis 选项不代表需要密钥的 Google Cloud API。Bing 采用该插件的 [微软 Edge 请求方式及 User-Agent](https://github.com/windingwind/zotero-pdf-translate/blob/main/src/modules/services/bing.ts)，不抓取网页令牌、不读取浏览器账号或 Cookie。按公开协议独立实现 Python 适配，不捆绑 Zotero 插件代码，也不模拟完整浏览器环境。匿名接口仍可能返回 429／401 或发生变化，不承诺永久可用。保留明确错误，不自动重试、轮换 IP 或转发其他供应商。有道等需要账号／密钥的免费额度不等于免密钥服务，当前不包含。
 
 仅点击时发送本条原文、候选和关联问题，不发送整篇论文或本地注释状态；使用当前 VS Code 网络代理设置。翻译只为辅助阅读，不作为有效 TeX 或改稿结果校验。公式、引用标记按可识别编号还原，允许中文语序重排；服务丢失、重复或改变标记时仍展示译文，并显示轻量“阅读提示”供对照上方原文，不阻塞其他部分、不自动重译。完整内容分块而非截断；真实网络失败保留已完成部分，可只重试未完成部分。展开／收起复用当前候选、当前来源的内存译文；换源、重载或候选更新后旧译文失效。翻译不写源文件、审核状态或 Git，不触发 AI、接收或 PDF 编译，也不安装／修改第三方翻译插件。显示译文不能代替作者核对原始意见。
 
