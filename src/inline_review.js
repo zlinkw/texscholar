@@ -932,6 +932,7 @@ function createInlineReview(vscode, context, execute = run) {
     context.subscriptions.push(vscode.window.registerUriHandler({async handleUri(resource) {
         try {
             if (resource.path === '/review-pdf') return await require('./pdf_navigation').handleUri(vscode, resource);
+            if (resource.path === '/source') return await require('./pdf_navigation').handleSourceUri(vscode, context, resource);
             if (resource.path !== '/review') throw new Error('不支持的审核入口。');
             const q = new URLSearchParams(resource.query);
             const c = {repo: q.get('repo'), owner: q.get('state'), id: q.get('id')};

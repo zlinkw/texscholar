@@ -2,6 +2,7 @@
 from pathlib import Path
 import argparse
 import json
+import difflib
 import os
 import re
 import subprocess
@@ -503,6 +504,26 @@ def source_graph(root, files):
     return included
 
 
+def reverse_source_map(original, rendered, anchors=None):
+    """Map derived TeX lines back to source, never to a disposable review copy."""
+    source = body(original).replace('\r\n', '\n')
+    before, after = source.splitlines(), rendered.splitlines()
+    lines = [1] * len(after)
+    for kind, a, b, x, y in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
+        for offset in range(y - x):
+            lines[x + offset] = min(a + offset + 1, b if b > a else a + 1, max(1, len(before)))
+    anchor = None
+    for index, row in enumerate(after):
+        opening = re.fullmatch(r'% TEXSCHOLAR-SYNC-BEGIN (.+)', row)
+        if opening:
+            anchor = min(anchors[id__] for id__ in opening[1].split(','))
+        if anchor is not None:
+            lines[index] = anchor
+        if row.startswith('% TEXSCHOLAR-SYNC-END '):
+            anchor = None
+    return {'source_digest': digest(source.encode('utf-8')), 'lines': lines}
+
+
 def preview(repo, state, document, id_, version, git, latexdiff, latexmk, style=None, refresh_accepted=False):
     # Forward and reverse fragments have separate inputs/logs and no shared
     # mutable state. Two workers bound local CPU/process use for personal review.
@@ -578,7 +599,8 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
         nav = json.loads(navigation.read_text(encoding='utf-8'))
         if visible.is_symlink() or visible.is_junction() or (visible.exists() and not visible.is_file()):
             raise ValueError('已有审核 PDF 不是普通文件。')
-        if visible.is_file() and digest(visible.read_bytes()) == nav['pdf_digest']:
+        sync = visible.with_suffix('.synctex.gz')
+        if visible.is_file() and digest(visible.read_bytes()) == nav['pdf_digest'] and sync.is_file() and digest(sync.read_bytes()) == nav.get('synctex_digest'):
             if review.state_path.read_bytes() != review.raw or any((review.repo / rel).read_bytes() != raw for rel, raw in files.items()):
                 raise ValueError('审核 PDF 复用核验期间源文件或候选已变化，请重新生成。')
             return {**previous_result, 'id': id_, 'version': version, 'reused_pdf': True}
@@ -660,10 +682,10 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
                     '_': r'\_', '%': r'\%', '^': r'\textasciicircum{}', '~': r'\textasciitilde{}'}[m[0]], text)
                 association = ', '.join(map(escaped, question_ids)) if question_ids else 'No linked question'
                 type_label = (r'\P{} ' if unit['paragraph_start'] else '') + unit['change_type']
-                chunks.append('\n\n\\par\\smallskip\\noindent\\textbf{[' + label + ']}\\enspace{\\footnotesize ' + type_label + ' | ' + association
+                chunks.append('\n\n% TEXSCHOLAR-SYNC-BEGIN ' + label + '\n\\par\\smallskip\\noindent\\textbf{[' + label + ']}\\enspace{\\footnotesize ' + type_label + ' | ' + association
                               + '}\\par\\nobreak\n\\begin{codexreviewold}\n' + old_marked
                               + '\n\\end{codexreviewold}\n\\par\\nobreak\\smallskip\\noindent{\\color[rgb]{0.65,0.65,0.65}\\rule{\\linewidth}{0.3pt}}\\par\\nobreak\\smallskip\n'
-                              + proposed + '\n\\par\\smallskip\n\n')
+                              + proposed + '\n\\par\\smallskip\n% TEXSCHOLAR-SYNC-END ' + label + '\n\n')
                 shown.extend(unit['ids'])
             display = ''.join(chunks)
             reviewed = reviewed[:a] + display + reviewed[b:]
@@ -723,27 +745,39 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
     navigation = visible.with_suffix('.json')
     if navigation.is_symlink() or navigation.is_junction():
         raise ValueError('审核 PDF 导航元数据不能是链接。')
-    targets = {}
+    targets, reverse = {}, {}
     for rel in included:
         # The recorder also lists binary figures and fonts; only TeX sources
         # can contain the review markers inserted above.
-        if rel.suffix.lower() != '.tex':
+        if rel.suffix.lower() != '.tex' or rel not in files:
             continue
         tex = derived if rel == relative else source_dir / rel
         if not tex.is_file():
             continue
         content = tex.read_bytes().decode('utf-8')
+        original = files[rel].decode('utf-8-sig')
+        anchors = {edit['id']: body(original).count('\n', 0, edit['live_start']) + 1 for edit in grouped.get(rel, [])}
+        reverse[str(tex)] = {'file': str(review.repo / rel), **reverse_source_map(original, content, anchors)}
         for id__ in shown:
             marker = r'\textbf{[' + id__ + ']}'
             position = content.find(marker)
             if position >= 0 and id__ not in targets:
                 targets[id__] = {'file': str(tex), 'line': content.count('\n', 0, position) + 1}
-    nav = {'pdf': str(pdf), 'document': str(document), 'pdf_digest': digest(pdf_raw), 'compiled_pdf': str(pdf_dir / 'review.pdf'), 'targets': targets,
+    sync = visible.with_suffix('.synctex.gz')
+    if sync.is_symlink() or sync.is_junction() or (sync.exists() and not sync.is_file()):
+        raise ValueError('审核 PDF 的 SyncTeX 目标不是普通文件。')
+    sync_raw = (pdf_dir / 'review.synctex.gz').read_bytes()
+    with tempfile.NamedTemporaryFile(prefix=document.stem + '-', suffix='.synctex.tmp', dir=current, delete=False) as stream:
+        stream.write(sync_raw)
+        temporary_sync = Path(stream.name)
+    nav = {'pdf': str(pdf), 'document': str(document), 'pdf_digest': digest(pdf_raw), 'synctex_digest': digest(sync_raw),
+           'reverse': reverse, 'compiled_pdf': str(pdf_dir / 'review.pdf'), 'targets': targets,
            'versions': {id__: review.state['edits'][id__]['versions'][-1] for id__ in shown}}
     with tempfile.NamedTemporaryFile(prefix=document.stem + '-', suffix='.json.tmp', dir=current, delete=False) as stream:
         stream.write(json.dumps(nav, ensure_ascii=False).encode('utf-8'))
         temporary = Path(stream.name)
     os.replace(temporary, navigation)
+    os.replace(temporary_sync, sync)
     os.replace(temporary_pdf, visible)
     result = {'pdf': str(pdf), 'navigation': str(navigation), 'output': str(out), 'id': id_, 'version': version, 'kind': 'full-paper-sentence-review', 'shown_ids': shown,
               'reused_fragments': reused_fragments, 'reused_auxiliary': previous is not None, 'diff_command': [latexdiff, *DIFF_OPTIONS],

@@ -6,13 +6,23 @@ import re
 import unittest
 from pypdf import PdfReader, PdfWriter
 from native_review_test import NativeReview
-from review_pdf import preview, sentences, sentence_changes, review_units, with_legend
+from review_pdf import preview, sentences, sentence_changes, review_units, with_legend, reverse_source_map
 
 BIN = Path(os.environ['LOCAL_LATEX_TEXBIN'])
 EXE = '.exe' if os.name == 'nt' else ''
 
 
 class ReviewUnits(unittest.TestCase):
+    def test_reverse_source_map_excludes_machine_state_and_preserves_unchanged_positions(self):
+        original = '% CODEX-REVIEW-STATE-BEGIN\n% disposable runtime\n% CODEX-REVIEW-STATE-END\nOpening stays.\nOriginal sentence.\nTail stays.\n'
+        rendered = '% generated preamble\nOpening stays.\nOriginal marked.\nCandidate marked.\nTail stays.\n'
+        mapping = reverse_source_map(original, rendered)
+        self.assertEqual(mapping['lines'][1], 1)
+        self.assertEqual(mapping['lines'][2:4], [2, 2])
+        self.assertEqual(mapping['lines'][4], 3)
+        paired = 'Opening stays.\n% TEXSCHOLAR-SYNC-BEGIN 1\nOriginal sentence.\nCandidate marked.\n% TEXSCHOLAR-SYNC-END 1\nTail stays.\n'
+        mapping = reverse_source_map(original, paired, {'1': 2})
+        self.assertEqual(mapping['lines'][2:4], [2, 2], 'both original and candidate point to the same real review location')
     def test_prose_environments_do_not_expand_a_sentence_to_the_complete_abstract(self):
         for environment in ['abstract', 'quote', 'quotation']:
             opening, closing = '\\begin{' + environment + '}\n', '\\end{' + environment + '}'
@@ -444,6 +454,12 @@ class ReviewPDF(unittest.TestCase):
         navigation = json.loads(Path(result['navigation']).read_text(encoding='utf-8'))
         self.assertEqual(set(navigation['targets']), {first_id, second_id, addition})
         self.assertTrue(all(target['file'].endswith('.tex') for target in navigation['targets'].values()))
+        self.assertTrue(Path(result['pdf']).with_suffix('.synctex.gz').is_file())
+        self.assertIn('reverse', navigation)
+        target = navigation['targets'][first_id]
+        reverse = navigation['reverse'][target['file']]
+        self.assertEqual(Path(reverse['file']), main)
+        self.assertGreaterEqual(reverse['lines'][target['line'] - 1], 1)
         self.assertEqual(main.read_bytes(), source)
         self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
         print('ORIGINAL_UNIT_PDF', result['pdf'])
