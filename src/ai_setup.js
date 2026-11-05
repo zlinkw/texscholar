@@ -11,7 +11,7 @@ async function buildPrompt() {
     const questions = await fs.readFile(path.join(__dirname, 'question-linking-guide.md'), 'utf8');
     const settings = [...preset.settings, ...bindings({})];
     const pluginSettings = Object.fromEntries(Object.entries(metadata.contributes.configuration.properties)
-        .filter(([key]) => key === 'localLatex.configurationProfile' || key.startsWith('localLatex.review'))
+        .filter(([key]) => key === 'localLatex.configurationProfile' || key.startsWith('localLatex.review') || key.startsWith('localLatex.translation'))
         .map(([key, value]) => [key, value.default]));
     return [
         '# 请配置 TeXScholar 本地科研写作，并合并到你的全局 SKILL',
@@ -69,6 +69,7 @@ async function buildPrompt() {
         '不为安装插件创建论文仓库、接收候选、迁移旧审核块或清理真实论文。新论文的本地／私有远端初始化另按项目授权：先识别源码、图表、模板、参考文献，再建立忽略规则，排除 .codex-review、.latex-build、运行缓存和临时审核预览。已跟踪的生成文件不能仅靠 .gitignore 修复，也不能擅自撤销暂存。',
         '只有需要验证新机器工具链时使用隔离最小样例核验正文、文献及 SyncTeX；不拿真实论文做安装测试。报告真实通过／失败和需要用户登录、重载或手动布局的部分。缺少权限、网络或 Mac 实机时如实说明，不假称已完成。',
         '审核颜色和布局只是插件的显示偏好，不能变成 AI 向正式 .tex 插入颜色宏、删除线或改写候选的指令。最终投稿标记遵循作者和期刊规则，与审核显示样式分开。',
+        '卡片中文翻译是独立显示功能，来源在 localLatex.translation.provider 选择。仅作者点击时发送本条原文、候选和关联问题，不自动翻译全篇或换源；数学和引用标记保留。译文不写入正文、候选、审核状态或 Git，也不代表科学核验。关联原始问题默认展开，标题行使用纯文本图例且不重复显示编号。',
         '',
         '## 配套扩展（按功能选择，缺失才安装）',
         ...RECOMMENDED.map(([id, purpose]) => '- ' + id + '：' + purpose),

@@ -13,6 +13,7 @@ GROUPS = {
     'backup': ['backup.test.js'],
     'backend': ['native_review_test', 'source_review_test'],
     'pdf': ['review_pdf_test.ReviewUnits', 'review_pdf_test.ReviewPDF'],
+    'translation': ['review_translate_test'],
 }
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--group', choices=GROUPS, required=True)

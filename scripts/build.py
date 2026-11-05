@@ -9,7 +9,7 @@ from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', 'menu_commands.js',
-           'chktex_actions.js', 'chktex_messages.js', 'chktex_filter.py', 'inline_review.js', 'review_positions.js', 'candidate_panel.js', 'review_pdf.py', 'tools.js',
+           'chktex_actions.js', 'chktex_messages.js', 'chktex_filter.py', 'inline_review.js', 'review_positions.js', 'candidate_panel.js', 'review_pdf.py', 'review_translate.py', 'tools.js',
            'setup.js', 'questions.js', 'writing.js', 'ai_setup.js', 'review_style.js', 'pdf_navigation.js', 'writing-guide.md', 'question-linking-guide.md', 'writing-presets.json',
            'paper.code-snippets', 'source_review.py', 'review_checkpoint.py')
 
@@ -67,7 +67,7 @@ def build(output):
     write_product(output / ('texscholar-' + metadata['version'] + '.vsix'), archive_bytes(files))
     sources = {name: (ROOT / name).read_bytes() for name in ('package.json', 'README.md', 'LICENSE', 'DEVELOPMENT.md', '.gitignore', '.gitattributes')}
     sources.update({'src/' + name: (ROOT / 'src' / name).read_bytes() for name in RUNTIME})
-    for name in ('review_archive.py', 'native_review_test.py', 'source_review_test.py', 'review_pdf_test.py',
+    for name in ('review_archive.py', 'native_review_test.py', 'source_review_test.py', 'review_pdf_test.py', 'review_translate_test.py',
                  'inline_review.test.js', 'candidate_panel.test.js', 'setup.test.js', 'questions.test.js', 'extension.test.js',
                  'core.test.js', 'backup.test.js', 'menu_commands.test.js', 'navigation.test.js', 'chktex_actions.test.js', 'writing.test.js', 'pdf_navigation.test.js'):
         sources['src/' + name] = (ROOT / 'src' / name).read_bytes()

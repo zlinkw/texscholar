@@ -22,10 +22,13 @@ python scripts/check.py --group editor
 python scripts/check.py --group backend
 python scripts/check.py --group backup
 python scripts/check.py --group pdf
+python scripts/check.py --group translation
 python scripts/build.py --output dist
 ```
 
 每个组先保留完整 stdout/stderr，脚本返回真实子进程状态。独立组最多两个并行，分别使用独立样例目录；不对共享缓存、真实仓库或界面做并行写入。测试产物不自动清理，不纳入 Git。没有性能基准或等待时限承诺。
+
+translation 组以模拟响应检查各来源协议、完整分块、数学／引用保护、失败与不换源行为，不访问网络。实际服务可用性另用合成文字检查，不发送论文；接口返回 401／限流须如实报告，不能把协议单测当服务连通证明。翻译使用 Python 标准库，不依赖第三方翻译插件的私有接口。
 
 ## 保护与验证目标
 

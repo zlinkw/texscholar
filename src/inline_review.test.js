@@ -45,7 +45,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     const data = {sha256: 'fresh', edit, version: 'v1', original, candidate, source_match: true,
         source: {text: original, start: 0, end: Array.from(original).length, side: 'original'},
         changes: [{old_start: oldStart, old_end: oldStart + 6, new_start: oldStart, new_end: oldStart + 8}]};
-    let value = original, lensProvider, commentsRegistered = false;
+    let value = original, lensProvider, commentsRegistered = false, configurationChanged, provider = 'google', releaseTranslation;
     const calls = [], threads = [], notices = [], backendCalls = [], handlers = new Map();
     class Range {
         constructor(start, end) {Object.assign(this, {start, end});}
@@ -69,7 +69,8 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
         }};}},
         workspace: {isTrusted: true, textDocuments: [document], getWorkspaceFolder: () => ({uri: uri(root)}),
             workspaceFolders: [{uri: uri(root)}], findFiles: async () => automatic ? [uri(file), uri(owner)] : [],
-            getConfiguration: () => ({get: (key, fallback) => key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback}), onDidChangeConfiguration: disposable, openTextDocument: async () => document,
+            getConfiguration: () => ({get: (key, fallback) => key === 'translation.provider' ? provider : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback}),
+            onDidChangeConfiguration: callback => {configurationChanged = callback; return disposable();}, openTextDocument: async () => document,
             onDidChangeTextDocument: disposable, onDidSaveTextDocument: disposable, createFileSystemWatcher: fileWatcher},
         languages: {registerCodeLensProvider(selector, provider) {lensProvider = provider; return {dispose() {}};}},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
@@ -85,8 +86,16 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
                 calls.push(args);
             }}
     };
+    let translatedCalls = 0;
     const backend = async (command, args, cwd, input, env) => {
         backendCalls.push({command, args, input, env});
+        if (args.some(x => String(x).endsWith('review_translate.py'))) {
+            translatedCalls++;
+            if (releaseTranslation) await new Promise(resolve => {releaseTranslation = resolve;});
+            const results = Object.fromEntries(input.items.filter(item => !(autoPDF && translatedCalls === 1 && item.key === 'question0'))
+                .map(item => [item.key, item.key === 'question0' ? '问题中文：请解释可靠性。' : '中文 <script>not executable</script> [链接](command:localLatex.inlineAccept)']));
+            return JSON.stringify({provider: input.provider, results, errors: autoPDF && translatedCalls === 1 ? {question0: 'HTTP 429：请求受限。'} : {}});
+        }
         if (args.includes('--new-window')) return '';
         if (args.some(x => String(x).endsWith('review_pdf.py'))) {
             const navigation = path.join(root, 'review.json');
@@ -133,21 +142,24 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert.equal(value, original);
     assert.equal(calls.find(x => x[0] === 'showTextDocument')[1].fsPath, file);
     let card = threads.at(-1).comments[0].body;
-    assert(card.value.startsWith('<div><strong>原文：</strong>'));
+    assert(card.value.startsWith('[翻译本条为中文（Google）]'));
+    assert(card.value.includes('<div><strong>原文：</strong>'));
     assert(!card.value.includes('修改后：'));
     assert(!card.value.includes('<code>'));
     assert(!card.value.includes('<pre>'));
-    assert(card.value.includes('<del>old</del>'));
-    assert(card.value.includes('>new</span>'));
+    assert(!card.value.includes('图例：'));
+    assert.equal(threads.at(-1).comments[0].author.name, '', 'no duplicate number-only author row');
+    assert(threads.at(-1).label.includes('− 删除/替换 · ＋ 新增/改写 · ＝ 未改'));
     assert(!card.value.includes('红色删除线'));
-    assert(card.value.includes('Addition only＝无对应原句'));
     assert(!card.value.includes('中文段落逻辑'));
     assert(card.value.includes('展开完整源码（含注释）'));
-    assert.deepEqual(card.isTrusted, {enabledCommands: ['localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges', 'localLatex.inlineToggleSource']});
+    assert.deepEqual(card.isTrusted, {enabledCommands: ['localLatex.inlineTranslate', 'localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges', 'localLatex.inlineToggleSource']});
+    assert(card.value.includes('Please clarify reliability.'), 'linked original questions start expanded');
     const beforeQuestion = backendCalls.length;
     await handlers.get('localLatex.inlineQuestions')(c);
-    assert(threads.at(-1).comments[0].body.value.includes('Please clarify reliability.'));
+    assert(!threads.at(-1).comments[0].body.value.includes('Please clarify reliability.'));
     await handlers.get('localLatex.inlineQuestions')(c);
+    assert(threads.at(-1).comments[0].body.value.includes('Please clarify reliability.'));
     assert.equal(backendCalls.length, beforeQuestion, 'question display uses the loaded immutable association');
     const callsBeforeToggle = backendCalls.length, existingThread = threads.at(-1);
     await handlers.get('localLatex.inlineToggleSource')(c);
@@ -160,6 +172,39 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert.equal(backendCalls.length, callsBeforeToggle, 'display-only expansion must not reread the backend');
     assert.equal(threads.at(-1), existingThread, 'expansion updates one existing card without rebuilding other threads');
     assert(backendCalls.every(x => x.args.includes('inspect') || x.args.includes('status') || x.args.includes('cards')));
+    const beforeTranslation = fs.readFileSync(file);
+    await handlers.get('localLatex.inlineTranslate')(c);
+    if (autoPDF) {
+        assert(threads.at(-1).comments[0].body.value.includes('HTTP 429'));
+        await handlers.get('localLatex.inlineTranslate')(c);
+        const retried = backendCalls.filter(x => x.args.some(a => String(a).endsWith('review_translate.py'))).at(-1);
+        assert.deepEqual(retried.input.items.map(item => item.key), ['question0'], 'retry only the failed location');
+    }
+    const translated = threads.at(-1).comments[0].body.value;
+    assert(translated.includes('问题中文：请解释可靠性。'));
+    assert(translated.includes('&lt;script&gt;'));
+    assert(translated.replaceAll('\u200b', '').includes('&#91;链接&#93;'));
+    assert(!translated.includes('<script>'));
+    const completedCalls = translatedCalls;
+    await handlers.get('localLatex.inlineTranslate')(c);
+    assert(!threads.at(-1).comments[0].body.value.includes('问题中文：'));
+    await handlers.get('localLatex.inlineTranslate')(c);
+    assert.equal(translatedCalls, completedCalls, 'expansion reuses current-version in-memory translations');
+    provider = 'transmart';
+    configurationChanged({affectsConfiguration: key => key === 'localLatex.translation'});
+    assert(!threads.at(-1).comments[0].body.value.includes('问题中文：'), 'changing recipient invalidates displayed translation without sending');
+    assert.equal(translatedCalls, completedCalls);
+    releaseTranslation = true;
+    const inFlight = handlers.get('localLatex.inlineTranslate')(c);
+    await Promise.resolve();
+    const release = releaseTranslation;
+    assert.equal(typeof release, 'function');
+    provider = 'google';
+    configurationChanged({affectsConfiguration: key => key === 'localLatex.translation'});
+    release(); await inFlight;
+    assert(!threads.at(-1).comments[0].body.value.includes('问题中文：'), 'late results from the old recipient cannot repaint the card');
+    releaseTranslation = undefined;
+    assert.equal(fs.readFileSync(file).compare(beforeTranslation), 0, 'translation never changes author source');
     assert.equal(lensProvider, undefined, 'review actions belong in the card, not source CodeLens text');
     const marked = markedWords(data, 'original');
     assert(marked.includes('<del>strong</del>'));
@@ -172,7 +217,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     await handlers.get('localLatex.inlineCancelComment')({thread: canceled});
     assert.equal(currentCard.canReply, false);
     assert.equal(currentCard.disposed, undefined);
-    assert.equal(currentCard.label, '1 · 原文 → 候选 v1');
+    assert.equal(currentCard.label, '1 · 原文 → 候选 v1 ｜ − 删除/替换 · ＋ 新增/改写 · ＝ 未改');
     assert.equal(edit.requests.length, 0);
     const draft = await handlers.get('localLatex.inlineAnnotate')(currentCard);
     await ui.refresh(c);

@@ -8,6 +8,7 @@ const positions = require('./review_positions');
 const reviewStyle = require('./review_style');
 const OPEN = new Set(['pending', 'rework']);
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**';
+const TRANSLATORS = {google: 'Google', bing: 'Bing', deepl: 'DeepL 网页版', transmart: '腾讯 TranSmart'};
 
 function run(command, args, cwd, input, extraEnv) {
     return new Promise((resolve, reject) => {
@@ -126,7 +127,7 @@ function createInlineReview(vscode, context, execute = run) {
     let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
     let watchedScope, watcher, autoRefresh, renderedOwnerHash, refreshChain = Promise.resolve();
     const changedFiles = new Set(), reviewFiles = new Set(), deferredFiles = new Set();
-    const shownPanels = new Set(), openedPDFs = new Set(), expandedQuestions = new Set(), pdfMetadata = new Map();
+    const shownPanels = new Set(), openedPDFs = new Set(), collapsedQuestions = new Set(), pdfMetadata = new Map(), translations = new Map();
     const pendingPDFUpdates = new Map();
     let pdfChain = Promise.resolve(), automaticPDFRun;
     context.subscriptions.push(controller, deleted);
@@ -233,14 +234,82 @@ function createInlineReview(vscode, context, execute = run) {
         record.data.source.text.slice(0, utf16(record.data.source.text, record.data.source.end)).split('\n').length]);
     const cardTitle = (data, id) => {
         const members = threadMembers.get(cards.get(id)) || [];
-        return label(data, id) + (members.length > 1 ? ' · 本行：' + members.join('、') : '');
+        return label(data, id) + (members.length > 1 ? ' · 本行：' + members.join('、') : '')
+            + (style().showLegend ? ' ｜ − 删除/替换 · ＋ 新增/改写 · ＝ 未改' : '');
     };
+    function translationInput(c, data) {
+        const provider = config().get('translation.provider', 'google');
+        if (!TRANSLATORS[provider]) throw new Error('请在设置中选择可用的翻译来源。');
+        const items = [{key: 'original', text: displayText(data.original)},
+            {key: 'candidate', text: displayText(data.candidate) || deletionPreview(data)},
+            ...(data.edit.questions || []).map((q, i) => ({key: 'question' + i, text: displayText(q.quote)}))].filter(item => item.text);
+        return {provider, items, signature: JSON.stringify([c.version, provider, items])};
+    }
+    function translationState(c, data) {
+        const entry = translations.get(sourceKey(c));
+        return entry?.signature === translationInput(c, data).signature ? entry : undefined;
+    }
+    function redrawCard(c) {
+        const thread = cards.get(c.id), record = records.get(c.id);
+        if (thread && record && threadContexts.get(thread)?.id === c.id)
+            thread.comments = [{...thread.comments[0], body: cardBody(record.data, c.id, record.c)}, ...thread.comments.slice(1)];
+    }
+    async function translateCard(arg) {
+        const c = contextFor(arg), record = records.get(c.id);
+        if (!record) throw new Error('该项已更新或处理，请查看当前卡片。');
+        trusted(c);
+        if (!sameFile(c.repo, record.c.repo) || c.owner !== record.c.owner || c.version !== record.c.version)
+            throw new Error('该翻译入口来自旧版本或其他项目，请核对当前卡片。');
+        const input = translationInput(c, record.data), key = sourceKey(c);
+        let entry = translationState(c, record.data);
+        if (entry?.loading) return entry.promise;
+        if (entry && !Object.keys(entry.errors).length) {
+            entry.expanded = !entry.expanded; redrawCard(c); return;
+        }
+        if (arg?.hideTranslation && entry) {entry.expanded = false; redrawCard(c); return;}
+        entry ||= {c, signature: input.signature, results: {}, errors: {}, expanded: true};
+        entry.expanded = true; entry.loading = true; entry.errors = {};
+        translations.set(key, entry); redrawCard(c);
+        const items = input.items.filter(item => !(item.key in entry.results));
+        const http = vscode.workspace.getConfiguration('http');
+        const proxy = http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;
+        entry.promise = (async () => {
+            try {
+                const result = JSON.parse(await execute(config().get('pythonPath', 'python'), ['-X', 'utf8', path.join(__dirname, 'review_translate.py')], c.repo,
+                    {provider: input.provider, proxy, items}));
+                Object.assign(entry.results, result.results); entry.errors = result.errors;
+            } catch (error) {entry.errors = Object.fromEntries(items.map(item => [item.key, error.message]));}
+            finally {
+                entry.loading = false;
+                if (translations.get(key) === entry && records.has(c.id)
+                    && translationInput(c, records.get(c.id).data).signature === entry.signature) redrawCard(c);
+            }
+        })();
+        return entry.promise;
+    }
     function cardBody(data, id, c) {
         const appearance = style();
+        const translation = translationState(c, data), provider = translationInput(c, data).provider;
         const markdown = new vscode.MarkdownString();
         markdown.supportHtml = true;
         markdown.isTrusted = false;
         const enabledCommands = [];
+        enabledCommands.push('localLatex.inlineTranslate');
+        const translationAction = translation?.loading ? '正在翻译…' : translation && Object.keys(translation.errors).length ? '重试未完成翻译'
+            : translation ? translation.expanded ? '收起中文' : '展开中文' : '翻译本条为中文';
+        markdown.appendMarkdown(`[${translationAction}（${TRANSLATORS[provider]}）](command:localLatex.inlineTranslate?${encodeURIComponent(JSON.stringify([c]))})`);
+        if (translation?.expanded && Object.keys(translation.errors).length)
+            markdown.appendMarkdown(` · [收起中文](command:localLatex.inlineTranslate?${encodeURIComponent(JSON.stringify([{...c, hideTranslation: true}]))})`);
+        markdown.appendMarkdown('\n\n');
+        const chinese = key => {
+            if (!translation?.expanded) return '';
+            const value = translation.results[key], error = translation.errors[key];
+            // Remote text is literal display data, never Markdown commands.
+            const literal = text => wrapHtml(text).replace(/[\[\]()*_`]/g, char => '&#' + char.charCodeAt(0) + ';');
+            if (value !== undefined) return '<br><strong>中文：</strong>' + literal(value);
+            if (error) return '<br><strong>翻译未完成：</strong>' + literal(error);
+            return translation.loading ? '<br>中文：正在翻译…' : '';
+        };
         const members = threadMembers.get(cards.get(id)) || [];
         if (members.length > 1) {
             enabledCommands.push('localLatex.inlineSelectCard');
@@ -252,18 +321,15 @@ function createInlineReview(vscode, context, execute = run) {
         const proposed = displayText(data.candidate) ? markedWords(data, 'candidate', appearance).trim()
             : `本句／本项已删除。删除后衔接（仅预览）：<br>${wrapHtml(deletionPreview(data))}`;
         const between = appearance.cardLayout === 'compact' ? '<br>' : '</div>\n\n<div>';
-        markdown.appendMarkdown(`<div><strong>原文：</strong> ${old}${between}<strong>候选：</strong> ${proposed}</div>\n`);
-        if (appearance.showLegend) markdown.appendMarkdown('<div>图例：' + changedHtml('old', 'original', appearance) + '＝删除／替换；'
-            + changedHtml('new', 'candidate', appearance) + '＝新增／改写；' + (appearance.unchangedColor ? changedHtml('same', 'unchanged', appearance) : 'same') + '＝未改；公式可仅标色。'
-            + ' → 原文到候选；Addition only＝无对应原句。</div>');
+        markdown.appendMarkdown(`<div><strong>原文：</strong> ${old}${chinese('original')}${between}<strong>候选：</strong> ${proposed}${chinese('candidate')}</div>\n`);
         if (data.edit.questions?.length) {
             enabledCommands.push('localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges');
             const toggle = encodeURIComponent(JSON.stringify([c]));
-            markdown.appendMarkdown(`\n\n[关联问题 ${data.edit.questions.map(q => escapeHtml(q.id)).join('、')}（展开／收起）](command:localLatex.inlineQuestions?${toggle})`);
+            markdown.appendMarkdown(`\n\n[关联问题 ${data.edit.questions.map(q => escapeHtml(q.id)).join('、')}（${collapsedQuestions.has(sourceKey(c)) ? '展开' : '收起'}原始意见）](command:localLatex.inlineQuestions?${toggle})`);
             markdown.appendMarkdown(` · [查看这些问题的全部改动](command:localLatex.inlineRelatedChanges?${toggle})`);
-            if (expandedQuestions.has(sourceKey(c))) for (const q of data.edit.questions) {
+            if (!collapsedQuestions.has(sourceKey(c))) for (const [index, q] of data.edit.questions.entries()) {
                 const target = encodeURIComponent(JSON.stringify([{repo: c.repo, question: q}]));
-                markdown.appendMarkdown(`\n\n<div><strong>${escapeHtml(q.id)}：</strong>${wrapHtml(q.quote)}</div>\n\n`
+                markdown.appendMarkdown(`\n\n<div><strong>${escapeHtml(q.id)}：</strong>${wrapHtml(q.quote)}${chinese('question' + index)}</div>\n\n`
                     + `[跳转原始文件](command:localLatex.jumpQuestion?${target})`);
             }
         }
@@ -285,7 +351,7 @@ function createInlineReview(vscode, context, execute = run) {
             && JSON.stringify(previousMembers) === JSON.stringify(threadMembers.get(thread))
             && (displayText(data.candidate) || deletionPreview(previous.data) === deletionPreview(data));
         const comments = [sameBody ? thread.comments[0]
-            : {body: cardBody(data, c.id, c), mode: vscode.CommentMode.Preview, author: {name: c.id}}];
+            : {body: cardBody(data, c.id, c), mode: vscode.CommentMode.Preview, author: {name: ''}}];
         const oldNotes = new Map((previous?.data.edit.requests || []).map((note, index) => [note.id, {note, comment: thread.comments[index + 1]}]));
         for (const note of data.edit.requests || []) {
             const old = oldNotes.get(note.id);
@@ -372,7 +438,7 @@ function createInlineReview(vscode, context, execute = run) {
         reviewFiles.clear(); deferredFiles.clear();
         for (const edit of Object.values(state.edits)) if (OPEN.has(edit.status)) reviewFiles.add(path.join(c.repo, edit.file));
         if (batch && batch !== state.session) {
-            expandedSources.clear(); expandedQuestions.clear(); pdfMetadata.clear();
+            expandedSources.clear(); collapsedQuestions.clear(); pdfMetadata.clear(); translations.clear();
             for (const thread of new Set(cards.values())) {drafts.delete(thread); thread.dispose();}
             cards.clear(); records.clear();
         }
@@ -418,6 +484,10 @@ function createInlineReview(vscode, context, execute = run) {
             records.set(id, {c: selected, data, range: at});
         }
         reconcileThreads(c, {oldCards, oldRecords, oldThreads, previous, available, writing}, focus);
+        for (const [key, entry] of translations) {
+            const record = records.get(entry.c.id);
+            if (!record || translationInput(record.c, record.data).signature !== entry.signature) translations.delete(key);
+        }
         renderedOwnerHash = state.sha256;
         candidatePanel.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), c);
         decorate();
@@ -836,6 +906,7 @@ function createInlineReview(vscode, context, execute = run) {
             undefined, {ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: ''});
     });
     command('localLatex.inlineAddRequests', addRequests);
+    command('localLatex.inlineTranslate', translateCard, true);
     command('localLatex.inlineToggleSource', async c => {
         const selected = contextFor(c);
         const record = records.get(selected.id), thread = cards.get(selected.id);
@@ -853,7 +924,7 @@ function createInlineReview(vscode, context, execute = run) {
             return;
         }
         const key = sourceKey(selected);
-        if (expandedQuestions.has(key)) expandedQuestions.delete(key); else expandedQuestions.add(key);
+        if (collapsedQuestions.has(key)) collapsedQuestions.delete(key); else collapsedQuestions.add(key);
         thread.comments = [{...thread.comments[0], body: cardBody(record.data, selected.id, record.c)}, ...thread.comments.slice(1)];
     }, true);
     // Retired compatibility alias; use localLatex.inlineReview.
@@ -899,6 +970,10 @@ function createInlineReview(vscode, context, execute = run) {
         if (document.uri.scheme === 'file') return requestRefresh(document.uri.fsPath);
     }));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('localLatex.translation')) {
+            translations.clear();
+            for (const thread of new Set(cards.values())) redrawCard(threadContexts.get(thread));
+        }
         if (!event.affectsConfiguration('localLatex.reviewStyle')) return;
         try {
             const appearance = style();
@@ -908,6 +983,7 @@ function createInlineReview(vscode, context, execute = run) {
             for (const thread of new Set(cards.values())) {
                 const c = threadContexts.get(thread), record = records.get(c.id);
                 thread.comments = [{...thread.comments[0], body: cardBody(record.data, c.id, c)}, ...thread.comments.slice(1)];
+                thread.label = cardTitle(record.data, c.id);
             }
             candidatePanel.updateStyle();
             decorate();
