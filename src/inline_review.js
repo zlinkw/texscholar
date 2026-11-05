@@ -513,6 +513,23 @@ function createInlineReview(vscode, context, execute = run) {
     async function open(c) {
         const draft = drafts.get(cards.get(c.id));
         if (draft && draft.c.id !== c.id) throw new Error('请先保存或取消当前批注草稿，再切换同行候选；草稿仍保留。');
+        // Opening is read-only. Reuse the watcher packet when its exact disk
+        // inputs still match; mutations keep their independent current() checks.
+        await refreshChain;
+        let record = records.get(c.id);
+        if (record && sameFile(record.c.repo, c.repo) && record.c.owner === c.owner && record.data.edit.deferred) {
+            trusted(c);
+            if (await changedSinceRender([path.join(c.repo, c.owner), path.join(c.repo, record.data.edit.file)])) {
+                await refresh(c);
+                record = records.get(c.id);
+            }
+            if (!record || record.displayConflict) throw new Error('该项已处理或原文发生冲突，请核对最新审核内容。');
+            showCard(record.c);
+            const editor = await vscode.window.showTextDocument(uri(record.c, record.data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
+            editor.selection = new vscode.Selection(record.range.start, record.range.start);
+            editor.revealRange(record.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+            return;
+        }
         const state = await prepareProject(c);
         c = {...c, version: state.edits[c.id].versions.at(-1)};
         activeScope = c;

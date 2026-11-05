@@ -220,6 +220,11 @@ class ReviewPDF(unittest.TestCase):
             self.assertEqual((main.read_bytes(), (self.root / 'reply.tex').read_bytes()), before)
             return result, elapsed
         first, cold = build()
+        from unittest.mock import patch
+        with patch('review_pdf.command', side_effect=AssertionError('unchanged PDF must not restart diff or TeX')):
+            unchanged, unchanged_seconds = build()
+        self.assertEqual(unchanged['output'], first['output'])
+        self.assertTrue(unchanged['reused_pdf'])
         bibliography = (Path(first['output']) / 'pdf/review.bbl').read_bytes()
         self.apply('propose', {'after': 'The model for case 1 is robust.'}, '1')
         one, one_seconds = build()
@@ -238,7 +243,7 @@ class ReviewPDF(unittest.TestCase):
         self.assertIn('Isolated compilation fixture', text)
         self.assertNotIn('citation [?]', text)
         self.assertEqual(first['pdf'], five['pdf'])
-        print('INCREMENTAL_REVIEW_SECONDS', json.dumps({'items': 100, 'cold': cold, 'update_1': one_seconds,
+        print('INCREMENTAL_REVIEW_SECONDS', json.dumps({'items': 100, 'cold': cold, 'unchanged': unchanged_seconds, 'update_1': one_seconds,
                                                      'update_5': five_seconds, 'pdf': five['pdf']}))
 
     def test_missing_disposable_diff_metadata_rebuilds_and_foreign_auxiliary_path_is_refused(self):
@@ -255,6 +260,13 @@ class ReviewPDF(unittest.TestCase):
         self.assertEqual(rebuilt['reused_fragments'], 0)
         self.assertTrue(rebuilt['reused_auxiliary'])
         self.assertIn('reliable', ' '.join(page.extract_text() for page in PdfReader(rebuilt['pdf']).pages))
+        visible = Path(rebuilt['pdf'])
+        exists = Path.exists
+        with patch.object(Path, 'is_file', lambda path: False if path == visible else is_file(path)), \
+             patch.object(Path, 'exists', lambda path: False if path == visible else exists(path)):
+            restored = preview(*args)
+        self.assertEqual(restored['pdf'], str(visible))
+        self.assertFalse(restored['reused_pdf'], 'missing stable PDF is rebuilt without touching the source')
         pdf = Path(rebuilt['pdf']).read_bytes()
         source = (self.root / 'main.tex').read_bytes(), (self.root / 'reply.tex').read_bytes()
         navigation = Path(rebuilt['navigation'])
@@ -498,6 +510,9 @@ Unique ending context.
             if Path(args[0]).name.startswith('latexmk'):
                 raise ValueError('isolated compile failure')
             return original_command(args, cwd, log)
+        # A changed source must reach the compiler; identical inputs now reuse
+        # the verified successful PDF instead of starting TeX again.
+        (self.root / 'main.tex').write_bytes(before + b'\n% Changed isolated source for compile-failure coverage.\n')
         with patch.object(review_pdf, 'command', compile_failure):
             with self.assertRaisesRegex(ValueError, 'isolated compile failure'):
                 preview(self.root, 'reply.tex', self.root / 'main.tex', id_, data['version'], 'missing-git',

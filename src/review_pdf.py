@@ -512,22 +512,48 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
         raise ValueError('审核 PDF 输出越出论文目录。')
     previous = previous_build(parent, document)
     previous_diff = None
+    previous_result = None
     if previous:
         comparison = previous / 'comparison.json'
-        if comparison.is_file() and not comparison.is_symlink() and not comparison.is_junction() and json.loads(comparison.read_text(encoding='utf-8')).get('diff_command') == [latexdiff, *DIFF_OPTIONS]:
-            previous_diff = previous
+        if comparison.is_file() and not comparison.is_symlink() and not comparison.is_junction():
+            previous_result = json.loads(comparison.read_text(encoding='utf-8'))
+            if previous_result.get('diff_command') == [latexdiff, *DIFF_OPTIONS]:
+                previous_diff = previous
+    # Compare the actual snapshot inputs, not the owner's changing notes/history.
+    # The renderer version and tool commands invalidate reuse after upgrades.
+    normalized_files = {rel: body(raw.decode('utf-8-sig')).encode('utf-8') if rel.suffix.lower() == '.tex' else raw
+                        for rel, raw in files.items()}
+    scope = source_graph(relative, files)
+    inputs = {'renderer': digest(Path(__file__).read_bytes()), 'document': relative.as_posix(),
+              'commands': [latexdiff, *DIFF_OPTIONS, latexmk],
+              'files': {rel.as_posix(): digest(raw) for rel, raw in normalized_files.items()}, 'items': {}}
+    for item_id, edit in review.state['edits'].items():
+        if edit['status'] in PENDING and Path(edit['file']) in scope:
+            review.question_links(edit.get('questions', []))
+            inputs['items'][item_id] = {'file': edit['file'], 'version': edit['versions'][-1],
+                                       'payload': review.payload(edit), 'deferred': edit.get('deferred', False),
+                                       'questions': edit.get('questions', [])}
+    if previous_result and previous_result.get('inputs') == inputs:
+        navigation = parent / 'current' / (document.stem + '-review.json')
+        visible = parent / 'current' / (document.stem + '-review.pdf')
+        nav = json.loads(navigation.read_text(encoding='utf-8'))
+        if visible.is_symlink() or visible.is_junction() or (visible.exists() and not visible.is_file()):
+            raise ValueError('已有审核 PDF 不是普通文件。')
+        if visible.is_file() and digest(visible.read_bytes()) == nav['pdf_digest']:
+            if review.state_path.read_bytes() != review.raw or any((review.repo / rel).read_bytes() != raw for rel, raw in files.items()):
+                raise ValueError('审核 PDF 复用核验期间源文件或候选已变化，请重新生成。')
+            return {**previous_result, 'id': id_, 'version': version, 'reused_pdf': True}
     out = Path(tempfile.mkdtemp(prefix=id_ + '-', dir=parent))
     source_dir = out / 'source'
     for rel, raw in files.items():
         destination = source_dir / rel
         destination.parent.mkdir(parents=True, exist_ok=True)
-        write_review_file(destination, body(raw.decode('utf-8-sig')).encode('utf-8') if rel.suffix.lower() == '.tex' else raw,
+        write_review_file(destination, normalized_files[rel],
                           previous / 'source' / rel if previous else None)
     main_text = body(files[relative].decode('utf-8-sig'))
     preamble, marker, _ = main_text.partition(r'\begin{document}')
     if not marker:
         raise ValueError('所选文件不是可编译主文档。')
-    scope = source_graph(relative, files)
     if Path(data['edit']['file']) not in scope:
         raise ValueError('所选主文档没有通过普通 input/include/subfile 包含该修改文件；请选择实际主文档。动态宏包含需先核对项目结构。')
     grouped, shown = {}, []
@@ -677,7 +703,8 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
     os.replace(temporary, navigation)
     os.replace(temporary_pdf, visible)
     result = {'pdf': str(pdf), 'navigation': str(navigation), 'output': str(out), 'id': id_, 'version': version, 'kind': 'full-paper-sentence-review', 'shown_ids': shown,
-              'reused_fragments': reused_fragments, 'reused_auxiliary': previous is not None, 'diff_command': [latexdiff, *DIFF_OPTIONS]}
+              'reused_fragments': reused_fragments, 'reused_auxiliary': previous is not None, 'diff_command': [latexdiff, *DIFF_OPTIONS],
+              'inputs': inputs, 'reused_pdf': False}
     (out / 'comparison.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     return result
 

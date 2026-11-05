@@ -37,11 +37,11 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
     fs.writeFileSync(file, original, 'utf8');
     const automatic = decision === 'accept';
     const owner = path.join(root, 'reply.tex');
-    if (automatic) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n', 'utf8');
+    fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n', 'utf8');
     const oldStart = Array.from(original.slice(0, original.indexOf('strong'))).length;
     const edit = {file: 'paper.tex', deferred: true, status: 'pending', versions: ['v1'], requests: [],
         questions: [{id: 'R1.1', file: 'paper.tex', quote: 'Please clarify reliability.'}]};
-    const state = {schema: 2, sha256: 'fresh', edits: {'1': edit}};
+    const state = {schema: 2, sha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(owner)).digest('hex'), edits: {'1': edit}};
     const data = {sha256: 'fresh', edit, version: 'v1', original, candidate, source_match: true,
         source: {text: original, start: 0, end: Array.from(original).length, side: 'original'},
         changes: [{old_start: oldStart, old_end: oldStart + 6, new_start: oldStart, new_end: oldStart + 8}]};
@@ -119,7 +119,10 @@ for (const decision of ['accept', 'reject']) test(`original card toolbar can ${d
     const c = {repo: root, owner: 'reply.tex', id: '1', version: 'v1'};
     await handlers.get('localLatex.inlineReviewAt')(c);
     assert(!backendCalls.some(x => x.args.some(a => String(a).endsWith('review_pdf.py'))), 'opening a card must not compile a review PDF');
-    assert.equal(backendCalls.filter(x => x.args.includes('cards')).length, automatic ? 2 : 1, 'each refresh reads all details in one backend request');
+    assert.equal(backendCalls.filter(x => x.args.includes('cards')).length, 1, 'opening an unchanged loaded card reuses the event-refreshed packet');
+    const beforeReopen = backendCalls.length;
+    await handlers.get('localLatex.inlineReviewAt')(c);
+    assert.equal(backendCalls.length, beforeReopen, 'read-only reopen does not start status/inspect/cards processes');
     await handlers.get('localLatex.inlineReview')();
     await handlers.get('localLatex.inlineNext')();
     assert(!backendCalls.some(x => x.args.some(a => String(a).endsWith('review_pdf.py'))), 'choosing and navigating cards must not compile either');
