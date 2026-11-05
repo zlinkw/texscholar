@@ -13,6 +13,25 @@ EXE = '.exe' if os.name == 'nt' else ''
 
 
 class ReviewUnits(unittest.TestCase):
+    def test_prose_environments_do_not_expand_a_sentence_to_the_complete_abstract(self):
+        for environment in ['abstract', 'quote', 'quotation']:
+            opening, closing = '\\begin{' + environment + '}\n', '\\end{' + environment + '}'
+            content = 'The clinical background stays. The model is weak. The method overview stays. The results stay.'
+            before = opening + content + '\n' + closing
+            after = before.replace('The model is weak.', '% 局部计划\nThe model is robust.')
+            self.assertEqual(''.join(sentences(before)), before)
+            for edits in [
+                [('82', 'The model is weak.', '% 局部计划\nThe model is robust.')],
+                [('82', before, after)]
+            ]:
+                changes = self.changes(before, edits)
+                self.assertEqual([(u['before'].strip(), u['after'].strip(), u['ids']) for u in changes],
+                                 [('The model is weak.', '% 局部计划\nThe model is robust.', ['82'])])
+                self.assertEqual(changes[0]['change_type'], 'Within paragraph')
+            removed = self.changes(before, [('82', before, '')])
+            self.assertEqual(len(removed), 1, 'removing a whole wrapper still needs one balanced comparison')
+            self.assertEqual(removed[0]['before'], before)
+
     def test_paragraph_candidate_displays_only_changed_sentence_runs_with_the_same_id(self):
         before = 'Opening context stays. The model is strong. Middle context stays. The model is fast. Ending context stays.'
         for after, pairs in [
@@ -137,6 +156,47 @@ class ReviewPDF(unittest.TestCase):
     review = NativeReview.review
     apply = NativeReview.apply
     proposal = NativeReview.proposal
+
+    def test_abstract_and_quote_keep_their_wrappers_once_and_compare_only_modified_sentences(self):
+        main = self.root / 'main.tex'
+        source = (r'\documentclass[twocolumn]{article}' + '\n' +
+                  r'\usepackage{amsmath}' + '\n' +
+                  r'\renewenvironment{abstract}{\par\noindent\bfseries\textit{Abstract}---}{\par}' + '\n' +
+                  r'\begin{document}' + '\n' + r'\begin{abstract}' + '\n' +
+                  'Clinical context stays. The model is weak under domain shift. The method overview stays. The outcome stays.\n' +
+                  r'\end{abstract}' + '\n' + r'\section{Introduction}' + '\n' +
+                  'Main context stays.\n\n' + r'\begin{quote}' + '\n' +
+                  'The reply opening stays. The analysis is weak. The reply ending stays.\n' + r'\end{quote}' + '\n' +
+                  r'\begin{equation}z=13\label{eq:kept}\end{equation}' + '\n' + r'\end{document}' + '\n')
+        main.write_text(source, encoding='utf-8', newline='')
+        self.apply('begin', 'prose-containers', ['main.tex', 'reply.tex'])
+        for old, new in [('The model is weak under domain shift.', '% 局部逻辑\nThe model is robust under domain shift.'),
+                         ('The analysis is weak.', 'The analysis is robust.')]:
+            self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': old, 'after': new})
+        source_bytes, state_bytes = main.read_bytes(), (self.root / 'reply.tex').read_bytes()
+        data = self.review().inspect('1')
+        result = preview(self.root, 'reply.tex', main, '1', data['version'], 'missing-git',
+                         str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        derived = (Path(result['output']) / 'source/__codex_inline_review__.tex').read_text(encoding='utf-8')
+        for wrapper in ('abstract', 'quote'):
+            self.assertEqual(derived.count('\\begin{' + wrapper + '}'), 1)
+            self.assertEqual(derived.count('\\end{' + wrapper + '}'), 1)
+        for context in ['Clinical context stays.', 'The method overview stays.', 'The outcome stays.',
+                        'The reply opening stays.', 'The reply ending stays.', 'Main context stays.', r'\label{eq:kept}']:
+            self.assertEqual(derived.count(context), 1, context)
+        self.assertEqual(derived.count(r'\begin{codexreviewold}'), 2)
+        for id_ in ('1', '2'):
+            self.assertEqual(derived.count(r'\textbf{[' + id_ + ']}'), 1)
+        self.assertNotIn('Environment |', derived)
+        self.assertEqual(main.read_bytes(), source_bytes)
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), state_bytes)
+        text = ' '.join(' '.join(page.extract_text() for page in PdfReader(result['pdf']).pages).split())
+        self.assertEqual(text.count('Abstract'), 1)
+        for context in ['Clinical context stays.', 'The method overview stays.', 'The reply opening stays.']:
+            self.assertEqual(text.count(context), 1)
+        self.assertIn('weak', text)
+        self.assertIn('robust', text)
+        print('ABSTRACT_SENTENCE_PDF', result['pdf'])
 
     def test_incremental_review_reuses_unchanged_regions_and_bibliography_at_personal_scale(self):
         import time

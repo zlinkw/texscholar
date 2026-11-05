@@ -16,6 +16,8 @@ ASSETS = {'.tex', '.bib', '.cls', '.sty', '.bst', '.bbx', '.cbx', '.cfg', '.def'
           '.map', '.enc', '.tfm', '.otf', '.ttf', '.pdf', '.png', '.jpg', '.jpeg', '.eps', '.svg', '.ps'}
 EXCLUDED = {'.git', '.codex-review', '.latex-build', 'clean_dir', 'node_modules'}
 DIFF_OPTIONS = ('--encoding=utf8', '--no-del', '--math-markup=3', '--graphics-markup=0', '--config', 'MINWORDSBLOCK=0')
+# Standard argument-free text containers, not indivisible mathematical/float units.
+PROSE_CONTAINERS = {'abstract', 'quote', 'quotation'}
 
 PREVIEW_MACROS = r'''
 \usepackage{float}
@@ -214,7 +216,7 @@ def _environment_end(text, position):
     raise ValueError('审核 PDF 的比较片段中有未闭合环境：' + opening[1])
 
 
-def sentences(text):
+def sentences(text, *, split_prose_containers=True):
     """Presentation units: prose sentences and adjacent, balanced TeX environments."""
     result, start, depth, math, i = [], 0, 0, None, 0
     while i < len(text):
@@ -225,8 +227,22 @@ def sentences(text):
             continue
         protected_end = None
         if depth == 0 and not math:
-            if re.match(r'\\begin\{[^{}]+\}', text[i:]):
+            opening = re.match(r'\\begin\{([^{}]+)\}', text[i:])
+            if opening:
                 protected_end = _environment_end(text, i)
+                if split_prose_containers and opening[1] in PROSE_CONTAINERS:
+                    if start < i:
+                        result.append(text[start:i])
+                    first = i + opening.end()
+                    last = protected_end - len('\\end{' + opening[1] + '}')
+                    result.append(text[i:first])
+                    result.extend(sentences(text[first:last]))
+                    end = protected_end
+                    while end < len(text) and text[end].isspace():
+                        end += 1
+                    result.append(text[last:end])
+                    start, i = end, end
+                    continue
             elif text.startswith(r'\[', i):
                 stop = text.find(r'\]', i + 2)
                 if stop < 0:
@@ -288,10 +304,13 @@ def sentences(text):
     return result
 
 
-def _unit_spans(text):
+def _unit_spans(text, *, split_prose_containers=True):
     units, offset = [], 0
-    for part in sentences(text):
+    for part in sentences(text, split_prose_containers=split_prose_containers):
         kind = 'environment' if re.match(r'\\begin\{|\\\[|\$\$', part.lstrip()) else 'prose'
+        marker = re.fullmatch(r'\\(?:begin|end)\{([^{}]+)\}', part.strip())
+        if marker and marker[1] in PROSE_CONTAINERS:
+            kind = 'container'
         units.append({'text': part, 'start': offset, 'end': offset + len(part), 'kind': kind})
         offset += len(part)
     return units
@@ -313,6 +332,9 @@ def _pair_units(old, new):
 
 def _unit_changes(before, after):
     old, new = _unit_spans(before), _unit_spans(after)
+    if [u['text'].strip() for u in old if u['kind'] == 'container'] != [u['text'].strip() for u in new if u['kind'] == 'container']:
+        # Wrapper insertion/removal remains a balanced environment comparison.
+        old, new = _unit_spans(before, split_prose_containers=False), _unit_spans(after, split_prose_containers=False)
     diff = SequenceMatcher(None, [visible_tex(u['text']).strip() for u in old], [visible_tex(u['text']).strip() for u in new], autojunk=False)
     for kind, a, b, c, d in diff.get_opcodes():
         pairs = [(old[a:b], new[c:d])] if kind == 'equal' else _pair_units(old[a:b], new[c:d])
@@ -355,6 +377,7 @@ def presentation_type(text, start, end, old, new):
     boundary = r'\n[ \t\r]*\n|\\par\b'
     # Section commands also begin new prose; a source newline alone does not.
     headings = r'\\(?:section|subsection|subsubsection|paragraph|subparagraph)\*?\{[^{}]*\}'
+    headings += r'|\\(?:begin|end)\{(?:' + '|'.join(sorted(PROSE_CONTAINERS)) + r')\}'
     def begins(prefix):
         breaks = list(re.finditer(boundary + '|' + headings, prefix))
         return not prefix[breaks[-1].end() if breaks else 0:].strip()
