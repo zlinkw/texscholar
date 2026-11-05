@@ -267,7 +267,7 @@ function createInlineReview(vscode, context, execute = run) {
             entry.expanded = !entry.expanded; redrawCard(c); return;
         }
         if (arg?.hideTranslation && entry) {entry.expanded = false; redrawCard(c); return;}
-        entry ||= {c, signature: input.signature, results: {}, errors: {}, expanded: true};
+        entry ||= {c, signature: input.signature, results: {}, errors: {}, warnings: {}, expanded: true};
         entry.expanded = true; entry.loading = true; entry.errors = {};
         translations.set(key, entry); redrawCard(c);
         const items = input.items.filter(item => !(item.key in entry.results));
@@ -277,7 +277,7 @@ function createInlineReview(vscode, context, execute = run) {
             try {
                 const result = JSON.parse(await execute(config().get('pythonPath', 'python'), ['-X', 'utf8', path.join(__dirname, 'review_translate.py')], c.repo,
                     {provider: input.provider, proxy, items}));
-                Object.assign(entry.results, result.results); entry.errors = result.errors;
+                Object.assign(entry.results, result.results); Object.assign(entry.warnings, result.warnings); entry.errors = result.errors;
             } catch (error) {entry.errors = Object.fromEntries(items.map(item => [item.key, error.message]));}
             finally {
                 entry.loading = false;
@@ -306,7 +306,8 @@ function createInlineReview(vscode, context, execute = run) {
             const value = translation.results[key], error = translation.errors[key];
             // Remote text is literal display data, never Markdown commands.
             const literal = text => wrapHtml(text).replace(/[\[\]()*_`]/g, char => '&#' + char.charCodeAt(0) + ';');
-            if (value !== undefined) return '<br><strong>中文：</strong>' + literal(value);
+            if (value !== undefined) return '<br><strong>中文：</strong>' + literal(value)
+                + (translation.warnings[key] ? '<br><em>阅读提示：</em>' + literal(translation.warnings[key]) : '');
             if (error) return '<br><strong>翻译未完成：</strong>' + literal(error);
             return translation.loading ? '<br>中文：正在翻译…' : '';
         };
@@ -917,7 +918,7 @@ function createInlineReview(vscode, context, execute = run) {
         const currentProvider = config().get('translation.provider', 'google');
         const options = Object.entries(TRANSLATORS).map(([provider, label]) => ({provider, label,
             description: (provider === currentProvider ? '当前来源；' : '')
-                + (provider === 'google' ? '可能返回 429 限流' : provider === 'bing' ? '匿名请求可能返回 401' : '免密钥网页接口，可能失效')}));
+                + (provider === 'google' ? '可能返回 429 限流' : provider === 'bing' ? '微软 Edge 免密钥接口，仍可能限流' : '免密钥网页接口，可能失效')}));
         const chosen = await vscode.window.showQuickPick(options, {placeHolder: '手动切换翻译源；切换本身不发送文字，之后点击翻译'});
         if (chosen && chosen.provider !== currentProvider) {
             const cfg = config(), target = cfg.inspect('translation.provider').workspaceValue === undefined

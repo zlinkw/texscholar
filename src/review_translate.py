@@ -78,11 +78,13 @@ def protect_tex(text):
     return ''.join(output), kept, pattern
 
 
-def restore_tex(text, kept, pattern):
+def restore_tex(text, kept, pattern, warnings=None):
     matches = list(pattern.finditer(text))
-    if [int(match[1]) for match in matches] != list(range(len(kept))):
-        raise ValueError('翻译服务改变了数学或 LaTeX 标记，未展示错误译文；可换源重试。')
-    return pattern.sub(lambda match: kept[int(match[1])], text)
+    # Chinese grammar may legitimately reorder formulas/references. Display
+    # translations are reading aids, never source replacements or valid TeX.
+    if sorted(int(match[1]) for match in matches) != list(range(len(kept))) and warnings is not None:
+        warnings.append('部分公式或 LaTeX 标记未完整还原，请对照上方原文；译文仅供阅读，不影响论文或候选。')
+    return pattern.sub(lambda match: kept[int(match[1])] if int(match[1]) < len(kept) else '[标记请见原文]', text)
 
 
 def chunks(text, pattern, limit=REQUEST_CHARS):
@@ -110,8 +112,6 @@ class Provider:
         self.name = name
         handler = urllib.request.ProxyHandler() if proxy is None else urllib.request.ProxyHandler({'http': proxy, 'https': proxy} if proxy else {})
         self.opener = urllib.request.build_opener(handler, urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-        self.bing_session = None
-        self.bing_sequence = 0
 
     def request(self, url, data=None, content_type=None, headers=None):
         request_headers = {'User-Agent': 'Mozilla/5.0', **(headers or {})}
@@ -135,21 +135,10 @@ class Provider:
             parts = [row['trans'] for row in rows if isinstance(row, dict) and isinstance(row.get('trans'), str)]
             value = ''.join(parts)
         elif self.name == 'bing':
-            if self.bing_session is None:
-                page = self.request('https://www.bing.com/translator')
-                ig = re.search(r'IG:"([^"]+)"', page)
-                iid = re.search(r'data-iid="([^"]+)"', page)
-                tokens = re.search(r'params_AbusePreventionHelper\s*=\s*(\[[^\]]+\])', page)
-                if not all((ig, iid, tokens)):
-                    raise ValueError('Bing 未提供翻译会话，可能需要网页验证；不会绕过验证。')
-                key, token, *_ = json.loads(tokens[1])
-                self.bing_session = ig[1], iid[1], key, token
-            ig, iid, key, token = self.bing_session
-            self.bing_sequence += 1
-            url = 'https://www.bing.com/ttranslatev3?' + urllib.parse.urlencode({'isVertical': 1, 'IG': ig, 'IID': iid, 'SFX': self.bing_sequence,
-                                                                              'ref': 'TThis', 'edgepdftranslator': 1})
-            form = urllib.parse.urlencode({'fromLang': 'en', 'to': 'zh-Hans', 'text': text, 'key': key, 'token': token}).encode('utf-8')
-            result = json.loads(self.request(url, form, 'application/x-www-form-urlencoded', {'Referer': 'https://www.bing.com/translator'}))
+            # Current anonymous Microsoft route used by bing-translate-api's
+            # MET adapter; no scraping, cookie, token refresh or legacy retry.
+            url = 'https://edge.microsoft.com/translate/translatetext?' + urllib.parse.urlencode({'from': 'en', 'to': 'zh-Hans', 'isEnterpriseClient': 'false'})
+            result = self.json_request(url, [text])
             rows = result[0].get('translations') if isinstance(result, list) and result and isinstance(result[0], dict) else None
             if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
                 raise ValueError('Bing 返回验证要求或未知结果。')
@@ -179,7 +168,7 @@ class Provider:
         return value
 
 
-def translate_text(text, provider):
+def translate_text(text, provider, warnings=None):
     prepared, kept, pattern = protect_tex(text)
     if not re.search(r'[A-Za-z]', pattern.sub('', prepared)):
         return text
@@ -192,7 +181,7 @@ def translate_text(text, provider):
             output.append(part)
         else:
             output.append(leading + provider.translate(center).strip() + trailing)
-    return restore_tex(''.join(output), kept, pattern)
+    return restore_tex(''.join(output), kept, pattern, warnings)
 
 
 def failure(error):
@@ -211,13 +200,16 @@ def translate_many(provider_name, items, proxy=None, provider=None):
     if len({item['key'] for item in items}) != len(items):
         raise ValueError('翻译位置标识不能重复。')
     engine = provider or Provider(provider_name, proxy)
-    results, errors, translated = {}, {}, {}
+    results, errors, warnings, translated = {}, {}, {}, {}
     for index, item in enumerate(items):
         try:
             text = item['text']
             if text not in translated:
-                translated[text] = translate_text(text, engine)
-            results[item['key']] = translated[text]
+                notes = []
+                translated[text] = (translate_text(text, engine, notes), ' '.join(notes))
+            results[item['key']], note = translated[text]
+            if note:
+                warnings[item['key']] = note
         except (ValueError, OSError) as error:
             message = failure(error)
             if isinstance(error, urllib.error.HTTPError):
@@ -226,7 +218,7 @@ def translate_many(provider_name, items, proxy=None, provider=None):
             # the same unavailable service and no switch to another recipient.
             errors.update({remaining['key']: message for remaining in items[index:]})
             break
-    return {'provider': provider_name, 'results': results, 'errors': errors}
+    return {'provider': provider_name, 'results': results, 'errors': errors, 'warnings': warnings}
 
 
 if __name__ == '__main__':

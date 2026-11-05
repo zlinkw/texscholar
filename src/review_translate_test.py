@@ -19,8 +19,16 @@ class Translation(unittest.TestCase):
         self.assertIn(r'\textbf{有用的特征}', translated)
         for literal in (r'$p_{i}=0.5$', r'\(x+y\)', r'\cite [Sec. 2] {key_a}', '😀'):
             self.assertIn(literal, translated)
-        with self.assertRaisesRegex(ValueError, '数学或 LaTeX 标记'):
-            restore_tex(prepared.replace('TEXSCHOLARX0XEND', ''), kept, pattern)
+        warnings = []
+        partial = restore_tex(prepared.replace('TEXSCHOLARX0XEND', ''), kept, pattern, warnings)
+        self.assertIn(r'\cite [Sec. 2] {key_a}', partial)
+        self.assertEqual(len(warnings), 1, 'incomplete formatting is a reading notice, not a failed translation')
+        plain, formulas, tokens = protect_tex('Use $a$ and $b$.')
+        warnings = []
+        reordered = restore_tex('先 TEXSCHOLARX1XEND，后 TEXSCHOLARX0XEND。', formulas, tokens, warnings)
+        self.assertEqual(reordered, '先 $b$，后 $a$。')
+        self.assertEqual(warnings, [], 'natural Chinese ordering does not have to match English placeholder order')
+        self.assertIn('[标记请见原文]', restore_tex('译文 TEXSCHOLARX99XEND', formulas, tokens, warnings))
         with self.assertRaisesRegex(ValueError, '未闭合'):
             protect_tex('Broken $math')
 
@@ -56,9 +64,12 @@ class Translation(unittest.TestCase):
                     return json.dumps(responses[name])
                 provider.request = request
                 self.assertEqual(provider.translate('Synthetic text.'), '合成译文')
-                expected = {'google': 'translate.google.com', 'bing': 'www.bing.com',
+                expected = {'google': 'translate.google.com', 'bing': 'edge.microsoft.com/translate/translatetext',
                             'deepl': 'oneshot-free.www.deepl.com', 'transmart': 'transmart.qq.com'}[name]
                 self.assertTrue(all(expected in url for url, _ in requests), 'no unselected service receives the text')
+                if name == 'bing':
+                    self.assertEqual(len(requests), 1, 'no legacy Bing page, token or cookie request')
+                    self.assertEqual(json.loads(requests[0][1]), ['Synthetic text.'])
                 provider.request = lambda *a, **kw: '{}'
                 with self.assertRaises(ValueError):
                     provider.translate('Another synthetic text.')
@@ -82,6 +93,17 @@ class Translation(unittest.TestCase):
         self.assertNotIn('private', result['errors']['question0'])
         with self.assertRaisesRegex(ValueError, '不能重复'):
             translate_many('google', [{'key': 'x', 'text': 'one'}, {'key': 'x', 'text': 'two'}], provider=Engine())
+
+    def test_display_format_damage_keeps_chinese_and_does_not_block_other_card_parts(self):
+        class Engine:
+            def translate(self, text):
+                return '这是便于阅读的中文。' if 'TEXSCHOLAR' in text else '原始意见的中文。'
+        result = translate_many('bing', [{'key': 'original', 'text': 'The score is $x_i$.'},
+                                         {'key': 'question0', 'text': 'Please clarify the score.'}], provider=Engine())
+        self.assertEqual(result['results']['original'], '这是便于阅读的中文。')
+        self.assertEqual(result['results']['question0'], '原始意见的中文。')
+        self.assertEqual(result['errors'], {})
+        self.assertEqual(set(result['warnings']), {'original'})
 
 
 if __name__ == '__main__':

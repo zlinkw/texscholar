@@ -104,7 +104,9 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
             if (releaseTranslation) await new Promise(resolve => {releaseTranslation = resolve;});
             const results = Object.fromEntries(input.items.filter(item => !(autoPDF && translatedCalls === 1 && item.key === 'question0'))
                 .map(item => [item.key, item.key === 'question0' ? '问题中文：请解释可靠性。' : '中文 <script>not executable</script> [链接](command:localLatex.inlineAccept)']));
-            return JSON.stringify({provider: input.provider, results, errors: autoPDF && translatedCalls === 1 ? {question0: 'HTTP 429：请求受限。'} : {}});
+            return JSON.stringify({provider: input.provider, results,
+                warnings: results.original ? {original: '部分公式未完整还原，请对照上方原文。'} : {},
+                errors: autoPDF && translatedCalls === 1 ? {question0: 'HTTP 429：请求受限。'} : {}});
         }
         if (args.includes('--new-window')) return '';
         if (args.some(x => String(x).endsWith('review_pdf.py'))) {
@@ -193,6 +195,8 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     }
     const translated = threads.at(-1).comments[0].body.value;
     assert(translated.includes('问题中文：请解释可靠性。'));
+    assert(translated.includes('阅读提示：'));
+    assert(translated.includes('部分公式未完整还原'), 'a reading notice survives retrying another failed field');
     assert(translated.includes('&lt;script&gt;'));
     assert(translated.replaceAll('\u200b', '').includes('&#91;链接&#93;'));
     assert(!translated.includes('<script>'));

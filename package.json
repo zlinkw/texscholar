@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -732,7 +732,7 @@
         "localLatex.translation.provider": {
           "type": "string",
           "enum": ["google", "bing", "deepl", "transmart"],
-          "enumDescriptions": ["Google 免密钥网页接口", "Bing 免密钥网页接口，可能要求网页验证或拒绝匿名请求", "DeepL 免密钥网页接口", "腾讯 TranSmart 免密钥网页接口"],
+          "enumDescriptions": ["Google 免密钥网页接口", "微软 Edge 免密钥翻译接口，不使用旧 Bing 网页会话；仍可能限流或变化", "DeepL 免密钥网页接口", "腾讯 TranSmart 免密钥网页接口"],
           "default": "google",
           "scope": "window",
           "description": "本条审核翻译来源。只有点击翻译才发送本条原文、候选及关联问题；不发送整篇论文。免密钥网页接口可能限流或失效，失败不自动重试或换源。使用当前电脑的网络／HTTP 代理设置，不写入论文或审核 PDF。"
