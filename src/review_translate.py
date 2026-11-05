@@ -125,7 +125,18 @@ class Provider:
         if name not in PROVIDERS:
             raise ValueError('未知翻译来源。')
         self.name = name
-        handler = urllib.request.ProxyHandler() if proxy is None else urllib.request.ProxyHandler({'http': proxy, 'https': proxy} if proxy else {})
+        if proxy is None:
+            # Inherited NO_PROXY alone makes getproxies() skip the OS lookup.
+            # Read current desktop settings rather than a stale process env.
+            if sys.platform == 'win32':
+                proxies = urllib.request.getproxies_registry()
+            elif sys.platform == 'darwin':
+                proxies = urllib.request.getproxies_macosx()
+            else:
+                proxies = urllib.request.getproxies()
+        else:
+            proxies = {'http': proxy, 'https': proxy} if proxy else {}
+        handler = urllib.request.ProxyHandler(proxies)
         self.opener = urllib.request.build_opener(handler, urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
     def request(self, url, data=None, content_type=None, headers=None):

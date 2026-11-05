@@ -70,7 +70,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
         }};}},
         workspace: {isTrusted: true, textDocuments: [document], getWorkspaceFolder: () => ({uri: uri(root)}),
             workspaceFolders: [{uri: uri(root)}], findFiles: async () => automatic ? [uri(file), uri(owner)] : [],
-            getConfiguration: () => ({get: (key, fallback) => key === 'translation.provider' ? provider : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback,
+            getConfiguration: () => ({get: (key, fallback) => key === 'translation.provider' ? provider : key === 'proxy' ? 'http://vscode-proxy.invalid:9999' : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback,
                 inspect: () => ({workspaceValue: autoPDF ? provider : undefined}),
                 update: async (key, value, target) => {assert.equal(key, 'translation.provider'); assert.equal(target, autoPDF ? 2 : 1); provider = value;
                     configurationChanged({affectsConfiguration: key => key === 'localLatex.translation'});}}),
@@ -187,6 +187,8 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert(backendCalls.every(x => x.args.includes('inspect') || x.args.includes('status') || x.args.includes('cards')));
     const beforeTranslation = fs.readFileSync(file);
     await handlers.get('localLatex.inlineTranslate')(c);
+    assert.equal(backendCalls.filter(x => x.args.some(a => String(a).endsWith('review_translate.py'))).at(-1).input.proxy,
+        null, 'Google defaults to live operating-system proxy discovery, not a copied VS Code address');
     if (autoPDF) {
         assert(threads.at(-1).comments[0].body.value.includes('HTTP 429'));
         await handlers.get('localLatex.inlineTranslate')(c);

@@ -1,13 +1,30 @@
 """Translation contracts, using synthetic text and no remote services."""
 import io
 import json
+import os
 import unittest
 import urllib.error
 import urllib.parse
+import urllib.request
+from unittest.mock import patch
 from review_translate import Provider, chunks, protect_tex, restore_tex, translate_many, translate_text
 
 
 class Translation(unittest.TestCase):
+    def test_default_proxy_uses_os_settings_despite_inherited_proxy_environment(self):
+        system = {'http': 'http://system-proxy.invalid:8000', 'https': 'http://system-proxy.invalid:8000'}
+        for platform, lookup in [('win32', 'getproxies_registry'), ('darwin', 'getproxies_macosx')]:
+            with self.subTest(platform=platform), patch('review_translate.sys.platform', platform), \
+                    patch.dict(os.environ, {'NO_PROXY': 'localhost', 'HTTPS_PROXY': 'http://inherited.invalid:9000'}), \
+                    patch.object(urllib.request, lookup, return_value=system, create=True) as discover:
+                provider = Provider('google')
+                handler = next(item for item in provider.opener.handlers if isinstance(item, urllib.request.ProxyHandler))
+                self.assertEqual(handler.proxies, system)
+                discover.assert_called_once_with()
+                explicit = Provider('bing', 'http://explicit.invalid:7000')
+                handler = next(item for item in explicit.opener.handlers if isinstance(item, urllib.request.ProxyHandler))
+                self.assertEqual(handler.proxies['https'], 'http://explicit.invalid:7000')
+
     def test_tex_and_unicode_are_preserved_and_formatting_words_can_be_translated(self):
         text = r'Use $p_{i}=0.5$ and \(x+y\), see \cite [Sec. 2] {key_a} and \textbf{useful features}. 😀'
         prepared, kept, pattern = protect_tex(text)

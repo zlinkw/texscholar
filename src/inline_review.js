@@ -272,7 +272,8 @@ function createInlineReview(vscode, context, execute = run) {
         translations.set(key, entry); redrawCard(c);
         const items = input.items.filter(item => !(item.key in entry.results));
         const http = vscode.workspace.getConfiguration('http');
-        const proxy = http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;
+        const proxy = ['google', 'googleapi'].includes(input.provider) ? null
+            : http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;
         entry.promise = (async () => {
             try {
                 const result = JSON.parse(await execute(config().get('pythonPath', 'python'), ['-X', 'utf8', path.join(__dirname, 'review_translate.py')], c.repo,
