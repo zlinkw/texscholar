@@ -34,6 +34,8 @@ Google／Bing 的请求协议以 Translate for Zotero 的 `src/modules/services/
 
 Google 的 UI 调用传 `proxy=null`，后端明确调用 Windows 注册表／macOS System Configuration 的系统代理读取接口；不使用会被仅有 `NO_PROXY` 的继承环境遮蔽的默认发现顺序。其他来源的显式代理或显式直连保持原意。默认发现为每次点击重读，不保存个人地址，现有 `urllib` 的目标地址绕过规则保留。PAC 自动配置不在当前静态代理支持范围内；Mac 系统调用分支有隔离协议检查，仍未实机验证。
 
+各来源一次发送完整原文、候选或问题摘录，不再按 500 字符发多个请求；不截断长文。UI 从当前仍有效的其他卡片复用同来源、同文字的成功译文，不复用失败或自动换源。TranSmart 对齐 Zotero 的 header、client_key、Referer 和请求正文。DeepL 保留可用的第一方 oneshot 接口：Zotero 当前 DeepLX JSON-RPC 接口在本轮实测 HTTP 成功但返回旧客户端升级通知，并非译文，不能用它替换有效接口或把该通知标成翻译成功。其官方密钥接口不冒充免密钥入口，不接入不明中转。
+
 ## 保护与验证目标
 
 用隔离样例验证配置合并／恢复、重复导入、Typst 与无 TeX 项目不变、首次打开评论、单卡片源码展开、批注与接收、原始问题关联、同一 PDF 更新、编译失败保留旧 PDF、普通缩进、私有 Git 备份与缓存引用保护。伪造的 GitHub 传输只用于隔离备份测试；公共源码仓库与论文私有备份要求不可混淆。

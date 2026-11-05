@@ -4,8 +4,6 @@ import http.cookiejar
 import json
 import re
 import sys
-import time
-import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -14,8 +12,8 @@ from review_pdf import _command, _environment_end
 
 PROVIDERS = {'google': 'Google', 'googleapi': 'Google（googleapis）', 'bing': 'Bing',
              'deepl': 'DeepL 网页版', 'transmart': '腾讯 TranSmart'}
-# Comment Translate's Google adapter uses 500-character requests; keep complete
-# content by splitting rather than truncating. A card is translated only on click.
+# Retain the standalone chunk helper for callers; service requests use complete
+# text like Translate for Zotero, not automatic 500-character fragments.
 REQUEST_CHARS = 500
 
 
@@ -177,10 +175,12 @@ class Provider:
             value = rows[0].get('text')
         elif self.name == 'transmart':
             result = self.json_request('https://transmart.qq.com/api/imt', {
-                'header': {'fn': 'auto_translation', 'session': '', 'user': '',
-                           'client_key': 'browser-chrome-130.0.0-' + ('Mac OS' if sys.platform == 'darwin' else 'Windows') + '-' + str(uuid.uuid4()) + '-' + str(int(time.time() * 1000))},
-                'type': 'plain', 'model_category': 'normal', 'text_domain': '',
-                'source': {'lang': 'en', 'text_list': [text]}, 'target': {'lang': 'zh'}})
+                'header': {'fn': 'auto_translation',
+                           'client_key': 'browser-chrome-110.0.0-Mac OS-df4bd4c5-a65d-44b2-a40f-42f34f3535f2-1677486696487'},
+                'type': 'plain', 'model_category': 'normal',
+                'source': {'lang': 'en', 'text_list': [text]}, 'target': {'lang': 'zh'}}, {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+                    'Referer': 'https://transmart.qq.com/zh-CN/index'})
             parts = result.get('auto_translation') if isinstance(result, dict) else None
             if not isinstance(parts, list) or not all(isinstance(part, str) for part in parts):
                 raise ValueError('腾讯 TranSmart 未返回有效译文。')
@@ -204,16 +204,10 @@ def translate_text(text, provider, warnings=None):
     prepared, kept, pattern = protect_tex(text)
     if not re.search(r'[A-Za-z]', pattern.sub('', prepared)):
         return text
-    output = []
-    for part in chunks(prepared, pattern):
-        leading = re.match(r'^\s*', part)[0]
-        trailing = re.search(r'\s*$', part)[0]
-        center = part.strip()
-        if not center or not re.search(r'[A-Za-z]', pattern.sub('', center)):
-            output.append(part)
-        else:
-            output.append(leading + provider.translate(center).strip() + trailing)
-    return restore_tex(''.join(output), kept, pattern, warnings)
+    leading = re.match(r'^\s*', prepared)[0]
+    trailing = re.search(r'\s*$', prepared)[0]
+    translated = provider.translate(prepared.strip()).strip()
+    return leading + restore_tex(translated, kept, pattern, warnings) + trailing
 
 
 def failure(error):

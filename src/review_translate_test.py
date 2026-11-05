@@ -58,10 +58,13 @@ class Translation(unittest.TestCase):
         self.assertEqual(''.join(pieces), text)
         self.assertTrue(all(len(part) <= 500 for part in pieces))
         self.assertEqual(restore_tex(''.join(pieces), kept, pattern), source)
+        calls = []
         class Engine:
             def translate(self, value):
+                calls.append(value)
                 return value
         self.assertEqual(translate_text(source, Engine()), source)
+        self.assertEqual(calls, [text], 'send a full excerpt once, not one request per 500 characters')
         class NoNetwork:
             def translate(self, value):
                 raise AssertionError('math-only content must stay local')
@@ -127,6 +130,19 @@ class Translation(unittest.TestCase):
         self.assertIsNone(request.get_header('Cookie'), 'never imports browser credentials')
         self.assertIsNone(request.get_header('Authorization'))
         self.assertEqual(len(requests), 3, 'each selected source sends exactly one request for this short input')
+        provider = Provider('transmart', '')
+        class TencentOpener:
+            def open(self, request, timeout):
+                requests.append(request)
+                return io.BytesIO(json.dumps({'auto_translation': ['医学分割']}).encode('utf-8'))
+        provider.opener = TencentOpener()
+        self.assertEqual(provider.translate(source), '医学分割')
+        request = requests[-1]
+        self.assertEqual(request.get_header('Referer'), 'https://transmart.qq.com/zh-CN/index')
+        self.assertIn('Chrome/110.0.0.0', request.get_header('User-agent'))
+        payload = json.loads(request.data)
+        self.assertEqual(payload['source'], {'lang': 'en', 'text_list': [source]})
+        self.assertEqual(set(payload['header']), {'fn', 'client_key'})
 
     def test_success_deduplication_and_partial_failure_do_not_retry_or_switch_source(self):
         calls = []

@@ -267,7 +267,21 @@ function createInlineReview(vscode, context, execute = run) {
             entry.expanded = !entry.expanded; redrawCard(c); return;
         }
         if (arg?.hideTranslation && entry) {entry.expanded = false; redrawCard(c); return;}
-        entry ||= {c, signature: input.signature, results: {}, errors: {}, warnings: {}, expanded: true};
+        entry ||= {c, signature: input.signature, provider: input.provider, items: input.items,
+            results: {}, errors: {}, warnings: {}, expanded: true};
+        // Reuse successful identical text from other live cards, like Zotero's
+        // task cache. Original/candidate/question keys are presentation slots.
+        for (const item of input.items) {
+            if (item.key in entry.results) continue;
+            for (const cached of translations.values()) {
+                if (cached.provider !== input.provider) continue;
+                const previous = cached.items.find(other => other.text === item.text && other.key in cached.results);
+                if (!previous) continue;
+                entry.results[item.key] = cached.results[previous.key];
+                if (cached.warnings[previous.key]) entry.warnings[item.key] = cached.warnings[previous.key];
+                break;
+            }
+        }
         entry.expanded = true; entry.loading = true; entry.errors = {};
         translations.set(key, entry); redrawCard(c);
         const items = input.items.filter(item => !(item.key in entry.results));
@@ -276,6 +290,7 @@ function createInlineReview(vscode, context, execute = run) {
             : http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;
         entry.promise = (async () => {
             try {
+                if (!items.length) return;
                 const result = JSON.parse(await execute(config().get('pythonPath', 'python'), ['-X', 'utf8', path.join(__dirname, 'review_translate.py')], c.repo,
                     {provider: input.provider, proxy, items}));
                 Object.assign(entry.results, result.results); Object.assign(entry.warnings, result.warnings); entry.errors = result.errors;

@@ -371,6 +371,8 @@ test('same-line candidates share one native card but retain independent actions 
     };
     const backend = async (command, args, cwd, input) => {
         calls.push({args, input});
+        if (args.some(x => String(x).endsWith('review_translate.py')))
+            return JSON.stringify({results: Object.fromEntries(input.items.map(item => [item.key, '中文：' + item.text])), warnings: {}, errors: {}});
         if (args.some(x => String(x).endsWith('review_pdf.py'))) {
             if (pausePDF) await pausePDF;
             if (failPDF) {failPDF = false; throw new Error('isolated background compiler failure');}
@@ -397,6 +399,13 @@ test('same-line candidates share one native card but retain independent actions 
     await handlers.get('localLatex.inlineRelatedChanges')({...c, id: '1', version: 'v1'});
     assert.deepEqual(choices.map(item => item.id), ['3'], 'reverse navigation uses exact source/quote association, not adjacent IDs or reviewer labels');
     assert(choices[0].label.includes('待审'));
+    await ui.refresh(c);
+    await handlers.get('localLatex.inlineTranslate')({...c, id: '1', version: 'v1'});
+    await handlers.get('localLatex.inlineTranslate')({...c, id: '3', version: 'v1'});
+    const translationCalls = calls.filter(call => call.args.some(a => String(a).endsWith('review_translate.py')));
+    assert.equal(translationCalls.length, 2);
+    assert(translationCalls[0].input.items.some(item => item.key === 'question0'));
+    assert(!translationCalls[1].input.items.some(item => item.key === 'question0'), 'identical original reviewer text is reused across live cards');
     const live = () => threads.filter(t => !t.disposed);
     assert.equal(live().length, 2, 'a native gutter click expands every thread ending on that line, so there must be only one');
     const shared = live()[0], separate = live()[1];
