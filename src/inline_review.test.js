@@ -45,17 +45,18 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     const data = {sha256: 'fresh', edit, version: 'v1', original, candidate, source_match: true,
         source: {text: original, start: 0, end: Array.from(original).length, side: 'original'},
         changes: [{old_start: oldStart, old_end: oldStart + 6, new_start: oldStart, new_end: oldStart + 8}]};
-    let value = original, lensProvider, commentsRegistered = false, configurationChanged, provider = 'google', releaseTranslation, sourceChoice;
+    let value = original, lensProvider, commentsRegistered = false, configurationChanged, provider = 'google', releaseTranslation, sourceChoice, autoTranslate = false, visibleChanged, failTranslation = false;
     const calls = [], threads = [], notices = [], backendCalls = [], handlers = new Map();
     const pdfGroup = {tabs: [], viewColumn: 2};
     class Range {
         constructor(start, end) {Object.assign(this, {start, end});}
         contains(p) {return p >= this.start && p <= this.end;}
+        intersection(other) {return this.start <= other.end && this.end >= other.start ? this : undefined;}
     }
     const uri = p => ({scheme: 'file', fsPath: p});
     const document = {uri: uri(file), languageId: 'latex', isDirty: false,
         getText: r => r ? value.slice(r.start, r.end) : value, positionAt: x => x, offsetAt: x => x};
-    const editor = {document, selection: {start: 0, end: 0, isEmpty: true}, revealRange() {}, setDecorations() {}};
+    const editor = {document, visibleRanges: [new Range(0, original.length)], selection: {start: 0, end: 0, isEmpty: true}, revealRange() {}, setDecorations() {}};
     const vscode = {
         env: {appRoot: path.join(root, 'vscode-app')},
         Range, Selection: Range, RelativePattern: class {}, Uri: {file: uri}, ViewColumn: {One: 1, Two: 2, Beside: -2}, TextEditorRevealType: {InCenterIfOutsideViewport: 1},
@@ -70,7 +71,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
         }};}},
         workspace: {isTrusted: true, textDocuments: [document], getWorkspaceFolder: () => ({uri: uri(root)}),
             workspaceFolders: [{uri: uri(root)}], findFiles: async () => automatic ? [uri(file), uri(owner)] : [],
-            getConfiguration: () => ({get: (key, fallback) => key === 'translation.provider' ? provider : key === 'proxy' ? 'http://vscode-proxy.invalid:9999' : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback,
+            getConfiguration: () => ({get: (key, fallback) => key === 'translation.provider' ? provider : key === 'translation.autoTranslate' ? autoTranslate : key === 'proxy' ? 'http://vscode-proxy.invalid:9999' : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback,
                 inspect: () => ({workspaceValue: autoPDF ? provider : undefined}),
                 update: async (key, value, target) => {assert.equal(key, 'translation.provider'); assert.equal(target, autoPDF ? 2 : 1); provider = value;
                     configurationChanged({affectsConfiguration: key => key === 'localLatex.translation'});}}),
@@ -80,6 +81,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
         window: {activeTextEditor: editor, visibleTextEditors: [editor], tabGroups: {all: [pdfGroup], activeTabGroup: pdfGroup}, createTextEditorDecorationType: () => ({dispose() {}}),
             async showTextDocument(target, options) {calls.push(['showTextDocument', target, options]); return editor;},
             async withProgress(options, action) {return action();}, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}), onDidChangeTextEditorSelection: () => ({dispose() {}}),
+            onDidChangeTextEditorVisibleRanges: fn => {visibleChanged = fn; return disposable();},
             showQuickPick: async options => {assert(options.every(item => item.provider), 'only the explicit source picker, never a review ID picker');
                 return options.find(item => item.provider === sourceChoice);},
             showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x)},
@@ -100,6 +102,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     const backend = async (command, args, cwd, input, env) => {
         backendCalls.push({command, args, input, env});
         if (args.some(x => String(x).endsWith('review_translate.py'))) {
+            if (failTranslation) {translatedCalls++; return JSON.stringify({results: {}, warnings: {}, errors: Object.fromEntries(input.items.map(item => [item.key, 'HTTP 429']))});}
             translatedCalls++;
             if (releaseTranslation) await new Promise(resolve => {releaseTranslation = resolve;});
             const results = Object.fromEntries(input.items.filter(item => !(autoPDF && translatedCalls === 1 && item.key === 'question0'))
@@ -229,6 +232,30 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     release(); await inFlight;
     assert(!threads.at(-1).comments[0].body.value.includes('问题中文：'), 'late results from the old recipient cannot repaint the card');
     releaseTranslation = undefined;
+    provider = 'bing'; autoTranslate = true;
+    editor.visibleRanges = [new Range(original.length + 1, original.length + 5)];
+    configurationChanged({affectsConfiguration: key => key === 'localLatex.translation'});
+    await ui.whenTranslationIdle();
+    assert.equal(translatedCalls, completedCalls + 1, 'hidden source positions are not automatically translated');
+    editor.visibleRanges = [new Range(0, original.length)];
+    visibleChanged(); await ui.whenTranslationIdle();
+    assert.equal(backendCalls.filter(x => x.args.some(a => String(a).endsWith('review_translate.py'))).at(-1).input.provider, 'bing');
+    const automaticCalls = translatedCalls;
+    visibleChanged(); await ui.whenTranslationIdle();
+    assert.equal(translatedCalls, automaticCalls, 'repeated visibility events reuse the translated version');
+    await handlers.get('localLatex.inlineTranslate')(c);
+    visibleChanged(); await ui.whenTranslationIdle();
+    assert(!threads.at(-1).comments[0].body.value.includes('问题中文：'), 'automatic translation does not reopen manually collapsed Chinese');
+    provider = 'deepl'; failTranslation = true;
+    configurationChanged({affectsConfiguration: key => key === 'localLatex.translation'});
+    await ui.whenTranslationIdle();
+    const failedCalls = translatedCalls;
+    visibleChanged(); await ui.whenTranslationIdle();
+    assert.equal(translatedCalls, failedCalls, 'visibility changes must not automatically retry a failed service');
+    failTranslation = false;
+    await handlers.get('localLatex.inlineTranslate')(c);
+    assert.equal(translatedCalls, failedCalls + 1, 'manual retry remains available in automatic mode');
+    autoTranslate = false;
     assert.equal(fs.readFileSync(file).compare(beforeTranslation), 0, 'translation never changes author source');
     assert.equal(lensProvider, undefined, 'review actions belong in the card, not source CodeLens text');
     const marked = markedWords(data, 'original');
@@ -245,12 +272,18 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert.equal(currentCard.label, '1 · 原文 → 候选 v1 ｜ − 删除/替换 · ＋ 新增/改写 · ＝ 未改');
     assert.equal(edit.requests.length, 0);
     const draft = await handlers.get('localLatex.inlineAnnotate')(currentCard);
+    await assert.rejects(ui.accept(c), /保存或取消/);
+    await assert.rejects(ui.reject(c), /保存或取消/);
+    assert.equal(await handlers.get('localLatex.inlineAnnotate')(currentCard), draft, 'repeated annotate keeps the current unsaved selection and reply');
     await ui.refresh(c);
     assert.equal(draft.disposed, undefined, 'refresh must preserve an unsaved draft inside its card');
     assert.equal(draft.canReply, true);
     const unchangedCandidateComment = draft.comments[0];
     const cardsBeforePost = backendCalls.filter(x => x.args.includes('cards')).length;
     await ui.post({thread: draft, text: '保留 fast，只调整选中的词。'});
+    assert.equal(draft.contextValue, 'localLatexInlineCard', 'saving restores the full normal review toolbar');
+    assert.equal(draft.canReply, false);
+    assert(draft.label.includes('原文 → 候选'));
     assert.equal(draft.disposed, undefined, 'saving feedback must not reopen or recreate the card');
     assert.equal(draft.comments[0], unchangedCandidateComment, 'saving feedback updates the lower note only, not the original/candidate content');
     assert.equal(backendCalls.filter(x => x.args.includes('cards')).length, cardsBeforePost, 'posting must not reread every project candidate');
@@ -270,6 +303,8 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
         vscode.window.activeTextEditor = mode === 'no-active-editor' ? undefined : editor;
         const whole = await handlers.get('localLatex.inlineAnnotate')(currentCard);
         await ui.post({thread: whole, text: '整项原文返修：' + mode});
+        assert.equal(whole.contextValue, 'localLatexInlineCard');
+        assert.equal(whole.canReply, false);
         assert.equal(edit.requests.at(-1).quote, original, 'card annotation defaults to its original, not an unrelated editor selection');
         assert.equal(edit.requests.at(-1).side, 'original');
     }
@@ -358,11 +393,11 @@ test('same-line candidates share one native card but retain independent actions 
         }})},
         workspace: {isTrusted: true, textDocuments: [document], workspaceFolders: [{uri: uri(root)}],
             getWorkspaceFolder: () => ({uri: uri(root)}), findFiles: async () => [],
-            getConfiguration: () => ({get: (key, fallback) => fallback}), onDidChangeConfiguration: disposable, openTextDocument: async () => document,
+            getConfiguration: () => ({get: (key, fallback) => key === 'translation.autoTranslate' ? false : fallback}), onDidChangeConfiguration: disposable, openTextDocument: async () => document,
             onDidChangeTextDocument: fn => {changeDocument = fn; return disposable();}, onDidSaveTextDocument: fn => {saveDocument = fn; return disposable();},
             createFileSystemWatcher: () => ({dispose() {}, onDidChange(fn) {watchChanged = fn; return disposable();}, onDidCreate(fn) {watchCreated = fn; return disposable();}, onDidDelete: disposable})},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
-            withProgress: async (_, action) => action(), showTextDocument: async () => editor, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}),
+            withProgress: async (_, action) => action(), showTextDocument: async () => editor, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}), onDidChangeTextEditorVisibleRanges: disposable,
             onDidChangeTextEditorSelection: fn => {selectionListener = fn; return {dispose() {}};},
             showQuickPick: async items => {choices = items;},
             showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x), showWarningMessage: async x => {notices.push(x);}},
@@ -586,7 +621,7 @@ test('cold TeX discovery waits for native Comments registration; code-only proje
             comments: {createCommentController: () => ({dispose() {}, createCommentThread() {throw new Error('No state, no cards');}})},
             EventEmitter: class {fire() {} dispose() {}},
             window: {visibleTextEditors: [], createTextEditorDecorationType: () => disposable,
-                registerUriHandler: () => disposable, onDidChangeActiveTextEditor: () => disposable, onDidChangeTextEditorSelection: () => disposable,
+                registerUriHandler: () => disposable, onDidChangeActiveTextEditor: () => disposable, onDidChangeTextEditorSelection: () => disposable, onDidChangeTextEditorVisibleRanges: () => disposable,
                 showErrorMessage: x => errors.push(x)},
             workspace: {isTrusted: true, workspaceFolders: [folder], findFiles: async () => tex ? [{fsPath: file}] : [],
                 getConfiguration: () => ({get: (_, fallback) => fallback}), onDidChangeConfiguration: () => disposable, onDidChangeTextDocument: () => disposable, onDidSaveTextDocument: () => disposable, createFileSystemWatcher: fileWatcher},
@@ -623,6 +658,7 @@ test('native review-card toolbar exposes review actions with Chinese titles and 
         assert.match(entry.group, /^navigation@/);
         assert.match(entry.when, /commentController == localLatexInlineReview/);
         assert.match(entry.when, /commentThread == localLatexInlineCard/);
+        assert.match(entry.when, /commentThread == localLatexInlineDraft/, 'top actions stay available while writing another note');
         assert.match(manifest.contributes.commands.find(c => c.command === entry.command).title, /[\u4e00-\u9fff]/);
     }
     for (const command of ['inlinePostComment', 'inlineCancelComment']) {

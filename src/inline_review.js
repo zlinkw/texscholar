@@ -128,6 +128,7 @@ function createInlineReview(vscode, context, execute = run) {
     let watchedScope, watcher, autoRefresh, renderedOwnerHash, refreshChain = Promise.resolve();
     const changedFiles = new Set(), reviewFiles = new Set(), deferredFiles = new Set();
     const shownPanels = new Set(), openedPDFs = new Set(), collapsedQuestions = new Set(), pdfMetadata = new Map(), translations = new Map();
+    let autoTranslationRun, autoTranslationRequested = false;
     const pendingPDFUpdates = new Map();
     let pdfChain = Promise.resolve(), automaticPDFRun;
     context.subscriptions.push(controller, deleted);
@@ -238,7 +239,7 @@ function createInlineReview(vscode, context, execute = run) {
             + (style().showLegend ? ' ｜ − 删除/替换 · ＋ 新增/改写 · ＝ 未改' : '');
     };
     function translationInput(c, data) {
-        const provider = config().get('translation.provider', 'google');
+        const provider = config().get('translation.provider', 'bing');
         if (!TRANSLATORS[provider]) throw new Error('请在设置中选择可用的翻译来源。');
         const items = [{key: 'original', text: displayText(data.original)},
             {key: 'candidate', text: displayText(data.candidate) || deletionPreview(data)},
@@ -302,6 +303,29 @@ function createInlineReview(vscode, context, execute = run) {
             }
         })();
         return entry.promise;
+    }
+    function autoTranslateVisible() {
+        if (!config().get('translation.autoTranslate', true) || !vscode.workspace.isTrusted) return Promise.resolve();
+        autoTranslationRequested = true;
+        if (autoTranslationRun) return autoTranslationRun;
+        // Native gutter expansion has no public event. Prepare only cards whose
+        // source positions are actually visible, driven by editor/file events.
+        autoTranslationRun = (async () => {
+            while (autoTranslationRequested) {
+                autoTranslationRequested = false;
+                for (const id of records.keys()) {
+                    if (!config().get('translation.autoTranslate', true)) return;
+                    const editor = vscode.window.activeTextEditor, record = records.get(id);
+                    if (!editor || editor.document.languageId !== 'latex' || record.displayConflict
+                        || !sameFile(editor.document.uri.fsPath, path.join(record.c.repo, record.data.edit.file))
+                        || !editor.visibleRanges.some(visible => !!visible.intersection(record.range))
+                        || translationState(record.c, record.data)) continue;
+                    await translateCard(record.c);
+                }
+            }
+        })().catch(error => vscode.window.showErrorMessage(error.message))
+            .finally(() => {autoTranslationRun = undefined;});
+        return autoTranslationRun;
     }
     function cardBody(data, id, c) {
         const appearance = style();
@@ -513,6 +537,7 @@ function createInlineReview(vscode, context, execute = run) {
         decorate();
         await setContext();
         await showPanel(c.repo, explicitPanel);
+        autoTranslateVisible();
     }
     function reconcileThreads(c, prior, focus = false, resetFile) {
         const {oldCards, oldRecords, oldThreads, previous, available, writing} = prior;
@@ -664,6 +689,7 @@ function createInlineReview(vscode, context, execute = run) {
         });
     }
     async function accept(arg) {
+        if (drafts.has(cards.get(contextFor(arg).id))) throw new Error('请先保存或取消当前批注草稿，再接收候选；草稿仍保留。');
         const c = contextFor(arg), data = await current(c);
         const navigation = pdfMetadata.get(c.repo + '|' + c.id) || context.workspaceState?.get('reviewPDFMeta', {})[c.repo + '|' + c.id];
         const ordered = orderedRecords(), index = ordered.findIndex(record => record.c.id === c.id);
@@ -681,13 +707,16 @@ function createInlineReview(vscode, context, execute = run) {
         vscode.window.showInformationMessage(`${c.id} 已接收并替换正文；未提交 Git 或推送。`);
     }
     async function reject(arg) {
+        if (drafts.has(cards.get(contextFor(arg).id))) throw new Error('请先保存或取消当前批注草稿，再拒绝候选；草稿仍保留。');
         const c = contextFor(arg), data = await current(c);
         await backend(c, ['decide', '--reject', c.id, '--version', c.version], undefined, data.sha256);
         await refresh(c);
         vscode.window.showInformationMessage(`${c.id} 候选已拒绝，原文保留；不代表科学问题已解决，未提交 Git 或推送。`);
     }
     async function annotate(arg) {
-        const c = contextFor(arg), data = await current(c), editor = vscode.window.activeTextEditor;
+        const c = contextFor(arg), existing = cards.get(c.id);
+        if (drafts.has(existing)) {showCard(c); return existing;}
+        const data = await current(c), editor = vscode.window.activeTextEditor;
         const side = data.original.trim() ? 'original' : 'candidate', excerpt = data[side];
         let note = {c, side, start: 0, end: Array.from(excerpt).length, quote: excerpt};
         const selected = editor && sameFile(editor.document.uri.fsPath, path.join(c.repo, data.edit.file)) && !editor.selection.isEmpty;
@@ -931,11 +960,11 @@ function createInlineReview(vscode, context, execute = run) {
     command('localLatex.inlineTranslate', translateCard, true);
     command('localLatex.inlineTranslationSource', async arg => {
         const c = contextFor(arg); trusted(c);
-        const currentProvider = config().get('translation.provider', 'google');
+        const currentProvider = config().get('translation.provider', 'bing');
         const options = Object.entries(TRANSLATORS).map(([provider, label]) => ({provider, label,
             description: (provider === currentProvider ? '当前来源；' : '')
                 + (provider === 'google' ? '可能返回 429 限流' : provider === 'bing' ? '微软 Edge 免密钥接口，仍可能限流' : '免密钥网页接口，可能失效')}));
-        const chosen = await vscode.window.showQuickPick(options, {placeHolder: '手动切换翻译源；切换本身不发送文字，之后点击翻译'});
+        const chosen = await vscode.window.showQuickPick(options, {placeHolder: '选择翻译来源；自动翻译开启时会翻译当前可见卡片'});
         if (chosen && chosen.provider !== currentProvider) {
             const cfg = config(), target = cfg.inspect('translation.provider').workspaceValue === undefined
                 ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
@@ -979,9 +1008,11 @@ function createInlineReview(vscode, context, execute = run) {
     }}));
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
         decorate(); setContext().catch(error => vscode.window.showErrorMessage(error.message));
+        autoTranslateVisible();
         if (!activeScope && editor?.document.languageId === 'latex')
             startup = startup.then(() => enableReview()).catch(error => vscode.window.showErrorMessage(error.message));
     }));
+    context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(() => autoTranslateVisible()));
     context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(event => {
         if (event.kind !== vscode.TextEditorSelectionChangeKind.Mouse || event.textEditor !== vscode.window.activeTextEditor) return;
         const record = sourceRecord(event.textEditor), thread = record && cards.get(record.c.id);
@@ -1009,6 +1040,7 @@ function createInlineReview(vscode, context, execute = run) {
         if (event.affectsConfiguration('localLatex.translation')) {
             translations.clear();
             for (const thread of new Set(cards.values())) redrawCard(threadContexts.get(thread));
+            autoTranslateVisible();
         }
         if (!event.affectsConfiguration('localLatex.reviewStyle')) return;
         try {
@@ -1027,6 +1059,7 @@ function createInlineReview(vscode, context, execute = run) {
     }));
     startup = enableReview().catch(error => {vscode.window.showErrorMessage(error.message);});
     return {open, refresh, accept, reject, annotate, post, preview, addRequests, controller, records,
+        whenTranslationIdle: () => autoTranslationRun || Promise.resolve(),
         whenPDFIdle: () => automaticPDFRun || pdfChain, ready: startup};
 }
 function activate(context) { return createInlineReview(require('vscode'), context); }

@@ -31,6 +31,10 @@ test('AI setup prompt is portable, complete and reuses one configuration/shortcu
     assert(!prompt.includes('127.0.0.1:7897'));
     assert(prompt.includes('不自动发送'));
     assert(prompt.includes('discard_annotations'));
+    const translation = require('../package.json').contributes.configuration.properties;
+    assert.equal(translation['localLatex.translation.provider'].default, 'bing');
+    assert.equal(translation['localLatex.translation.autoTranslate'].default, true);
+    assert(prompt.includes('默认来源 Bing'));
     const rows = [...require('./writing-presets.json').settings, ...require('./setup').bindings({})];
     const keys = rows.map(row => (row.language || '') + ':' + row.key);
     assert.equal(new Set(keys).size, keys.length, 'one definition per setting and language');
