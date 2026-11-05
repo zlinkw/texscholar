@@ -2,6 +2,31 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {parseSync, reviewPath} = require('./pdf_navigation');
+test('floating PDF opening shares the source workbench and refuses to move an unrelated editor', async () => {
+    const fs = require('node:fs/promises'), path = require('node:path');
+    const {openFloating} = require('./pdf_navigation');
+    const root = await fs.mkdtemp(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'floating-pdf-'));
+    const file = path.join(root, 'review.pdf'); await fs.writeFile(file, 'isolated PDF fixture', 'utf8');
+    const uri = {scheme: 'file', fsPath: file}, group = {tabs: [], viewColumn: 2}, calls = [];
+    let supported = true, activate = true;
+    const vscode = {workspace: {isTrusted: true}, ViewColumn: {Beside: -2}, window: {tabGroups: {all: [group], activeTabGroup: group}},
+        commands: {getCommands: async () => supported ? ['workbench.action.moveEditorToNewWindow'] : [],
+            executeCommand: async (...args) => {calls.push(args); if (args[0] === 'vscode.openWith' && activate) {
+                const tab = {input: {uri}, group}; group.tabs.push(tab); group.activeTab = tab;
+            }}}};
+    supported = false; await assert.rejects(openFloating(vscode, uri), /不支持浮动/); assert.equal(calls.length, 0);
+    supported = true; activate = false;
+    group.activeTab = {input: {uri: {scheme: 'file', fsPath: path.join(root, 'main.tex')}}};
+    await assert.rejects(openFloating(vscode, uri), /未移动其他/);
+    assert(!calls.some(x => x[0] === 'workbench.action.moveEditorToNewWindow'));
+    activate = true; await openFloating(vscode, uri);
+    assert.equal(calls.filter(x => x[0] === 'workbench.action.moveEditorToNewWindow').length, 1);
+    await openFloating(vscode, uri);
+    assert.equal(calls.filter(x => x[0] === 'workbench.action.moveEditorToNewWindow').length, 1, 'reopening focuses an existing PDF, not another window');
+    assert.equal(calls.at(-1)[3].viewColumn, 2);
+    await openFloating(vscode, uri, true);
+    assert.equal(calls.filter(x => x[0] === 'workbench.action.moveEditorToNewWindow').length, 2, 'explicit detach also moves a PDF already open in the source workbench');
+});
 test('two PDF tabs route review snapshots and normal replies to the original source window', async () => {
     const fs = require('node:fs/promises'), path = require('node:path'), crypto = require('node:crypto');
     const {activate, handleSourceUri, sourcePosition} = require('./pdf_navigation');

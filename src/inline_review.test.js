@@ -47,6 +47,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
         changes: [{old_start: oldStart, old_end: oldStart + 6, new_start: oldStart, new_end: oldStart + 8}]};
     let value = original, lensProvider, commentsRegistered = false, configurationChanged, provider = 'google', releaseTranslation, sourceChoice;
     const calls = [], threads = [], notices = [], backendCalls = [], handlers = new Map();
+    const pdfGroup = {tabs: [], viewColumn: 2};
     class Range {
         constructor(start, end) {Object.assign(this, {start, end});}
         contains(p) {return p >= this.start && p <= this.end;}
@@ -57,7 +58,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     const editor = {document, selection: {start: 0, end: 0, isEmpty: true}, revealRange() {}, setDecorations() {}};
     const vscode = {
         env: {appRoot: path.join(root, 'vscode-app')},
-        Range, Selection: Range, RelativePattern: class {}, Uri: {file: uri}, ViewColumn: {One: 1, Two: 2}, TextEditorRevealType: {InCenterIfOutsideViewport: 1},
+        Range, Selection: Range, RelativePattern: class {}, Uri: {file: uri}, ViewColumn: {One: 1, Two: 2, Beside: -2}, TextEditorRevealType: {InCenterIfOutsideViewport: 1},
         CommentMode: {Preview: 0}, CommentThreadCollapsibleState: {Expanded: 1, Collapsed: 0},
         ProgressLocation: {Notification: 1}, ConfigurationTarget: {Global: 1, Workspace: 2},
         EventEmitter: class {fire() {} dispose() {}},
@@ -76,18 +77,23 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
             onDidChangeConfiguration: callback => {configurationChanged = callback; return disposable();}, openTextDocument: async () => document,
             onDidChangeTextDocument: disposable, onDidSaveTextDocument: disposable, createFileSystemWatcher: fileWatcher},
         languages: {registerCodeLensProvider(selector, provider) {lensProvider = provider; return {dispose() {}};}},
-        window: {activeTextEditor: editor, visibleTextEditors: [editor], createTextEditorDecorationType: () => ({dispose() {}}),
+        window: {activeTextEditor: editor, visibleTextEditors: [editor], tabGroups: {all: [pdfGroup], activeTabGroup: pdfGroup}, createTextEditorDecorationType: () => ({dispose() {}}),
             async showTextDocument(target, options) {calls.push(['showTextDocument', target, options]); return editor;},
             async withProgress(options, action) {return action();}, registerUriHandler: () => ({dispose() {}}), onDidChangeActiveTextEditor: () => ({dispose() {}}), onDidChangeTextEditorSelection: () => ({dispose() {}}),
             showQuickPick: async options => {assert(options.every(item => item.provider), 'only the explicit source picker, never a review ID picker');
                 return options.find(item => item.provider === sourceChoice);},
             showInformationMessage: x => notices.push(x), showErrorMessage: x => notices.push(x)},
         commands: {registerCommand: (name, handler) => {handlers.set(name, handler); return {dispose() {}};},
-            getCommands: async () => ['chatgpt.addFileToThread', ...(commentsRegistered ? ['workbench.action.focusCommentsPanel'] : [])],
+            getCommands: async () => ['chatgpt.addFileToThread', 'workbench.action.moveEditorToNewWindow', ...(commentsRegistered ? ['workbench.action.focusCommentsPanel'] : [])],
             async executeCommand(...args) {
                 if (args[0] === 'workbench.action.focusCommentsPanel' && !commentsRegistered)
                     throw new Error("command 'workbench.action.focusCommentsPanel' not found");
                 calls.push(args);
+                if (args[0] === 'vscode.openWith') {
+                    let tab = pdfGroup.tabs.find(tab => tab.input.uri.fsPath === args[1].fsPath);
+                    if (!tab) {tab = {input: {uri: args[1]}, group: pdfGroup}; pdfGroup.tabs.push(tab);}
+                    pdfGroup.activeTab = tab;
+                }
             }}
     };
     let translatedCalls = 0;
@@ -104,6 +110,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
         if (args.some(x => String(x).endsWith('review_pdf.py'))) {
             const navigation = path.join(root, 'review.json');
             fs.writeFileSync(navigation, JSON.stringify({document: file}), 'utf8');
+            fs.writeFileSync(path.join(root, 'review.pdf'), 'isolated PDF viewer fixture', 'utf8');
             return JSON.stringify({pdf: path.join(root, 'review.pdf'), navigation, shown_ids: edit.status === 'accepted' ? [] : ['1']});
         }
         if (args.includes('cards')) {
@@ -258,14 +265,14 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     vscode.window.activeTextEditor = editor;
     assert(!backendCalls.some(x => x.args.some(a => String(a).endsWith('review_pdf.py'))), 'source toggles, annotation and saved notes must not compile');
     await handlers.get('localLatex.inlinePreview')(threads.at(-1));
-    const launch = backendCalls.find(x => x.args.includes('--new-window'));
-    assert.deepEqual(launch.args, [path.join(vscode.env.appRoot, 'out', 'cli.js'), '--new-window', path.join(root, 'review.pdf')]);
-    assert.equal(launch.command, process.execPath);
-    assert.equal(launch.env.ELECTRON_RUN_AS_NODE, '1');
-    assert.equal(launch.input, undefined);
-    assert(!calls.some(x => x[0] === 'vscode.openWith'), 'review PDF must not replace/split the source window');
+    const launch = calls.find(x => x[0] === 'vscode.openWith');
+    assert.equal(launch[1].fsPath, path.join(root, 'review.pdf'));
+    assert.equal(launch[2], 'latex-workshop-pdf-hook');
+    assert.equal(launch[3].viewColumn, -2, 'PDF first opens beside, never replacing the source editor');
+    assert(calls.some(x => x[0] === 'workbench.action.moveEditorToNewWindow'));
+    assert(!backendCalls.some(x => x.args.includes('--new-window')), 'never launch a separate workspace/Workshop instance');
     await handlers.get('localLatex.inlinePreview')(threads.at(-1));
-    assert.equal(backendCalls.filter(x => x.args.includes('--new-window')).length, 1, 'updating the stable artifact must not open another window');
+    assert.equal(calls.filter(x => x[0] === 'workbench.action.moveEditorToNewWindow').length, 1, 'updating the stable artifact must not open another window');
     document.isDirty = true;
     await assert.rejects(ui.accept(c), /未保存/);
     assert.equal(value, original);

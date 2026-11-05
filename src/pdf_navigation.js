@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const {environment, samePath} = require('./tools');
 const reviewPath = file => /[\\/]\.latex-build[\\/]review-diff[\\/]current[\\/][^\\/]+-review\.pdf$/i.test(file);
 const sourceRouters = new WeakMap();
+const sourceNavigationIdle = new WeakMap();
 const inside = (root, file) => {const rel = path.relative(root, file); return rel && !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep);};
 const registryPath = root => path.join(root, '.latex-build', 'texscholar-source-window.json');
 async function readJSON(file) {
@@ -33,6 +34,24 @@ function sourcePosition(text, line, sourceDigest) {
 function pdfTabs(vscode) {
     return vscode.window.tabGroups.all.flatMap(group => group.tabs).map(tab => tab.input?.uri)
         .filter(uri => uri?.scheme === 'file' && reviewPath(uri.fsPath));
+}
+async function openFloating(vscode, uri, detachExisting = false) {
+    if (!vscode.workspace.isTrusted) throw new Error('请先信任论文工作区。');
+    if (uri?.scheme !== 'file' || !/\.pdf$/i.test(uri.fsPath)) throw new Error('请在主编辑窗口选择需要查看的本地 PDF。');
+    await fs.access(uri.fsPath);
+    // A source jump can reveal its document before its selection/temporary-tab
+    // cleanup is finished. Do not move the next PDF while that write is active.
+    const pending = sourceNavigationIdle.get(vscode);
+    if (pending) await pending();
+    const existing = vscode.window.tabGroups.all.flatMap(group => group.tabs).find(tab => tab.input?.uri && samePath(tab.input.uri.fsPath, uri.fsPath));
+    const move = 'workbench.action.moveEditorToNewWindow';
+    if ((!existing || detachExisting) && !(await vscode.commands.getCommands(true)).includes(move))
+        throw new Error('当前 VS Code 不支持浮动编辑器窗口，请升级；未改用会闪开的独立工作区窗口。');
+    await vscode.commands.executeCommand('vscode.openWith', uri, 'latex-workshop-pdf-hook', {viewColumn: existing?.group.viewColumn ?? vscode.ViewColumn.Beside, preview: false});
+    if (existing && !detachExisting) return;
+    const active = vscode.window.tabGroups.activeTabGroup.activeTab?.input?.uri;
+    if (!active || !samePath(active.fsPath, uri.fsPath)) throw new Error('目标 PDF 尚未激活，未移动其他编辑器。');
+    await vscode.commands.executeCommand(move);
 }
 function workshopModule(workshop, relative) {
     // Reuse Workshop's initialized singleton. Requiring a differently cased
@@ -138,6 +157,7 @@ function activate(context, vscode = require('vscode')) {
     }
     sourceRouters.set(context, openSource);
     let lastPDF, forwarding = Promise.resolve();
+    sourceNavigationIdle.set(vscode, () => forwarding);
     const openedTextTabs = new Set();
     function rememberPDF() {
         const uri = vscode.window.tabGroups.activeTabGroup?.activeTab?.input?.uri;
@@ -220,4 +240,4 @@ async function handleSourceUri(vscode, context, uri) {
     if (!handler) throw new Error('论文源码窗口尚未就绪。');
     return handler(uri);
 }
-module.exports = {activate, locate, handleUri, handleSourceUri, parseSync, reviewPath, sourcePosition, workshopModule};
+module.exports = {activate, locate, handleUri, handleSourceUri, parseSync, reviewPath, sourcePosition, workshopModule, openFloating};

@@ -818,12 +818,11 @@ function createInlineReview(vscode, context, execute = run) {
                 }
                 if (context.workspaceState) await context.workspaceState.update('reviewPDFMeta', saved);
             }
-            // Same supported launcher as VS Code's own code.cmd; avoid shell quoting
-            // and keep the source window intact. Existing PDF associations select Workshop.
+            // A floating editor shares the source workbench/Workshop instance;
+            // reverse SyncTeX never opens a source editor in a separate workspace.
             const opened = openedPDFs.has(result.pdf) || context.workspaceState?.get('reviewPDFs', []).includes(result.pdf);
             if (!opened && !automatic) {
-                await execute(process.execPath, [path.join(vscode.env.appRoot, 'out', 'cli.js'), '--new-window', result.pdf],
-                    c.repo, undefined, {ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: ''});
+                await require('./pdf_navigation').openFloating(vscode, vscode.Uri.file(result.pdf), true);
                 openedPDFs.add(result.pdf);
                 if (context.workspaceState) await context.workspaceState.update('reviewPDFs', [...new Set([...context.workspaceState.get('reviewPDFs', []), result.pdf])]);
             } else if (!automatic) vscode.window.showInformationMessage(result.reused_pdf ? '审核内容未变化，已复用核验后的 PDF，没有重新编译。'
@@ -905,9 +904,12 @@ function createInlineReview(vscode, context, execute = run) {
         const file = files.length === 1 ? files[0] : await vscode.window.showQuickPick(files, {placeHolder: '重新打开已生成的审核 PDF（不编译）'});
         if (!file) return;
         await fs.access(file);
-        await execute(process.execPath, [path.join(vscode.env.appRoot, 'out', 'cli.js'), '--new-window', file], path.dirname(file),
-            undefined, {ELECTRON_RUN_AS_NODE: '1', VSCODE_DEV: ''});
+        await require('./pdf_navigation').openFloating(vscode, vscode.Uri.file(file));
     });
+    command('localLatex.openFloatingPDF', async arg => {
+        const selected = arg?.scheme ? arg : vscode.window.tabGroups.activeTabGroup.activeTab?.input?.uri;
+        await require('./pdf_navigation').openFloating(vscode, selected, true);
+    }, true);
     command('localLatex.inlineAddRequests', addRequests);
     command('localLatex.inlineTranslate', translateCard, true);
     command('localLatex.inlineTranslationSource', async arg => {
