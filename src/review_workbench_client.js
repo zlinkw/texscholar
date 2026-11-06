@@ -5,11 +5,12 @@ let current, data, options = [], preview = 'A', selected, waiting = false, unava
 let editingNote, appearance, appearanceRequest, directoryItems = [];
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap();
 let sourceMode = false;
+let comparison = 'original', draftFrame;
 const math = globalThis.TeXScholarMath;
 const instance = crypto.randomUUID();
 let rendering = false, stateFrame, restoration, toolbarSize;
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate']);
-const actionNames = {save: '保存候选', saveAccept: '保存并接收候选', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
+const actionNames = {save: '保存候选', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
     next: '切换审核项', previous: '切换审核项', switch: '切换审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', related: '定位关联改动'};
 function fitToolbar() {
@@ -51,7 +52,7 @@ function keepReading(update) {
 }
 function snapshot() {
     return {c: {...current}, drafts: Object.fromEntries(drafts), note: $('note').value, selected, editingNote,
-        composer: !$('noteComposer').hidden, scope: $('scopeChoice').value, sourceMode, chinese, focused,
+        composer: !$('noteComposer').hidden, scope: $('scopeChoice').value, sourceMode, chinese, focused, comparison,
         compare: $('compare').checked, scrollTop: restoration?.scrollTop ?? window.scrollY, focus: document.activeElement?.id,
         editors: options.filter(o => !$('editor-' + o.label).hidden).map(o => o.label),
         textareas: Object.fromEntries([...document.querySelectorAll('textarea')].map(node => [node.id,
@@ -143,6 +144,7 @@ function translationSource(key) {
 function renderTranslation(key, entry) {
     const node = key === 'original' ? $('originalZh') : $('zh-' + key);
     if (!node || entry.source !== translationSource(key)) return;
+    if (options.some(o => o.label === key && hasDraft(o))) {node.hidden = true; return;}
     const signature = JSON.stringify([entry.error, entry.text, sourceMode]);
     if (rendered.get(node) === signature) {node.hidden = !chinese; return;}
     keepReading(() => {
@@ -158,8 +160,7 @@ function toggleMathMode() {
     $('mathMode').setAttribute('aria-pressed', String(sourceMode));
     fitToolbar();
     if (!data || unavailable) return;
-    renderText($('original'), data.original, options.find(o => o.label === preview)?.changes || options[0].changes, 'original');
-    for (const o of options) renderText($('text-' + o.label), o.after, o.changes, 'candidate');
+    renderReadings();
     renderQuestions(data.edit.questions || []);
     for (const [key, entry] of translatedText) renderTranslation(key, entry);
     // Draft editors, note text, selected source coordinates and version stay intact.
@@ -189,22 +190,57 @@ function renderOption(o) {
     if (!article) {article = document.createElement('article'); article.id = 'option-' + o.label; $('options').appendChild(article);}
     article.className = [preview === o.label ? 'selected' : '', focused === o.label ? 'focused' : focused ? 'folded' : ''].join(' ');
     if (!article.children.length) article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
-        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><p class="tradeoff"></p><p class="scopeSummary"></p><details class="reason"><summary>详细取舍</summary><span></span></details>'
+        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small><p class="tradeoff"></p><p class="scopeSummary"></p><details class="reason"><summary>详细取舍</summary><span></span></details>'
         + '<div class="detail"><div class="text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
-        + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><button data-action="saveAccept" data-write data-option="' + o.label + '">保存并接收 ' + o.label + '</button><small>仅保存待审版本，其他备选保留。</small></div></div>';
+        + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><button data-action="saveAccept" data-write data-option="' + o.label + '">保存并接收 ' + o.label + '</button><small>“保存”只更新待审版本；“保存并接收”替换正文并进入下一项。</small></div></div>';
     article.querySelector('.tradeoff').textContent = o.summary || o.reason;
     article.querySelector('.reason span').textContent = o.reason;
     article.querySelector('.reason').hidden = !o.summary || o.summary === o.reason;
     const count = o.scope;
     article.querySelector('.scopeSummary').textContent = !count ? '' : count.error ? '修改范围暂无法统计：' + count.error
-        : `文字变动涉及：原文 ${count.old_sentences} 句 → 候选 ${count.new_sentences} 句`
+        : `相对原文的变动涉及：原文 ${count.old_sentences} 句 → 候选 ${count.new_sentences} 句`
             + (count.old_environments || count.new_environments ? `；独立环境 ${count.old_environments} → ${count.new_environments}` : '');
     article.querySelector('.scopeSummary').title = '按 TeX 结构统计涉及变化的句子，不是质量评分或修改上限；不含纯首尾空白变化。';
     if (translatedText.has(o.label) && translatedText.get(o.label).source !== o.after) {
         translatedText.delete(o.label); $('zh-' + o.label).textContent = ''; rendered.delete($('zh-' + o.label));
     }
-    renderText($('text-' + o.label), o.after, o.changes, 'candidate');
     $('edit-' + o.label).value = drafts.get(o.label) ?? o.after.replace(/\r\n/g, '\n');
+}
+function hasDraft(o) {return drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n');}
+function displayed(o) {return hasDraft(o) ? drafts.get(o.label) : o.after;}
+function renderReadings() {
+    const pair = comparison === 'original' ? [] : comparison.split(':');
+    const left = options.find(o => o.label === pair[0]), right = options.find(o => o.label === pair[1]);
+    const paired = !!(left && right);
+    const pairChanges = paired ? math.wordChanges(displayed(left), displayed(right)) : undefined;
+    const selectedOption = options.find(o => o.label === preview) || options[0];
+    const originalChanges = hasDraft(selectedOption) ? math.wordChanges(data.original, displayed(selectedOption)) : selectedOption.changes;
+    renderText($('original'), data.original, paired ? [] : originalChanges, 'original');
+    const manual = options.some(o => o.manually_edited || hasDraft(o));
+    $('rankingNotice').hidden = !manual;
+    $('rankingNotice').textContent = manual ? '已手动调整：原 AI 排序和取舍仅供参考，不代表对当前内容重新评估。' : '';
+    $('comparisonNotice').hidden = !paired;
+    $('comparisonNotice').textContent = paired ? `${left.label} → ${right.label}：仅突出两个方案之间的差异，不改变 PDF 或接收结果；接收按钮始终对应自己的方案。` : '';
+    for (const o of options) {
+        const article = $('option-' + o.label), draft = hasDraft(o);
+        article.hidden = paired && !pair.includes(o.label);
+        article.querySelector('h4').textContent = o.label + (paired ? o === left ? ' · 基准' : o === right ? ' · 比较' : '' : o.label === 'A' && !manual ? ' · 推荐' : '');
+        article.querySelector('.draftLabel').textContent = draft ? '未保存预览；句数统计与译文保存后更新。'
+            : o.manually_edited ? '作者已手动调整；下方为原 AI 取舍。' : '';
+        article.querySelector('.scopeSummary').hidden = draft;
+        $('zh-' + o.label).hidden = !chinese || draft;
+        if (article.hidden) continue;
+        const changes = paired ? pairChanges : draft ? math.wordChanges(data.original, displayed(o)) : o.changes;
+        const node = $('text-' + o.label);
+        renderText(node, displayed(o), changes, paired && o === left ? 'original' : 'candidate');
+        if (paired && !models.get(node).text.trim()) {
+            node.textContent = o === left ? '基准方案为空。' : '比较方案为空。'; rendered.delete(node);
+        }
+    }
+}
+function queueDraftPreview() {
+    if (draftFrame !== undefined) return;
+    draftFrame = requestAnimationFrame(() => {draftFrame = undefined; if (data && !unavailable) keepReading(renderReadings);});
 }
 function renderQuestions(questions) {
     const signature = JSON.stringify([sourceMode, questions]);
@@ -285,8 +321,17 @@ document.addEventListener('keyup', event => {if (event.shiftKey) selectionChange
 document.addEventListener('input', event => {
     restoration = undefined;
     if (event.target.id === 'directoryQuery') filterDirectory();
-    if (event.target.classList.contains('edit')) {drafts.set(event.target.dataset.option, event.target.value); selected = undefined;}
+    if (event.target.classList.contains('edit')) {
+        drafts.set(event.target.dataset.option, event.target.value); scope();
+        if (!event.isComposing) queueDraftPreview();
+    }
     if (event.target.matches('textarea')) dirty();
+});
+document.addEventListener('compositionend', event => {if (event.target.classList.contains('edit')) queueDraftPreview();});
+$('comparisonChoice').addEventListener('change', () => {
+    comparison = $('comparisonChoice').value; focused = undefined;
+    for (const article of $('options').children) {article.classList.remove('focused', 'folded'); article.querySelector('[data-action="focus"]').textContent = '展开';}
+    keepReading(renderReadings); remember();
 });
 $('scopeChoice').addEventListener('change', scope);
 for (const id of ['directoryKind', 'directoryNotes']) $(id).addEventListener('change', filterDirectory);
@@ -331,7 +376,7 @@ document.addEventListener('click', event => {
         $('saveNote').textContent = '保存修改'; placeComposer(); openComposer(); $('note').focus(); dirty(); return;
     }
     if (type === 'mathMode') {toggleMathMode(); return;}
-    if (type === 'toggleChinese') {chinese = !chinese; document.querySelectorAll('.zh').forEach(n => n.hidden = !chinese); return;}
+    if (type === 'toggleChinese') {chinese = !chinese; document.querySelectorAll('.zh').forEach(n => n.hidden = !chinese); renderReadings(); return;}
     if (type === 'focus') {
         focused = focused === option ? undefined : option;
         for (const o of options) {const node = $('option-' + o.label); node.classList.toggle('focused', focused === o.label); node.classList.toggle('folded', !!focused && focused !== o.label);}
@@ -350,6 +395,7 @@ document.addEventListener('click', event => {
         compare: $('compare').checked, ...(['save', 'saveAccept'].includes(type) ? {value: $('edit-' + option).value} : {})});
 });
 window.addEventListener('message', ({data: message}) => {
+    if (message.type === 'handoffRetry') {$('retryHandoff').hidden = !message.available; return;}
     if (message.type === 'busy') {waiting = message.action; buttons(); return;}
     if (message.type === 'actionResult') {if (message.error) status(message.message, true); return;}
     if (message.type === 'appearanceResult') {
@@ -375,8 +421,7 @@ window.addEventListener('message', ({data: message}) => {
     if (message.type === 'preview') {
         preview = message.option;
         for (const o of options) $('option-' + o.label).classList.toggle('selected', preview === o.label);
-        const chosen = options.find(o => o.label === preview);
-        renderText($('original'), data.original, chosen.changes, 'original'); return;
+        renderReadings(); return;
     }
     if (message.type === 'noteEdited') {data.edit.requests = message.requests; closeComposer(); renderNotes(message.requests);}
     if (message.type === 'notes') {data.edit.requests = message.requests; renderNotes(message.requests); renderQuestions(message.questions); return;}
@@ -402,8 +447,15 @@ window.addEventListener('message', ({data: message}) => {
         if (!saved) {editingNote = undefined; placeComposer(); $('noteComposer').hidden = true; $('noteScopeControls').hidden = false; $('saveNote').textContent = '保存返修批注'; translatedText.clear(); drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; rendered.delete($('originalZh')); $('questions').dataset.signature = '';}
         else drafts.delete(message.option);
         if (resume) {for (const [label, value] of Object.entries(resume.drafts)) drafts.set(label, value); focused = resume.focused;}
-        renderText($('original'), data.original, options.find(o => o.label === preview)?.changes || options[0].changes, 'original');
         for (const o of options) if (!saved || o.label === message.option) renderOption(o);
+        if (!saved) {
+            comparison = resume?.comparison || 'original'; $('retryHandoff').hidden = true;
+            $('comparisonChoice').innerHTML = '<option value="original">原文对照</option>' + options.flatMap((o, i) => options.slice(i + 1).map(other =>
+                '<option value="' + o.label + ':' + other.label + '">' + o.label + ' ↔ ' + other.label + '</option>')).join('');
+            if (![...$('comparisonChoice').options].some(o => o.value === comparison)) comparison = 'original';
+            $('comparisonChoice').value = comparison;
+        }
+        renderReadings();
         $('scopeChoice').innerHTML = '<option value="group">本项全部方案（默认）</option><option value="original">完整原文</option>' + options.map(o => '<option value="' + o.label + '">方案 ' + o.label + ' 整体</option>').join('');
         scope(); renderNotes(data.edit.requests || []); renderQuestions(data.edit.questions || []);
         if (resume) restoreInputs(resume);

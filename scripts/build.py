@@ -74,6 +74,8 @@ def build(output):
     if not font_names or any('..' in Path(name).parts or Path(name).is_absolute() for name in font_names):
         raise ValueError('Invalid KaTeX font references')
     vendor = {'src/vendor/katex/' + name: (vendor_root / name).read_bytes() for name in [*vendor_names, *sorted(set(font_names))]}
+    vendor.update({'src/vendor/diff/' + name: (ROOT / 'src/vendor/diff' / name).read_bytes()
+                   for name in ('diff.min.js', 'LICENSE', 'README.md')})
     files.update({'extension/' + name: raw for name, raw in vendor.items()})
     images = {'docs/images/' + image.name: image.read_bytes() for image in (ROOT / 'docs' / 'images').glob('*.png')}
     files.update({'extension/' + name: raw for name, raw in images.items()})

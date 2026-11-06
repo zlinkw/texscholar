@@ -86,11 +86,17 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(latest['options'][0]['after'], options[0]['after'])
         self.assertEqual(latest['options'][2]['after'], options[2]['after'])
         self.assertEqual(latest['options'][1]['after'], 'The model is compact and fast.')
+        self.assertTrue(latest['options'][1]['manually_edited'])
+        self.assertNotIn('manually_edited', latest['options'][0])
+        self.assertEqual(latest['options'][1]['reason'], options[1]['reason'])
         self.assertEqual(latest['edit']['requests'][0]['option'], 'C')
         self.assertEqual(latest['edit']['requests'][0]['version'], data['version'])
         with patch('sys.stdin', io.StringIO(json.dumps({'after': 'Stale replacement.'}))):
             with self.assertRaisesRegex(Conflict, 'stale'):
                 dispatch(self.review(), Namespace(**{**vars(args), 'expect': digest(self.review().raw)}))
+        fresh_options = [{**o, 'after': o['after'] + ' Revised.'} for o in options]
+        self.apply('propose_options', {'options': fresh_options}, id_, latest['version'])
+        self.assertFalse(any(o.get('manually_edited') for o in self.review().inspect(id_)['options']))
 
     def test_explicit_new_batch_resets_ids_with_fixed_identity_and_rejects_old_versions(self):
         original = (self.root / 'main.tex').read_bytes()

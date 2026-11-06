@@ -3,6 +3,24 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const math = require('./review_math');
 const katex = require('./vendor/katex/katex.min');
 
+test('local draft and alternative diff preserves TeX, Unicode and unchanged words', () => {
+    const old = String.raw`😀 The model is robust at $p<0.05$; cost 50\%.`, next = old.replace('robust', 'stable');
+    const diff = math.wordChanges(old, next);
+    assert.equal(diff.filter(c => c.kind === 'delete').map(c => Array.from(old).slice(c.old_start, c.old_end).join('')).join(''), 'robust');
+    assert.equal(diff.filter(c => c.kind === 'insert').map(c => Array.from(next).slice(c.new_start, c.new_end).join('')).join(''), 'stable');
+    assert.deepEqual(math.wordChanges(old, old), []);
+    const changed = String.raw`😀 The model is robust at $q<0.05$; cost 50\%.`;
+    const changes = math.wordChanges(old, changed);
+    const ranges = math.changedRanges(changed, changes, 'candidate');
+    assert(ranges.some(([a,b]) => changed.slice(a,b) === 'q'));
+    for (const [a, b] of [['', 'new'], ['removed', ''], ['same same end', 'same end'], ['中文内容', '中文修改'], ['a\r\nb', 'a\nb']]) {
+        const parts = math.wordChanges(a,b);
+        const deleted = parts.filter(p => p.kind === 'delete').reduce((n,p) => n+p.old_end-p.old_start,0);
+        const added = parts.filter(p => p.kind === 'insert').reduce((n,p) => n+p.new_end-p.new_start,0);
+        assert.equal(Array.from(a).length - deleted + added, Array.from(b).length);
+    }
+});
+
 test('math delimiters preserve exact source spans, nested equations and literal TeX', () => {
     const source = String.raw`Cost \$5; \verb|$literal$|. $x_i^2$ and \(\frac{a}{b}\).
 \[\sum_{i=1}^n x_i\]

@@ -165,6 +165,17 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     await send('note', {text: '保存成功但无法交接', handoff: true});
     assert(messages.findLast(m => m.type === 'result').message.includes('批注已保存，但加入 Codex 失败'));
     assert.equal(records.get('a').data.edit.requests.at(-1).text, '保存成功但无法交接');
+    assert(messages.findLast(m => m.type === 'handoffRetry').available);
+    const countNotes = records.get('a').data.edit.requests.length;
+    services.handoff = async c => {events.push({type: 'retry-handoff', c});};
+    await send('retryHandoff');
+    assert.equal(events.at(-1).c.id, 'a');
+    assert.equal(events.at(-1).type, 'retry-handoff');
+    assert.equal(records.get('a').data.edit.requests.length, countNotes, 'retry never saves the note again');
+    assert.equal(messages.findLast(m => m.type === 'handoffRetry').available, false);
+    const eventsAfterRetry = events.length;
+    await send('retryHandoff');
+    assert.equal(events.length, eventsAfterRetry, 'successful retry clears the target');
     services.handoff = realHandoff;
     await send('dirty', {dirty: true, noteDirty: false, state: {c: view.active, drafts: {A: 'keep other draft', B: 'edit B'}}});
     await send('saveAccept', {option: 'B', value: 'edit B'});
@@ -189,4 +200,6 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert.equal(view.active.id, '2');
     assert(page.includes('data-action="noteHandoff"'));
     assert(page.includes('data-action="saveAccept"'));
+    assert(page.includes('data-action="retryHandoff"'));
+    assert(page.includes('id="comparisonChoice"'));
 });

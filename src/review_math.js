@@ -1,9 +1,22 @@
 /* Source-coordinate math rendering shared by the review webview and tests. */
 (function (root, factory) {
-    if (typeof module === 'object' && module.exports) module.exports = factory();
-    else root.TeXScholarMath = factory();
-})(typeof globalThis === 'object' ? globalThis : this, function () {
+    if (typeof module === 'object' && module.exports) module.exports = factory(require('./vendor/diff/diff.min.js'));
+    else root.TeXScholarMath = factory(root.Diff);
+})(typeof globalThis === 'object' ? globalThis : this, function (diff) {
     'use strict';
+    function wordChanges(before, after) {
+        const tokens = text => text.match(/\\[A-Za-z@]+|[\p{L}\p{N}]+|_+|\s+|./gsu) || [];
+        let oldAt = 0, newAt = 0;
+        const changes = [];
+        for (const part of diff.diffArrays(tokens(before), tokens(after))) {
+            const size = Array.from(part.value.join('')).length;
+            const oldEnd = oldAt + (part.added ? 0 : size), newEnd = newAt + (part.removed ? 0 : size);
+            if (part.added || part.removed) changes.push({kind: part.added ? 'insert' : 'delete',
+                old_start: oldAt, old_end: oldEnd, new_start: newAt, new_end: newEnd});
+            oldAt = oldEnd; newAt = newEnd;
+        }
+        return changes;
+    }
     function projection(raw, source = false) {
         let text = '', at = 0;
         const offsets = [];
@@ -159,5 +172,5 @@
         const raw = rawBounds(model, point(a, range.startContainer, range.startOffset, false), point(b, range.endContainer, range.endOffset, true));
         return raw ? {...raw, wholeMath: anchors.some(a => a.math)} : undefined;
     }
-    return {projection, segments, changedRanges, rawBounds, previewTex, render, selectedRange};
+    return {projection, segments, changedRanges, rawBounds, previewTex, render, selectedRange, wordChanges};
 });

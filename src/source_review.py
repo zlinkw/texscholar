@@ -1096,6 +1096,7 @@ def dispatch(r, args):
                 if selected is None or not isinstance(spec.get('after'), str):
                     raise Conflict('Manual edit needs an existing option and after text')
                 selected['after'] = spec['after']
+                selected['manually_edited'] = True
                 spec = {'options': options, 'fewer_options_reason': (old.get('fewer_options_reason') or '手动编辑已有候选，不自动生成备选') if len(options) < 3 else ''}
                 if 'intent' in old:
                     spec['intent'] = old['intent']
