@@ -269,7 +269,30 @@ test('filtered navigation and own saves preserve exact note bindings without acc
     await send('next'); assert.equal(view.active.id, 'a');
     await send('next'); assert.equal(view.active.id, 'b');
     await send('previous'); assert.equal(view.active.id, 'a');
+    await send('viewState', {state: {c: view.active, drafts: {}, note: '', scrollTop: 321, anchor: {id: 'text-C', top: -20}, focused: 'C', comparison: 'A:C'}});
+    services.related = async () => view.show(records.get('1').c);
+    await send('related', {index: 0}); assert.equal(view.active.id, '1');
+    assert.equal(messages.findLast(m => m.type === 'relatedReturn').id, 'a');
+    // The origin can receive an AI update while we inspect another item.
+    records.get('a').c.version = records.get('a').data.version = 'returned-v2';
+    await send('backRelated'); assert.equal(view.active.id, 'a'); assert.equal(view.active.version, 'returned-v2');
+    const returned = messages.findLast(m => m.type === 'content');
+    assert.equal(returned.resume.scrollTop, 321); assert.equal(returned.resume.comparison, 'A:C');
+    assert.deepEqual(returned.resume.drafts, {}); assert.equal(returned.navigationFilter.kind, 'response');
+    await send('viewState', {state: {c: view.active, drafts: {}, note: '', scrollTop: 400, focused: 'C', comparison: 'A:C',
+        selected: {value: 'Disposable selection'}, composer: true}});
+    records.get('a').c.version = records.get('a').data.version = 'ai-v3'; view.sync(records, view.active);
+    const updated = messages.findLast(m => m.type === 'content');
+    assert.equal(updated.c.version, 'ai-v3'); assert.equal(updated.resume.scrollTop, 400);
+    assert.equal(updated.resume.focused, 'C'); assert.equal(updated.resume.selected, undefined); assert.equal(updated.resume.composer, false);
     await send('accept', {option: 'A'}); assert.equal(view.active.id, 'b');
+    await send('related', {index: 0}); assert.equal(view.active.id, '1');
+    records.delete('b'); view.setRecords(records);
+    await send('backRelated'); assert.equal(view.active.id, '1');
+    assert.match(messages.findLast(m => m.type === 'result').message, /不再可用/);
+    records.set('b', {c: {repo: '/fixture', owner: 'reply.tex', id: 'b', version: 'v1'}, data: structuredClone(records.get('1').data)});
+    records.get('b').data.edit.kind = 'response';
+    await send('switch', {target: 'b'});
     await send('accept', {option: 'A'}); assert.equal(view.active.id, 'b', 'do not escape filter after its last item');
     await send('filter', {filter: {query: '', kind: '', notes: false}});
     await send('next'); assert.equal(view.active.id, '1');

@@ -1,10 +1,13 @@
 /* Runs only inside the fixed review webview. No network or filesystem access. */
 'use strict';
 const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
+const feedbackNode = $('status');
 let current, data, options = [], preview = 'A', selected, waiting = false, unavailable = false, conflict = false, focused, chinese = true;
 let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSelection, selectionStale = false;
 let navigationFilter = {query: '', kind: '', notes: false};
 let changeCursor;
+let directoryCursor, localFeedback;
+const feedbackTargets = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap(), differences = new WeakMap();
 const displayedChanges = new WeakMap();
 let sourceMode = false;
@@ -15,11 +18,12 @@ let rendering = false, stateFrame, restoration, toolbarSize;
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'start']);
 const sideBusy = new Set();
 const actionNames = {save: '保存候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
-    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
+    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', related: '定位关联改动'};
 function fitToolbar() {
     const header = document.querySelector('header'), home = $('toolbarExtras');
-    const size = JSON.stringify([header.clientWidth, appearance?.controlFontSize, $('mathMode').textContent, $('progress').textContent, $('pdfStatus').textContent]);
+    document.documentElement.style.setProperty('--toolbar-height', header.offsetHeight + 'px');
+    const size = JSON.stringify([header.clientWidth, appearance?.controlFontSize, $('mathMode').textContent, $('progress').textContent, $('pdfStatus').textContent, $('backRelated').hidden, $('backRelated').textContent]);
     if (toolbarSize === size) return;
     toolbarSize = size;
     const nodes = ['mathMode', 'pdfActions', 'pdfStatus'].map($);
@@ -30,6 +34,7 @@ function fitToolbar() {
     }
 }
 new ResizeObserver(fitToolbar).observe(document.documentElement);
+new ResizeObserver(fitToolbar).observe(document.querySelector('header'));
 document.fonts.ready.then(fitToolbar);
 function pdfStatus(message) {
     const node = $('pdfStatus'); node.title = message || '';
@@ -38,6 +43,11 @@ function pdfStatus(message) {
     node.style.color = /失败|错误/.test(message) ? 'var(--vscode-errorForeground)' : '';
     $('pdfError').hidden = !/失败|错误/.test(message);
     $('pdfError').textContent = $('pdfError').hidden ? '' : message;
+    fitToolbar();
+}
+function showRelatedReturn(id) {
+    $('backRelated').hidden = !id;
+    $('backRelated').textContent = id ? '返回 ' + id : '返回原审核项';
     fitToolbar();
 }
 function keepReading(update) {
@@ -54,10 +64,17 @@ function keepReading(update) {
         if (delta) window.scrollBy(0, delta);
     }
 }
+function readingAnchor() {
+    const y = document.querySelector('header').getBoundingClientRect().bottom + 24;
+    const node = [...document.querySelectorAll('main .text[id], main .zh[id]')].find(n => {
+        const r = n.getBoundingClientRect(); return r.height && r.top <= y && r.bottom > y;
+    });
+    return node ? {id: node.id, top: node.getBoundingClientRect().top} : undefined;
+}
 function snapshot() {
     return {c: {...current}, drafts: Object.fromEntries(drafts), note: $('note').value, selected, editingNote,
         composer: !$('noteComposer').hidden, scope: $('scopeChoice').value, selectionStale, sourceMode, chinese, focused, comparison,
-        compare: $('compare').checked, scrollTop: restoration?.scrollTop ?? window.scrollY, focus: document.activeElement?.id,
+        compare: $('compare').checked, scrollTop: restoration?.scrollTop ?? window.scrollY, anchor: restoration?.anchor ?? readingAnchor(), focus: document.activeElement?.id,
         editors: options.filter(o => !$('editor-' + o.label).hidden).map(o => o.label),
         textareas: Object.fromEntries([...document.querySelectorAll('textarea')].map(node => [node.id,
             {start: node.selectionStart, end: node.selectionEnd, top: node.scrollTop, left: node.scrollLeft}])),
@@ -73,7 +90,7 @@ function queueRemember() {
     if (stateFrame === undefined) stateFrame = requestAnimationFrame(() => {
         stateFrame = undefined;
         if (!current || rendering) return;
-        send('viewStatePatch', {patch: {scrollTop: window.scrollY, focus: document.activeElement?.id,
+        send('viewStatePatch', {patch: {scrollTop: window.scrollY, anchor: readingAnchor(), focus: document.activeElement?.id,
             textareas: Object.fromEntries([...document.querySelectorAll('textarea')].map(node => [node.id,
                 {start: node.selectionStart, end: node.selectionEnd, top: node.scrollTop, left: node.scrollLeft}]))}}, false);
     });
@@ -100,17 +117,39 @@ function restoreInputs(state) {
     restoration = state;
     document.fonts.ready.then(() => requestAnimationFrame(() => {
         if (restoration !== state) return;
-        window.scrollTo(0, state.scrollTop); restoration = undefined; remember();
+        const anchor = state.anchor && $(state.anchor.id);
+        if (anchor?.getClientRects().length) window.scrollBy(0, anchor.getBoundingClientRect().top - state.anchor.top);
+        else window.scrollTo(0, state.scrollTop);
+        restoration = undefined; remember();
     }));
 }
 const esc = text => String(text).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 function send(type, extra = {}, blocks = true) {
     if (!current) return;
+    if (actionNames[type] || passiveActions.has(type)) feedbackTargets.set(type, localFeedback);
     if (passiveActions.has(type)) {if (sideBusy.has(type)) return; sideBusy.add(type); buttons();}
     if (blocks && !passiveActions.has(type)) {waiting = type; status(''); buttons();}
     api.postMessage({type, id: current.id, version: current.version, ...extra});
 }
-function status(message, error = false) {$('status').textContent = message || ''; $('status').className = error ? 'error' : '';}
+function status(message, error = false, action) {
+    const node = feedbackNode;
+    if (message) {
+        const target = action ? feedbackTargets.get(action) : localFeedback;
+        const matches = target && target.item === JSON.stringify([current.repo, current.owner, current.id]);
+        const container = matches && [target.node, target.fallback].find(n => n?.isConnected && n.getClientRects().length);
+        (container || $('pageFeedback')).appendChild(node);
+    }
+    if (!node.isConnected) $('pageFeedback').appendChild(node);
+    node.textContent = message || ''; node.className = error ? 'error' : '';
+}
+function feedbackFor(button) {
+    const node = button.closest('#noteComposer, .note, [id^="editor-"], article, .question');
+    const label = selected?.option || $('scopeChoice').value;
+    return {item: JSON.stringify([current.repo, current.owner, current.id]), node,
+        fallback: node?.closest('article') || (node?.id === 'noteComposer'
+            ? selected?.side === 'original' || $('scopeChoice').value === 'original' ? $('original').parentElement : $('option-' + label)
+            : undefined)};
+}
 function dirty() {
     const changed = options.some(o => drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n'));
     send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim() || !!editingNote, state: remember(false)}, false); buttons(); return changed;
@@ -205,6 +244,7 @@ function renderDirectory(items) {
 function filterDirectory() {
     const filter = {query: $('directoryQuery').value.trim(), kind: $('directoryKind').value, notes: $('directoryNotes').checked};
     if (JSON.stringify(filter) !== JSON.stringify(navigationFilter)) {
+        directoryCursor = undefined;
         navigationFilter = filter; send('filter', {filter}, false);
         $('progress').textContent = current.id + (filter.query || filter.kind || filter.notes ? ' · 已筛选' : ' · 全部');
     }
@@ -216,6 +256,16 @@ function filterDirectory() {
         node.disabled = !!waiting; $('directoryResults').appendChild(node);
     }
     if (!found.length) $('directoryResults').textContent = '没有符合条件的可操作审核项。';
+    if (!found.some(i => i.id === directoryCursor)) directoryCursor = found[0]?.id;
+    markDirectoryCursor();
+    $('directoryHint').textContent = found.length + ' 项；↑↓ 选择，Enter 打开，Esc 关闭。';
+}
+function markDirectoryCursor() {
+    for (const node of $('directoryResults').children) {
+        const active = node.dataset.target === directoryCursor;
+        node.classList.toggle('directoryCurrent', active);
+        if (active) node.setAttribute('aria-current', 'true'); else node.removeAttribute('aria-current');
+    }
 }
 function renderOption(o) {
     let article = $('option-' + o.label);
@@ -236,7 +286,8 @@ function renderOption(o) {
     if (translatedText.has(o.label) && translatedText.get(o.label).source !== o.after) {
         translatedText.delete(o.label); $('zh-' + o.label).textContent = ''; rendered.delete($('zh-' + o.label));
     }
-    $('edit-' + o.label).value = drafts.get(o.label) ?? o.after.replace(/\r\n/g, '\n');
+    const text = drafts.get(o.label) ?? o.after.replace(/\r\n/g, '\n');
+    if ($('edit-' + o.label).value !== text) $('edit-' + o.label).value = text;
 }
 function hasDraft(o) {return drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n');}
 function displayed(o) {return hasDraft(o) ? drafts.get(o.label) : o.after;}
@@ -277,6 +328,7 @@ function renderReadings() {
         }
     }
     highlightSelection();
+    placeComposer();
 }
 function queueDraftPreview() {
     if (draftFrame !== undefined) return;
@@ -329,6 +381,8 @@ function renderNotes(requests) {
     buttons();
 }
 function placeComposer() {
+    const composer = $('noteComposer'), activeInput = composer.contains(document.activeElement) ? document.activeElement : undefined;
+    const previousParent = composer.parentElement;
     const notes = [...$('notes').children], target = editingNote && notes.find(n => n.dataset.noteId === editingNote.id);
     for (const note of notes) note.classList.toggle('editing', note === target);
     if (target) {if ($('noteComposer').parentElement !== target) target.appendChild($('noteComposer'));}
@@ -336,9 +390,13 @@ function placeComposer() {
         const side = selected?.side || ($('scopeChoice').value === 'original' ? 'original' : 'candidate');
         const label = selected?.option || $('scopeChoice').value;
         const content = side === 'original' ? $('originalZh') : $('zh-' + label);
-        if (content && !$('noteComposer').hidden) {if (content.nextElementSibling !== $('noteComposer')) content.after($('noteComposer'));}
+        const article = content?.closest('article');
+        const obscured = article && (article.hidden || article.classList.contains('folded'));
+        if (content && !composer.hidden && obscured) {if (composer.parentElement !== $('composerDock')) $('composerDock').appendChild(composer);}
+        else if (content && !composer.hidden) {if (content.nextElementSibling !== composer) content.after(composer);}
         else if ($('noteComposer').nextElementSibling !== $('notes')) $('notes').before($('noteComposer'));
     }
+    if (activeInput && composer.parentElement !== previousParent) activeInput.focus({preventScroll: true});
 }
 function closeComposer() {
     status('');
@@ -471,6 +529,25 @@ $('comparisonChoice').addEventListener('change', () => {
 });
 $('scopeChoice').addEventListener('change', scope);
 for (const id of ['directoryKind', 'directoryNotes']) $(id).addEventListener('change', filterDirectory);
+$('directoryDialog').addEventListener('keydown', event => {
+    if (event.isComposing || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.target.id !== 'directoryQuery' && !event.target.closest('#directoryResults')) return;
+    const nodes = [...$('directoryResults').querySelectorAll('button:not(:disabled)')];
+    if (!nodes.length) return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const index = nodes.findIndex(n => n.dataset.target === directoryCursor), step = event.key === 'ArrowDown' ? 1 : -1;
+        const node = nodes[(index + step + nodes.length) % nodes.length];
+        directoryCursor = node.dataset.target; markDirectoryCursor(); node.scrollIntoView({block: 'nearest'});
+        if (event.target.id !== 'directoryQuery') node.focus({preventScroll: true});
+    } else if (event.key === 'Enter') {
+        event.preventDefault(); nodes.find(n => n.dataset.target === directoryCursor)?.click();
+    }
+});
+$('directoryResults').addEventListener('focusin', event => {
+    const node = event.target.closest('button[data-target]');
+    if (node) {directoryCursor = node.dataset.target; markDirectoryCursor();}
+});
 document.addEventListener('change', event => {
     const input = event.target;
     if (!input.dataset.style || !input.reportValidity()) return;
@@ -508,6 +585,7 @@ document.addEventListener('click', event => {
     const button = event.target.closest('button[data-action]');
     if (!button) return;
     const type = button.dataset.action, option = button.dataset.option;
+    localFeedback = feedbackFor(button);
     const menu = button.closest('.more'); if (menu) menu.open = false;
     if (type === 'appearance') {style(appearance); $('appearanceDialog').showModal(); return;}
     if (type === 'resetAppearance') {saveAppearance({reset: true}); return;}
@@ -534,7 +612,7 @@ document.addEventListener('click', event => {
     if (type === 'focus') {
         focused = focused === option ? undefined : option;
         for (const o of options) {const node = $('option-' + o.label); node.classList.toggle('focused', focused === o.label); node.classList.toggle('folded', !!focused && focused !== o.label);}
-        for (const b of document.querySelectorAll('[data-action="focus"]')) b.textContent = focused === b.dataset.option ? '返回比较' : '展开'; return;
+        for (const b of document.querySelectorAll('[data-action="focus"]')) b.textContent = focused === b.dataset.option ? '返回比较' : '展开'; placeComposer(); return;
     }
     if (type === 'whole') {$('scopeChoice').value = 'group'; scope(); return;}
     if (type === 'optionNote') {if (!canChangeNote()) return; $('scopeChoice').value = option; scope(); openComposer(); $('note').focus(); return;}
@@ -549,9 +627,10 @@ document.addEventListener('click', event => {
         compare: $('compare').checked, ...(['save', 'saveAccept'].includes(type) ? {value: $('edit-' + option).value} : {})});
 });
 window.addEventListener('message', ({data: message}) => {
+    if (message.type === 'relatedReturn') {showRelatedReturn(message.id); return;}
     if (message.type === 'handoffRetry') {$('retryHandoff').hidden = !message.available; return;}
     if (message.type === 'busy') {waiting = message.action; buttons(); return;}
-    if (message.type === 'actionResult') {sideBusy.delete(message.action); buttons(); if (message.message) status(message.message, message.error); return;}
+    if (message.type === 'actionResult') {sideBusy.delete(message.action); buttons(); if (message.message) status(message.message, message.error, message.action); return;}
     if (message.type === 'appearanceResult') {
         if (message.request !== appearanceRequest) return;
         $('appearanceStatus').textContent = message.message; $('appearanceStatus').className = message.error ? 'error' : ''; return;
@@ -583,13 +662,17 @@ window.addEventListener('message', ({data: message}) => {
     if (message.type === 'noteSaved') closeComposer();
     if (message.type === 'conflict') {
         conflict = true;
-        if (!$('latest')) {const b = document.createElement('button'); b.id = 'latest'; b.dataset.action = 'latest'; b.textContent = '载入最新（需确认放弃草稿）'; $('status').after(b);}
+        if (!$('latest')) {const b = document.createElement('button'); b.id = 'latest'; b.dataset.action = 'latest'; b.textContent = '载入最新（需确认放弃草稿）'; $('pageFeedback').appendChild(b);}
     }
     if (message.type === 'unavailable') {unavailable = true; $('empty').hidden = false; $('review').hidden = true;}
     if (message.type === 'content' || message.type === 'saved') {
         rendering = true; restoration = undefined;
-        const saved = message.type === 'saved'; current = message.c; data = message.data; options = message.options;
+        const saved = message.type === 'saved';
+        const refresh = !saved && current && current.repo === message.c.repo && current.owner === message.c.owner && current.id === message.c.id;
+        const oldOptions = options;
+        current = message.c; data = message.data; options = message.options;
         const resume = message.resume;
+        showRelatedReturn(message.relatedReturn);
         navigationFilter = message.navigationFilter;
         $('directoryQuery').value = navigationFilter.query; $('directoryKind').value = navigationFilter.kind; $('directoryNotes').checked = navigationFilter.notes;
         if (message.reading) {sourceMode = message.reading.sourceMode; chinese = message.reading.chinese;}
@@ -601,10 +684,29 @@ window.addEventListener('message', ({data: message}) => {
         $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length;
         pdfStatus(message.pdfStatus);
         renderDirectory(message.directory);
-        if (!saved) {editingNote = undefined; $('noteComposer').hidden = true; placeComposer(); $('noteScopeControls').hidden = false; $('saveNote').textContent = '保存返修批注'; translatedText.clear(); drafts.clear(); selected = undefined; selectionStale = false; focused = undefined; changeCursor = undefined; $('compare').checked = false; $('options').replaceChildren(); models.delete($('original')); rendered.delete($('original')); differences.delete($('comparisonChoice')); $('note').value = ''; $('originalZh').textContent = ''; rendered.delete($('originalZh')); $('questions').replaceChildren();}
+        if (!saved) {
+            editingNote = undefined; $('noteComposer').hidden = true; placeComposer(); $('noteScopeControls').hidden = false;
+            $('saveNote').textContent = '保存返修批注'; drafts.clear(); selected = pendingSelection = undefined; selectionStale = false;
+            focused = undefined; changeCursor = undefined; $('compare').checked = false; $('note').value = '';
+            if (!refresh) {
+                $('pageFeedback').appendChild(feedbackNode); status(''); feedbackTargets.clear(); localFeedback = undefined;
+                translatedText.clear(); $('options').replaceChildren(); models.delete($('original')); rendered.delete($('original'));
+                differences.delete($('comparisonChoice')); $('originalZh').textContent = ''; rendered.delete($('originalZh')); $('questions').replaceChildren();
+            } else {
+                for (const node of [...$('options').children]) if (!options.some(o => node.id === 'option-' + o.label)) node.remove();
+                if (translatedText.has('original') && translatedText.get('original').source !== data.original) {
+                    translatedText.delete('original'); $('originalZh').textContent = ''; rendered.delete($('originalZh'));
+                }
+            }
+        }
         else drafts.delete(message.option);
-        if (resume) {for (const [label, value] of Object.entries(resume.drafts)) drafts.set(label, value); focused = resume.focused;}
-        for (const o of options) if (!saved || o.label === message.option) renderOption(o);
+        if (resume) {for (const [label, value] of Object.entries(resume.drafts)) drafts.set(label, value); focused = options.some(o => o.label === resume.focused) ? resume.focused : undefined;}
+        for (const o of options) {
+            if (saved ? o.label === message.option : !refresh || JSON.stringify(o) !== JSON.stringify(oldOptions.find(old => old.label === o.label))) renderOption(o);
+            const article = $('option-' + o.label);
+            article.classList.toggle('focused', focused === o.label); article.classList.toggle('folded', !!focused && focused !== o.label);
+            article.querySelector('[data-action="focus"]').textContent = focused === o.label ? '返回比较' : '展开';
+        }
         if (!saved) {
             comparison = resume?.comparison || 'original'; $('retryHandoff').hidden = true;
             $('comparisonChoice').innerHTML = '<option value="original">原文对照</option>' + options.flatMap((o, i) => options.slice(i + 1).map(other =>
@@ -628,6 +730,7 @@ window.addEventListener('message', ({data: message}) => {
         dirty();
     }
     if (message.type === 'content') waiting = message.busy;
-    status(message.message || '', message.error); buttons();
+    if (message.message) status(message.message, message.error, message.action);
+    buttons();
 });
 api.postMessage({type: 'ready', instance, state: api.getState()});
