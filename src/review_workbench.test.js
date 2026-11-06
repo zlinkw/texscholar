@@ -1,0 +1,49 @@
+'use strict';
+const test = require('node:test'), assert = require('node:assert/strict');
+const {createWorkbench, html} = require('./review_workbench');
+test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts and next acceptance', async () => {
+    let receive, creations = 0, htmlWrites = 0, confirmation;
+    const messages = [], events = [], original = 'The model is strong.';
+    const make = id => ({c: {repo: '/fixture', owner: 'reply.tex', id, version: 'v1'}, data: {version: 'v1', original,
+        candidate: 'The model is reliable.', edit: {file: 'main.tex', kind: 'manuscript', versions: ['v1'], requests: []},
+        options: [...'ABC'].map((label, i) => ({label, after: ['The model is reliable.', 'The model is compact.', 'The model is efficient.'][i], reason: label, changes: []}))}});
+    const records = new Map(['1', '2', 'a'].map(id => [id, make(id)]));
+    const vscode = {ViewColumn: {One: 1}, window: {showWarningMessage: async () => confirmation,
+        createWebviewPanel: () => {creations++; return {reveal() {}, dispose() {}, onDidDispose() {}, webview: {
+            set html(value) {htmlWrites++; assert(value.includes('Content-Security-Policy'));},
+            onDidReceiveMessage: fn => {receive = fn;}, postMessage: async value => messages.push(value)}};}}};
+    const services = {read: async c => {const record = records.get(c.id); assert.equal(c.version, record.c.version); return structuredClone(record.data);},
+        style: () => require('./review_style').defaults, selection: () => 'A', pdfStatus: () => '待更新', autoTranslate: () => false,
+        directory: () => [...records.values()].map(r => ({id: r.c.id, ...r.data.edit})),
+        note: async (c, selection, text) => {events.push({type: 'note', c, selection, text}); const record = records.get(c.id);
+            record.data.edit.requests.push({quote: selection.quote, text}); view.sync(records, c);},
+        save: async (c, label, after) => {const r = records.get(c.id); r.data.options.find(o => o.label === label).after = after;
+            r.c.version = r.data.version = 'v2'; r.data.edit.versions.push('v2'); view.sync(records, c); return structuredClone(r.data);},
+        saved() {}, accept: async c => {events.push({type: 'accept', c}); records.delete(c.id); view.sync(records, c);},
+        copy: async () => events.push({type: 'copy'}), handoff() {}, finish() {}};
+    const view = createWorkbench(vscode, {subscriptions: []}, services);
+    view.setRecords(records); await view.show(records.get('1').c); await receive({type: 'ready'});
+    const count = messages.length;
+    view.status({...view.active, version: 'old'}, 'PDF 最新');
+    view.status({...view.active, id: 'a'}, 'PDF 最新');
+    assert.equal(messages.length, count, 'another document or stale version cannot label the current PDF latest');
+    const send = (type, extra = {}) => receive({type, id: view.active.id, version: view.active.version, ...extra});
+    await send('note', {option: 'B', side: 'candidate', value: 'The model is compact.', start: 13, end: 20, text: '限定这个词'});
+    assert.deepEqual(events[0].selection, {side: 'candidate', option: 'B', start: 13, end: 20, quote: 'compact'});
+    assert(messages.some(m => m.type === 'notes'));
+    await send('dirty', {dirty: true, noteDirty: true});
+    await send('switch', {target: 'a'}); assert.equal(view.active.id, '1', 'unconfirmed draft cannot disappear');
+    await send('dirty', {dirty: false, noteDirty: false});
+    await send('save', {option: 'B', value: 'The model is compact and fast.'});
+    assert.equal(view.active.version, 'v2');
+    assert.equal(records.get('1').data.options[0].after, 'The model is reliable.');
+    await send('accept', {option: 'B'});
+    assert.equal(events.at(-1).c.option, 'B'); assert.equal(view.active.id, '2');
+    await send('switch', {target: 'a'}); assert.equal(view.active.id, 'a');
+    assert.equal(creations, 1); assert.equal(htmlWrites, 1, 'switch/save/note never replace webview HTML');
+    const notesBefore = events.length;
+    await receive({type: 'note', id: '1', version: 'v1', text: 'Stale request'});
+    assert.equal(events.length, notesBefore); assert(messages.at(-1).error);
+    assert.equal(records.get('a').data.original, original);
+    assert(!html('test').includes('http://'), 'network runs in existing backend, not untrusted webview');
+});

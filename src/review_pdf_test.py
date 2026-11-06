@@ -13,6 +13,21 @@ EXE = '.exe' if os.name == 'nt' else ''
 
 
 class ReviewUnits(unittest.TestCase):
+    def test_parallel_options_keep_equal_sentences_and_math_once(self):
+        from review_pdf import parallel_changes
+        before = 'Context stays. The model is strong. End stays.'
+        variants = [{'label': label, 'after': before.replace('strong', word), 'reason': label}
+                    for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]
+        units = list(parallel_changes(before, variants))
+        changed = [u for u in units if u['kind'] != 'equal']
+        self.assertEqual(len(changed), 1)
+        self.assertEqual(changed[0]['before'].strip(), 'The model is strong.')
+        self.assertEqual([o['after'].strip() for o in changed[0]['variants']], ['The model is reliable.', 'The model is compact.', 'The model is efficient.'])
+        self.assertEqual(''.join(u['before'] for u in units), before)
+        eq = r'\begin{equation}x=0.05\end{equation}'
+        before += eq
+        variants = [{**o, 'after': o['after'] + eq} for o in variants]
+        self.assertEqual(sum(eq in u['before'] for u in parallel_changes(before, variants)), 1)
     def test_reverse_source_map_excludes_machine_state_and_preserves_unchanged_positions(self):
         original = '% CODEX-REVIEW-STATE-BEGIN\n% disposable runtime\n% CODEX-REVIEW-STATE-END\nOpening stays.\nOriginal sentence.\nTail stays.\n'
         rendered = '% generated preamble\nOpening stays.\nOriginal marked.\nCandidate marked.\nTail stays.\n'
@@ -166,6 +181,50 @@ class ReviewPDF(unittest.TestCase):
     review = NativeReview.review
     apply = NativeReview.apply
     proposal = NativeReview.proposal
+
+    def test_selected_B_and_all_options_reuse_one_pdf_with_precise_reverse_metadata(self):
+        import review_pdf
+        from unittest.mock import patch
+        options = [{'label': label, 'after': 'The model is ' + word + '.', 'reason': label}
+                   for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]
+        id_ = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': options})['id']
+        data = self.review().inspect(id_)
+        before = {file: (self.root / file).read_bytes() for file in ['main.tex', 'reply.tex']}
+        args = dict(repo=str(self.root), state='reply.tex', document=str(self.root / 'main.tex'), id_=id_, version=data['version'],
+                    git='unused-git', latexdiff=str(BIN / ('latexdiff' + EXE)), latexmk=str(BIN / ('latexmk' + EXE)))
+        choices = {id_: {'version': data['version'], 'option': 'B'}}
+        selected = preview(**args, choices=choices)
+        text = '\n'.join(p.extract_text() for p in PdfReader(selected['pdf']).pages)
+        self.assertIn('compact', text); self.assertNotIn('efficient', text)
+        self.assertEqual(text.count('Unchanged context before.'), 1)
+        multiple = preview(**args, choices=choices, compare_id=id_)
+        self.assertEqual(multiple['pdf'], selected['pdf'])
+        text = '\n'.join(p.extract_text() for p in PdfReader(multiple['pdf']).pages)
+        for word in ['reliable', 'compact', 'efficient']:
+            self.assertIn(word, text)
+        self.assertEqual(text.count('Unchanged context before.'), 1)
+        self.assertEqual(text.count('The model is strong and fast.'), 1)
+        nav = json.loads(Path(multiple['navigation']).read_text(encoding='utf-8'))
+        self.assertEqual(nav['options'][id_], 'B')
+        self.assertEqual(set(nav['option_targets'][id_]), set('ABC'))
+        mapped = [item for source in nav['reverse'].values() for item in source['review_lines'].values()]
+        self.assertEqual({m['option'] for m in mapped}, set('ABC'))
+        self.assertTrue(all(m['id'] == id_ and m['version'] == data['version'] for m in mapped))
+        stable = Path(multiple['pdf']).read_bytes()
+        request = Path(multiple['pdf']).parent.parent / 'test-selection.json'
+        request.write_text(json.dumps({'choices': choices}), encoding='utf-8')
+        actual_command = review_pdf.command
+        def change_selection(*cmd):
+            result = actual_command(*cmd)
+            if cmd[0][0] == args['latexmk']:
+                request.write_text(json.dumps({'choices': choices, 'changed': True}), encoding='utf-8')
+            return result
+        with patch.object(review_pdf, 'command', change_selection):
+            with self.assertRaisesRegex(ValueError, '变化'):
+                preview(**args, choices=choices, request_file=str(request), style={'addedColor': '#008844'})
+        self.assertEqual(Path(multiple['pdf']).read_bytes(), stable, 'a superseded generation never publishes over the previous PDF')
+        for file, raw in before.items():
+            self.assertEqual((self.root / file).read_bytes(), raw)
 
     def test_display_preferences_and_acceptance_refresh_preserve_source_and_remove_finished_pairs(self):
         first = self.proposal()

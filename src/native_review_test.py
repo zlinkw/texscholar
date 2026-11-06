@@ -32,6 +32,66 @@ class NativeReview(unittest.TestCase):
         return self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.',
                                      'after': 'The model is reliable and compact.'})['id']
 
+    def test_ranked_options_share_one_id_and_accept_only_chosen_result(self):
+        original = (self.root / 'main.tex').read_bytes()
+        options = [{'label': label, 'after': 'The model is ' + word + '.', 'reason': '取舍 ' + label}
+                   for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]
+        id_ = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': options})['id']
+        first = self.review().inspect(id_, source=True)
+        self.assertEqual(first['options'][1]['after'], options[1]['after'])
+        self.assertEqual(self.review().state['next'], [2, 1])
+        self.assertEqual((self.root / 'main.tex').read_bytes(), original)
+        with self.assertRaisesRegex(Conflict, 'explicit option'):
+            self.apply('decide', [id_], [], {id_: first['version']})
+        note = {'id': id_, 'version': first['version'], 'side': 'candidate', 'option': 'B', 'start': 13, 'end': 20,
+                'quote': 'compact', 'text': '请保留这个意思。'}
+        self.apply('feedback', note)
+        context = self.review().feedback_context()['items'][0]
+        self.assertEqual(context['option'], 'B')
+        self.assertEqual(context['candidate'], options[1]['after'])
+        with self.assertRaisesRegex(Conflict, 'exact option'):
+            self.apply('feedback', {k: v for k, v in note.items() if k != 'option'})
+        with self.assertRaisesRegex(Conflict, 'Unknown candidate option'):
+            self.apply('decide', [id_], [], {id_: first['version']}, 'D')
+        self.apply('decide', [id_], [], {id_: first['version']}, 'B')
+        accepted = self.review().inspect(id_)
+        self.assertEqual(accepted['candidate'], options[1]['after'])
+        accepted_source = self.review().contents(self.review().state['accepted'], 'main.tex')
+        self.assertIn(options[1]['after'], accepted_source)
+        self.assertNotIn(options[0]['after'], accepted_source)
+        self.assertEqual(self.review().payload(accepted['edit'])['after'], options[1]['after'])
+        self.assertIn(options[1]['after'], (self.root / 'main.tex').read_text(encoding='utf-8'))
+        self.assertNotIn(options[0]['after'], (self.root / 'main.tex').read_text(encoding='utf-8'))
+
+    def test_option_contract_and_manual_option_edit_retain_other_candidates_and_notes(self):
+        from argparse import Namespace
+        import io
+        from unittest.mock import patch
+        from source_review import dispatch
+        with self.assertRaisesRegex(Conflict, 'ranked options'):
+            Review.validate_options({'after': 'Not a group.'}, required=True)
+        with self.assertRaisesRegex(Conflict, 'fewer_options_reason'):
+            Review.validate_options({'options': [{'label': 'A', 'after': 'One.', 'reason': 'Only'}]})
+        options = [{'label': label, 'after': 'The model is ' + word + '.', 'reason': label}
+                   for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]
+        id_ = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': options})['id']
+        data = self.review().inspect(id_)
+        self.apply('feedback', {'id': id_, 'version': data['version'], 'side': 'candidate', 'option': 'C',
+                               'start': 0, 'end': 0, 'quote': '', 'text': '另一个方案的要求。'})
+        review = self.review()
+        args = Namespace(command='edit-option', id=id_, version=data['version'], option='B', apply=True, expect=digest(review.raw))
+        with patch('sys.stdin', io.StringIO(json.dumps({'after': 'The model is compact and fast.'}))):
+            saved = dispatch(review, args)
+        latest = saved['card']
+        self.assertEqual(latest['options'][0]['after'], options[0]['after'])
+        self.assertEqual(latest['options'][2]['after'], options[2]['after'])
+        self.assertEqual(latest['options'][1]['after'], 'The model is compact and fast.')
+        self.assertEqual(latest['edit']['requests'][0]['option'], 'C')
+        self.assertEqual(latest['edit']['requests'][0]['version'], data['version'])
+        with patch('sys.stdin', io.StringIO(json.dumps({'after': 'Stale replacement.'}))):
+            with self.assertRaisesRegex(Conflict, 'stale'):
+                dispatch(self.review(), Namespace(**{**vars(args), 'expect': digest(self.review().raw)}))
+
     def test_explicit_new_batch_resets_ids_with_fixed_identity_and_rejects_old_versions(self):
         original = (self.root / 'main.tex').read_bytes()
         id_ = self.proposal(); previous = self.review().inspect(id_)
@@ -261,10 +321,10 @@ class NativeReview(unittest.TestCase):
         self.assertEqual((self.root / 'reply.tex').read_bytes(), state)
         import json
         spec = {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.',
-                'after': 'The model is reliable and fast.', 'deferred': False}
+                'options': [{'label': 'A', 'after': 'The model is reliable and fast.', 'reason': '测试'}], 'fewer_options_reason': '隔离测试', 'deferred': False}
         result = subprocess.run([sys.executable, '-X', 'utf8', str(Path(__file__).with_name('source_review.py')),
                                  '--project', str(self.root), '--state', 'reply.tex', '--apply',
-                                 '--expect', digest(state), 'propose'], input=json.dumps(spec).encode('utf-8'), capture_output=True)
+                                 '--expect', digest(state), 'propose-options'], input=json.dumps(spec).encode('utf-8'), capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('deferred=true', result.stderr.decode('utf-8'))
         self.assertEqual((self.root / 'main.tex').read_bytes(), source)

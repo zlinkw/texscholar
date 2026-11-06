@@ -133,6 +133,11 @@ test('navigation refuses stale PDF bytes and untrusted callback addresses before
     await fs.writeFile(metaFile, JSON.stringify(metadata), 'utf8');
     const vscode = {env: {uriScheme: 'vscode'}, Uri: {parse: value => {const u = new URL(value); return {scheme: u.protocol.slice(0, -1), authority: u.host, path: u.pathname};}}};
     const context = {extension: {id: 'local-research.latex-writing-tools'}}, c = {repo: root, id: '1', version: 'v1'};
+    metadata.option_targets = {'1': {B: {file: path.join(root, '..', 'outside.tex'), line: 1}}};
+    await fs.writeFile(metaFile, JSON.stringify(metadata), 'utf8');
+    await assert.rejects(locate(vscode, context, metaFile, {...c, option: 'B'}), /越出/);
+    delete metadata.option_targets;
+    await fs.writeFile(metaFile, JSON.stringify(metadata), 'utf8');
     await assert.rejects(locate(vscode, context, metaFile, c), /版本不一致/);
     metadata.pdf_digest = crypto.createHash('sha256').update(await fs.readFile(pdf)).digest('hex');
     await fs.writeFile(metaFile, JSON.stringify(metadata), 'utf8');

@@ -1,5 +1,13 @@
 # 开发与平台验证
 
+## 固定审核页与内置 MCP
+
+发行仍为单个 VSIX。`review_workbench.js` 管理唯一标签页，`review_workbench_client.js` 管理局部 DOM、选区与未保存草稿。`source_review.py` 是唯一持久化核心，原生入口、固定审核页和 `mcp_server.py` 共用其 writer_lock、版本校验及 persist；MCP 直接调用核心，不再启动每次读写的 Python CLI 子进程。AI 单方案 CLI propose/rework 已移除，作者的 edit-option 与接收入口独立保留。待审并列选项同属一个快照和编号，接收将 chosen option 纳入原有成果投影。
+
+`mcp_setup.js` 将稳定启动器与可信工作区登记放入扩展 globalStorage，不向论文项目增加管理文件。`mcp_config.py` 仅维护带专属标记的 texscholar MCP 表，保留其他配置、个人启停和额外超时项，拒绝接管未标记的同名服务；不读写 SKILL。MCP 为本地 STDIO，不需要云服务、密钥或新端口。连接可发现不等于模型语义必定遵守；结构校验不冒充科学核验。重载后以实际 MCP 列表为准。
+
+本轮保护区：真实论文、审核决定及 Typst 配置不作为开发样例。隔离检查覆盖单选接收、跨文档复用、精确 B 批注、其他备选保留、旧操作拒绝、并发保护、MCP 初始化/调用/配置、真实完整 PDF 与反向映射。沿用现有 editor/backend/pdf/backup/translation 组；无额外性能门槛。Windows 原生 UI 与实际工具检查单列，Mac 仅静态路径/键位适配，不是实机通过。
+
 唯一插件源码位于 `src/`，根目录 `package.json` 为发行清单；旧本机脚本和 SKILL 内历史分发副本不是新的维护入口。纯 JavaScript 直接运行，不需要 npm install、TypeScript 转译或独立编译缓存。打包只组装已经验证的源文件，不重新运行测试；安装和发行使用同一个 VSIX。
 
 ## 开发依赖

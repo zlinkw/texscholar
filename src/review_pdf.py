@@ -427,6 +427,42 @@ def presentation_type(text, start, end, old, new):
     return 'Within paragraph', paragraph_start
 
 
+def parallel_changes(before, variants):
+    """Union actual sentence/environment changes, without tripling unchanged context."""
+    changes, spans = {}, []
+    for option in variants:
+        position = 0
+        entries = []
+        for unit in _unit_changes(before, option['after']):
+            a, b = position, position + len(unit['before'])
+            position = b
+            if unit['kind'] != 'equal':
+                entries.append((a, b, unit['after']))
+                spans.append((a, b))
+        changes[option['label']] = entries
+    merged = []
+    for a, b in sorted(set(spans)):
+        if merged and (a < merged[-1][1] or a == b == merged[-1][0]):
+            merged[-1] = (merged[-1][0], max(b, merged[-1][1]))
+        else:
+            merged.append((a, b))
+    position = 0
+    for a, b in merged:
+        if a > position:
+            yield {'kind': 'equal', 'before': before[position:a], 'after': before[position:a]}
+        options = []
+        for option in variants:
+            text = before[a:b]
+            for x, y, replacement in reversed(changes[option['label']]):
+                if a <= x <= y <= b:
+                    text = text[:x - a] + replacement + text[y - a:]
+            options.append({**option, 'after': text})
+        yield {'kind': 'replace', 'before': before[a:b], 'after': options[0]['after'], 'variants': options}
+        position = b
+    if position < len(before):
+        yield {'kind': 'equal', 'before': before[position:], 'after': before[position:]}
+
+
 def review_units(before, edits, offset=0):
     """Anchor each comparison to original content, never align a whole changed paragraph."""
     originals = [(u['start'] + len(u['text']) - len(u['text'].lstrip()),
@@ -463,8 +499,13 @@ def review_units(before, edits, offset=0):
         # Decision scope is independent of PDF scope. Unchanged sentences are
         # emitted once; only adjacent changed prose shares a comparison pair.
         units = []
-        for unit in _unit_changes(old, new):
-            if units and unit['kind'] != 'equal' and units[-1]['kind'] != 'equal':
+        edit = window['edits'][0]
+        variants = edit['item'].get('comparison_options')
+        if variants:
+            start, end = edit['start'] - offset - a, edit['end'] - offset - a
+            variants = [{**o, 'after': old[:start] + o['after'] + old[end:]} for o in variants]
+        for unit in parallel_changes(old, variants) if variants else _unit_changes(old, new):
+            if not variants and units and unit['kind'] != 'equal' and units[-1]['kind'] != 'equal':
                 first, second = units[-1]['before'] + unit['before'], units[-1]['after'] + unit['after']
                 parts = _unit_spans(first) + _unit_spans(second)
                 if all(part['kind'] == 'prose' for part in parts) and not any(re.search(r'\n[ \t\r]*\n|\\par\b', visible_tex(text).strip()) for text in (first, second)):
@@ -524,14 +565,14 @@ def reverse_source_map(original, rendered, anchors=None):
     return {'source_digest': digest(source.encode('utf-8')), 'lines': lines}
 
 
-def preview(repo, state, document, id_, version, git, latexdiff, latexmk, style=None, refresh_accepted=False):
+def preview(repo, state, document, id_, version, git, latexdiff, latexmk, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None):
     # Forward and reverse fragments have separate inputs/logs and no shared
     # mutable state. Two workers bound local CPU/process use for personal review.
     with ThreadPoolExecutor(max_workers=2) as differences:
-        return _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences, style, refresh_accepted)
+        return _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences, style, refresh_accepted, choices, compare_id, request_file)
 
 
-def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences, style=None, refresh_accepted=False):
+def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None):
     review = Review(repo, state, git)
     data = review.inspect(id_, version, source=True)
     allowed = PENDING | {'accepted'} if refresh_accepted else PENDING
@@ -539,6 +580,18 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
         raise ValueError('候选或原文已经变化，请刷新原文卡片。')
     appearance, preview_macros, preview_legend = display_style(style)
     document = review.path(str(Path(document).resolve(strict=True).relative_to(review.repo)))
+    request_raw = None
+    if request_file:
+        request_path = Path(request_file)
+        expected_parent = document.parent / '.latex-build' / 'review-diff'
+        if request_path.parent.resolve() != expected_parent.resolve() or request_path.is_symlink() or request_path.is_junction() or not request_path.is_file():
+            raise ValueError('PDF 预览选择请求不属于当前文档输出目录。')
+        request_raw = request_path.read_bytes()
+        request = json.loads(request_raw)
+        choices, compare_id = request['choices'], request.get('compare_id')
+    choices = choices or {}
+    if not isinstance(choices, dict):
+        raise ValueError('PDF choices must be an ID-to-version/option object')
     relative = document.relative_to(review.repo)
     files = {}
     for folder, directories, leaves in os.walk(review.repo, followlinks=False):
@@ -575,12 +628,19 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
     scope = source_graph(relative, files)
     inputs = {'renderer': digest(Path(__file__).read_bytes()), 'document': relative.as_posix(),
               'commands': [latexdiff, *DIFF_OPTIONS, latexmk], 'style': appearance,
-              'files': {rel.as_posix(): digest(raw) for rel, raw in normalized_files.items()}, 'items': {}}
+              'files': {rel.as_posix(): digest(raw) for rel, raw in normalized_files.items()}, 'items': {}, 'compare_id': compare_id}
     for item_id, edit in review.state['edits'].items():
         if edit['status'] in PENDING and Path(edit['file']) in scope:
             review.question_links(edit.get('questions', []))
+            item = review.payload(edit)
+            choice = choices.get(item_id, {'version': edit['versions'][-1], 'option': 'A'})
+            if choice.get('version') != edit['versions'][-1]:
+                raise ValueError('PDF 预览方案已陈旧，请刷新选择。')
+            item['after'] = review.option(item, choice.get('option'))['after']
+            if item_id == compare_id:
+                item['comparison_options'] = item.get('options', [{'label': 'A', 'after': item['after'], 'reason': ''}])
             inputs['items'][item_id] = {'file': edit['file'], 'version': edit['versions'][-1],
-                                       'payload': review.payload(edit), 'deferred': edit.get('deferred', False),
+                                       'payload': item, 'option': choice['option'], 'deferred': edit.get('deferred', False),
                                        'questions': edit.get('questions', [])}
     dependency_stamps = previous_result.get('dependencies') if previous_result else None
     dependencies_unchanged = dependency_stamps is not None
@@ -601,7 +661,7 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
             raise ValueError('已有审核 PDF 不是普通文件。')
         sync = visible.with_suffix('.synctex.gz')
         if visible.is_file() and digest(visible.read_bytes()) == nav['pdf_digest'] and sync.is_file() and digest(sync.read_bytes()) == nav.get('synctex_digest'):
-            if review.state_path.read_bytes() != review.raw or any((review.repo / rel).read_bytes() != raw for rel, raw in files.items()):
+            if (request_file and request_path.read_bytes() != request_raw) or review.state_path.read_bytes() != review.raw or any((review.repo / rel).read_bytes() != raw for rel, raw in files.items()):
                 raise ValueError('审核 PDF 复用核验期间源文件或候选已变化，请重新生成。')
             return {**previous_result, 'id': id_, 'version': version, 'reused_pdf': True}
     out = Path(tempfile.mkdtemp(prefix=id_ + '-', dir=parent))
@@ -623,8 +683,9 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
         if edit['status'] not in PENDING or rel not in scope:
             continue
         text = body(files[rel].decode('utf-8-sig'))
-        item = review.payload(edit)
-        start, end = locate(text, review.live_excerpt(edit, item), item['left'], item['right'])
+        actual = review.payload(edit)
+        start, end = locate(text, review.live_excerpt(edit, actual), actual['left'], actual['right'])
+        item = inputs['items'][id__]['payload']
         grouped.setdefault(rel, []).append({'id': id__, 'start': start, 'end': end, 'item': item, 'deferred': edit.get('deferred', False)})
     header, reused_fragments = None, 0
     for rel, edits in grouped.items():
@@ -656,6 +717,9 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
                     chunks.append(new_sentence)
                     continue
                 label = ','.join(unit['ids'])
+                if unit.get('variants'):
+                    selected_label = inputs['items'][unit['ids'][0]]['option']
+                    new_sentence = next(o['after'] for o in unit['variants'] if o['label'] == selected_label)
                 name = 'item-' + label + '-' + str(n)
                 tasks = [differences.submit(delta_fragment, old, new, preamble, source_dir / relative.parent, out, name + '-' + side, latexdiff, previous_diff)
                          for old, new, side in [(old_sentence, new_sentence, 'new'), (new_sentence, old_sentence, 'old')]]
@@ -665,10 +729,22 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
                     raise errors[0]
                 header, proposed, cached_new = tasks[0].result()
                 _, old_marked, cached_old = tasks[1].result()
+                variants = unit.get('variants')
+                if variants:
+                    sections = []
+                    for index, option in enumerate(variants):
+                        variant_header, fragment, reused = delta_fragment(old_sentence, option['after'], preamble, source_dir / relative.parent, out,
+                            name + '-option-' + option['label'], latexdiff, previous_diff)
+                        header = variant_header
+                        reused_fragments += int(reused)
+                        if not option['after'].strip():
+                            fragment = r'\emph{Sentence/item deleted.}'
+                        sections.append('% TEXSCHOLAR-OPTION ' + option['label'] + '\n' + r'\par\smallskip\noindent\textbf{' + option['label'] + (' (recommended)' if index == 0 else '') + '}\\par\\nobreak\\smallskip\n' + fragment)
+                    proposed = ('\n' + r'\par\smallskip\noindent{\color[rgb]{0.65,0.65,0.65}\rule{\linewidth}{0.3pt}}\par\nobreak\smallskip' + '\n').join(sections)
                 reused_fragments += int(cached_new) + int(cached_old)
                 if unit['addition_only']:
                     old_marked = r'\emph{Addition only; no corresponding original text.}'
-                if unit['deletion_only']:
+                if unit['deletion_only'] and not variants:
                     proposed = r'\emph{Sentence/item deleted. Remaining context continues below.}'
                 # Keep changed floats next to their counterpart in this derived PDF.
                 float_pattern = r'\\begin\{(figure|table)\}(?:\[[^\]]*\])?'
@@ -682,7 +758,10 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
                     '_': r'\_', '%': r'\%', '^': r'\textasciicircum{}', '~': r'\textasciitilde{}'}[m[0]], text)
                 association = ', '.join(map(escaped, question_ids)) if question_ids else 'No linked question'
                 type_label = (r'\P{} ' if unit['paragraph_start'] else '') + unit['change_type']
-                chunks.append('\n\n% TEXSCHOLAR-SYNC-BEGIN ' + label + '\n\\par\\smallskip\\noindent\\textbf{[' + label + ']}\\enspace{\\footnotesize ' + type_label + ' | ' + association
+                selected_label = inputs['items'][unit['ids'][0]]['option']
+                option_label = ' / ' + ','.join(o['label'] for o in variants) + ' (original vs ' + selected_label + ')' if variants else ' / ' + selected_label
+                option_label += ' / v' + str(len(review.state['edits'][unit['ids'][0]]['versions']))
+                chunks.append('\n\n% TEXSCHOLAR-SYNC-BEGIN ' + label + '\n\\par\\smallskip\\noindent\\textbf{[' + label + ']}\\enspace{\\footnotesize ' + option_label + ' | ' + type_label + ' | ' + association
                               + '}\\par\\nobreak\n\\begin{codexreviewold}\n' + old_marked
                               + '\n\\end{codexreviewold}\n\\par\\nobreak\\smallskip\\noindent{\\color[rgb]{0.65,0.65,0.65}\\rule{\\linewidth}{0.3pt}}\\par\\nobreak\\smallskip\n'
                               + proposed + '\n\\par\\smallskip\n% TEXSCHOLAR-SYNC-END ' + label + '\n\n')
@@ -723,7 +802,7 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
     if Path(data['edit']['file']) not in included:
         raise ValueError('所选主文档没有包含该修改所在文件；请选择实际所属的手稿或回复信主文档。')
     shown = [id__ for id__ in dict.fromkeys(shown) if Path(review.state['edits'][id__]['file']) in included]
-    if review.state_path.read_bytes() != review.raw or any((review.repo / rel).read_bytes() != raw for rel, raw in files.items()):
+    if (request_file and request_path.read_bytes() != request_raw) or review.state_path.read_bytes() != review.raw or any((review.repo / rel).read_bytes() != raw for rel, raw in files.items()):
         raise ValueError('编译期间源码或批注发生变化；生成的快照已保留，请刷新后重新预览。')
     # Keep the viewer on one stable artifact. Failed builds never replace the
     # last successful PDF; snapshots/logs still belong to their own generation.
@@ -745,7 +824,7 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
     navigation = visible.with_suffix('.json')
     if navigation.is_symlink() or navigation.is_junction():
         raise ValueError('审核 PDF 导航元数据不能是链接。')
-    targets, reverse = {}, {}
+    targets, reverse, option_targets = {}, {}, {}
     for rel in included:
         # The recorder also lists binary figures and fonts; only TeX sources
         # can contain the review markers inserted above.
@@ -758,6 +837,20 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
         original = files[rel].decode('utf-8-sig')
         anchors = {edit['id']: body(original).count('\n', 0, edit['live_start']) + 1 for edit in grouped.get(rel, [])}
         reverse[str(tex)] = {'file': str(review.repo / rel), **reverse_source_map(original, content, anchors)}
+        review_lines, active_id, active_option = {}, None, None
+        for line, row in enumerate(content.splitlines(), 1):
+            if row.startswith('% TEXSCHOLAR-SYNC-BEGIN '):
+                active_id = row.split()[-1]
+                active_option = inputs['items'][active_id]['option']
+            if row.startswith('% TEXSCHOLAR-OPTION ') and active_id:
+                active_option = row.split()[-1]
+                option_targets.setdefault(active_id, {}).setdefault(active_option, {'file': str(tex), 'line': line + 1})
+            if active_id in shown:
+                review_lines[str(line)] = {'id': active_id, 'version': review.state['edits'][active_id]['versions'][-1],
+                                           'option': active_option}
+            if row.startswith('% TEXSCHOLAR-SYNC-END '):
+                active_id = None
+        reverse[str(tex)]['review_lines'] = review_lines
         for id__ in shown:
             marker = r'\textbf{[' + id__ + ']}'
             position = content.find(marker)
@@ -770,9 +863,10 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
     with tempfile.NamedTemporaryFile(prefix=document.stem + '-', suffix='.synctex.tmp', dir=current, delete=False) as stream:
         stream.write(sync_raw)
         temporary_sync = Path(stream.name)
-    nav = {'pdf': str(pdf), 'document': str(document), 'pdf_digest': digest(pdf_raw), 'synctex_digest': digest(sync_raw),
+    nav = {'pdf': str(pdf), 'document': str(document), 'state': review.state_rel, 'pdf_digest': digest(pdf_raw), 'synctex_digest': digest(sync_raw),
            'reverse': reverse, 'compiled_pdf': str(pdf_dir / 'review.pdf'), 'targets': targets,
-           'versions': {id__: review.state['edits'][id__]['versions'][-1] for id__ in shown}}
+           'versions': {id__: review.state['edits'][id__]['versions'][-1] for id__ in shown},
+           'options': {id__: inputs['items'][id__]['option'] for id__ in shown}, 'compare_id': compare_id, 'option_targets': option_targets}
     with tempfile.NamedTemporaryFile(prefix=document.stem + '-', suffix='.json.tmp', dir=current, delete=False) as stream:
         stream.write(json.dumps(nav, ensure_ascii=False).encode('utf-8'))
         temporary = Path(stream.name)
@@ -792,6 +886,9 @@ if __name__ == '__main__':
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--style', help='Display-only JSON preferences')
     parser.add_argument('--refresh-accepted', action='store_true', help='Refresh an existing preview after explicit author acceptance')
+    parser.add_argument('--choices', type=json.loads)
+    parser.add_argument('--compare-id')
+    parser.add_argument('--request-file')
     args = vars(parser.parse_args())
     args['id_'] = args.pop('id')
     try:

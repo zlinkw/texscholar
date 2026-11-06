@@ -75,9 +75,10 @@ function parseSync(text) {
 }
 async function locate(vscode, context, metaFile, c) {
     const meta = JSON.parse(await fs.readFile(metaFile, 'utf8'));
-    if (!reviewPath(meta.pdf) || meta.versions[c.id] !== c.version || !meta.targets[c.id])
+    if (!reviewPath(meta.pdf) || meta.versions[c.id] !== c.version || !meta.targets[c.id] || (c.option && (meta.options?.[c.id] || 'A') !== c.option && !meta.option_targets?.[c.id]?.[c.option]))
         throw new Error('审核 PDF 未包含当前候选版本，请先生成／更新。');
-    for (const file of [meta.pdf, meta.compiled_pdf, meta.targets[c.id].file]) {
+    const item = meta.option_targets?.[c.id]?.[c.option] || meta.targets[c.id];
+    for (const file of [meta.pdf, meta.compiled_pdf, item.file]) {
         const relative = path.relative(c.repo, file);
         if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep)) throw new Error('审核 PDF 导航路径越出当前项目。');
     }
@@ -91,7 +92,6 @@ async function locate(vscode, context, metaFile, c) {
     if (target.scheme !== vscode.env.uriScheme || target.authority !== context.extension.id || target.path !== '/review-pdf')
         throw new Error('审核 PDF 窗口地址无效，未打开外部地址。');
     const synctex = vscode.workspace.getConfiguration('latex-workshop').get('synctex.path', 'synctex');
-    const item = meta.targets[c.id];
     const stdout = await new Promise((resolve, reject) => cp.execFile(synctex,
         ['view', '-i', `${item.line}:0:${item.file}`, '-o', meta.compiled_pdf],
         {env: environment(), windowsHide: true, shell: false}, (error, out, err) => error ? reject(new Error(err || error.message)) : resolve(out)));
@@ -150,6 +150,10 @@ function activate(context, vscode = require('vscode')) {
         if (!Number.isInteger(line) || line < 1 || !Number.isInteger(column) || column < 0) throw new Error('源码定位坐标无效。');
         let position = q.has('source_digest') ? document.positionAt(sourcePosition(document.getText(), line, q.get('source_digest')))
             : new vscode.Position(Math.min(line - 1, document.lineCount - 1), column);
+        if (q.has('review_id')) {
+            await vscode.commands.executeCommand('localLatex.reviewWorkbench', {repo: root, owner: q.get('state'), id: q.get('review_id'), version: q.get('review_version'), option: q.get('review_option')});
+            return;
+        }
         const tab = vscode.window.tabGroups.all.flatMap(group => group.tabs).find(tab => tab.input?.uri && samePath(tab.input.uri.fsPath, file));
         const editor = await vscode.window.showTextDocument(document, {viewColumn: tab?.group.viewColumn || vscode.ViewColumn.One, preview: false});
         editor.selection = new vscode.Selection(position, position);
@@ -177,7 +181,7 @@ function activate(context, vscode = require('vscode')) {
         if (!registration || (roots.has(registration.root) && !reviewPath(pdf.fsPath))) return;
         const root = registration.root;
         if (!samePath(root, directory)) throw new Error('PDF 源码窗口登记与目录不一致。');
-        let file = source.fsPath, line = editor.selection.active.line + 1, column = editor.selection.active.character, sourceDigest;
+        let file = source.fsPath, line = editor.selection.active.line + 1, column = editor.selection.active.character, sourceDigest, reviewItem, owner;
         if (reviewPath(pdf.fsPath)) {
             const meta = await readJSON(pdf.fsPath.replace(/\.pdf$/i, '.json'));
             if (crypto.createHash('sha256').update(await fs.readFile(meta.pdf)).digest('hex') !== meta.pdf_digest)
@@ -187,6 +191,7 @@ function activate(context, vscode = require('vscode')) {
                 if (inside(path.join(root, '.latex-build', 'review-diff'), source.fsPath)) throw new Error('此审核 PDF 缺少反向源码映射，请重新生成／更新。');
                 return;
             }
+            reviewItem = entry.review_lines?.[String(line)]; owner = meta.state;
             file = entry.file; line = entry.lines[line - 1]; column = 0; sourceDigest = entry.source_digest;
         }
         if (!inside(root, file)) throw new Error('PDF 返回的源码位置越出论文目录。');
@@ -194,6 +199,10 @@ function activate(context, vscode = require('vscode')) {
         const query = new URLSearchParams(target.query);
         query.set('file', file); query.set('line', line); query.set('column', column);
         if (sourceDigest) query.set('source_digest', sourceDigest);
+        if (reviewItem && owner) {
+            query.set('review_id', reviewItem.id); query.set('review_version', reviewItem.version);
+            query.set('review_option', reviewItem.option); query.set('state', owner);
+        }
         if (roots.has(root)) await openSource(target.with({query: query.toString()}));
         else if (!await vscode.env.openExternal(target.with({query: query.toString()}))) throw new Error('未能返回原论文编辑窗口。');
         const tab = vscode.window.tabGroups.all.flatMap(group => group.tabs).find(tab => openedTextTabs.has(tab) && tab.input?.uri && samePath(tab.input.uri.fsPath, source.fsPath));

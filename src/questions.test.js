@@ -37,13 +37,13 @@ test('AI-authored explicit question markers are recognized without guessing ques
     assert.equal(warnings.length, 2, 'two real original matches remain ambiguous');
 });
 
-test('association warning copies reusable global-skill rules only after the author clicks', async () => {
+test('association warning copies plugin-owned task rules without modifying skills, only after the author clicks', async () => {
     let copied, choices;
     const api = {window: {showWarningMessage: async (...args) => {choices = args; return '一键复制给 AI';}},
         env: {clipboard: {writeText: async text => {copied = text;}}}};
     await notifyProblem(api, '尚未关联');
     assert(choices.includes('查看规则'));
-    assert(copied.includes('全局科研写作 SKILL'));
+    assert(copied.includes('不要修改全局科研 SKILL'));
     assert(copied.includes('link-questions'));
     assert(copied.includes('不能按候选编号'));
     assert(copied.includes('最多一个自然段'));

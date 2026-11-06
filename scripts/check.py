@@ -9,9 +9,9 @@ import uuid
 ROOT = Path(__file__).resolve().parent.parent
 GROUPS = {
     'editor': ['core.test.js', 'extension.test.js', 'navigation.test.js', 'chktex_actions.test.js',
-               'inline_review.test.js', 'candidate_panel.test.js', 'setup.test.js', 'questions.test.js', 'writing.test.js', 'pdf_navigation.test.js', 'menu_commands.test.js'],
+               'inline_review.test.js', 'candidate_panel.test.js', 'review_workbench.test.js', 'setup.test.js', 'questions.test.js', 'writing.test.js', 'pdf_navigation.test.js', 'menu_commands.test.js'],
     'backup': ['backup.test.js'],
-    'backend': ['native_review_test', 'source_review_test'],
+    'backend': ['native_review_test', 'source_review_test', 'mcp_test'],
     'pdf': ['review_pdf_test.ReviewUnits', 'review_pdf_test.ReviewPDF'],
     'translation': ['review_translate_test'],
 }

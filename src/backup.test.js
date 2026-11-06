@@ -48,6 +48,14 @@ async function reviewFixture(label, dependency = false) {
     const status = async () => JSON.parse(await run(PYTHON,[...common,'status'],f.root));
     const backend = async (args,input) => {
         const state = await status();
+        // Fixtures exercise the current public group interface, including when
+        // only one alternative is needed to isolate a backup boundary.
+        if (args[0] === 'propose' || args[0] === 'rework') {
+            input = {...input, options: [{label:'A', after:input.after, reason:'隔离备份测试'}], fewer_options_reason:'此用例只检查备份边界'};
+            args = [args[0] === 'propose' ? 'propose-options' : 'rework-options', ...args.slice(1)];
+            if (args[0] === 'rework-options') args.push('--version', state.edits[args[args.indexOf('--id') + 1]].versions.at(-1));
+        }
+        if (args[0] === 'decide' && args.includes('--accept')) args = [...args, '--option', 'A'];
         return JSON.parse(await run(PYTHON,[...common,'--apply','--expect',state.sha256,...args],f.root,input===undefined?undefined:JSON.stringify(input)));
     };
     await backend(['begin','--round','round-1','--files','main.tex','reply.tex']);

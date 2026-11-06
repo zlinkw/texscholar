@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.8.9",
+  "version": "0.9.0",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -244,7 +244,7 @@
       },
       {
         "command": "localLatex.inlineEditCandidate",
-        "title": "编辑候选／划词精确批注",
+        "title": "在固定审核页比较／编辑候选与精确批注",
         "category": "LaTeX 审核",
         "icon": "$(edit)"
       },
@@ -363,6 +363,29 @@
         "title": "定位到审核 PDF 中的当前修改",
         "category": "TeXScholar",
         "icon": "$(location)"
+      },
+      {
+        "command": "localLatex.reviewWorkbench",
+        "title": "打开论文审核工作台（三方案对照）",
+        "category": "TeXScholar",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "localLatex.copyReviewContract",
+        "title": "复制本次 AI 三方案协作协议（不修改 SKILL）",
+        "category": "TeXScholar"
+      },
+      {
+        "command": "localLatex.connectCodex",
+        "title": "连接 Codex（内置本地 MCP）",
+        "category": "TeXScholar",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "localLatex.startPaperTask",
+        "title": "开始 AI 论文任务（准备首条消息，不自动发送）",
+        "category": "TeXScholar",
+        "icon": "$(sparkle)"
       }
     ],
     "submenus": [
@@ -472,7 +495,7 @@
       ],
       "editor/title": [
         {
-          "command": "localLatex.inlineReview",
+          "command": "localLatex.reviewWorkbench",
           "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
           "group": "navigation@90"
         },
@@ -638,7 +661,7 @@
           "group": "4_finish@10"
         },
         {
-          "command": "localLatex.inlineReview",
+          "command": "localLatex.reviewWorkbench",
           "when": "resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
           "group": "1_review@10"
         },
@@ -671,6 +694,18 @@
           "command": "localLatex.inlineReopenPreview",
           "when": "editorLangId == latex && isWorkspaceTrusted",
           "group": "navigation@8"
+        },
+        {
+          "command": "localLatex.inlineReview",
+          "group": "1_review@15"
+        },
+        {
+          "command": "localLatex.startPaperTask",
+          "group": "3_codex@1"
+        },
+        {
+          "command": "localLatex.connectCodex",
+          "group": "3_codex@2"
         }
       ],
       "bookmarks.editor.context": [
@@ -731,8 +766,20 @@
       "properties": {
         "localLatex.translation.provider": {
           "type": "string",
-          "enum": ["google", "googleapi", "bing", "deepl", "transmart"],
-          "enumDescriptions": ["Google 网页入口，采用 Translate for Zotero 同款 gtx 请求方式", "Google 的 googleapis 免密钥入口，与 Zotero 一样独立选择；并非 Google Cloud 密钥 API", "微软 Edge 免密钥接口，采用 Translate for Zotero 同款请求头；仍可能限流或变化", "DeepL 免密钥网页接口", "腾讯 TranSmart 免密钥网页接口"],
+          "enum": [
+            "google",
+            "googleapi",
+            "bing",
+            "deepl",
+            "transmart"
+          ],
+          "enumDescriptions": [
+            "Google 网页入口，采用 Translate for Zotero 同款 gtx 请求方式",
+            "Google 的 googleapis 免密钥入口，与 Zotero 一样独立选择；并非 Google Cloud 密钥 API",
+            "微软 Edge 免密钥接口，采用 Translate for Zotero 同款请求头；仍可能限流或变化",
+            "DeepL 免密钥网页接口",
+            "腾讯 TranSmart 免密钥网页接口"
+          ],
           "default": "bing",
           "scope": "window",
           "description": "审核卡片翻译来源，默认 Bing。自动翻译开启时，仅翻译当前编辑区可见的待审卡片；关闭后手动点击翻译。Google 两个入口读取当前系统代理；其他来源保留 VS Code 明确代理选择，未指定时跟随系统。失败不自动重试或换源，不写入论文或审核 PDF。"
@@ -749,35 +796,58 @@
           "description": "接收候选后，在后台更新已经生成的审核 PDF；连续接收合并待更新请求。不阻塞继续审核，不在打开卡片、保存候选或批注时编译。关闭后手动更新。"
         },
         "localLatex.reviewStyle.removedColor": {
-          "type": "string", "default": "#d32f2f", "pattern": "^#[0-9a-fA-F]{6}$",
+          "type": "string",
+          "default": "#d32f2f",
+          "pattern": "^#[0-9a-fA-F]{6}$",
           "description": "原文被删除或替换部分的显示颜色（#RRGGBB）。仅用于审核卡片、源码提示和审核 PDF，不向正式论文插入颜色命令。"
         },
         "localLatex.reviewStyle.addedColor": {
-          "type": "string", "default": "#1565c0", "pattern": "^#[0-9a-fA-F]{6}$",
+          "type": "string",
+          "default": "#1565c0",
+          "pattern": "^#[0-9a-fA-F]{6}$",
           "description": "候选新增或改写部分的显示颜色（#RRGGBB），只标实际变化词。"
         },
         "localLatex.reviewStyle.unchangedColor": {
-          "type": "string", "default": "", "pattern": "^(|#[0-9a-fA-F]{6})$",
+          "type": "string",
+          "default": "",
+          "pattern": "^(|#[0-9a-fA-F]{6})$",
           "description": "未修改文字的显示颜色；留空跟随原有主题和论文颜色。仅影响审核显示，不修改正式源码。"
         },
         "localLatex.reviewStyle.strikeDeleted": {
-          "type": "boolean", "default": true,
+          "type": "boolean",
+          "default": true,
           "description": "为删除或替换的原文显示删除线；审核 PDF 的数学内容仍可仅标色，以保持公式结构。"
         },
         "localLatex.reviewStyle.cardLayout": {
-          "type": "string", "enum": ["compact", "comfortable"], "enumDescriptions": ["紧凑：原文和候选紧邻换行", "宽松：原文和候选之间增加段落间距"],
-          "default": "compact", "description": "原生审核卡片内部布局。外框宽度、行号区域和字体由 VS Code 控制，不修改原生界面。"
+          "type": "string",
+          "enum": [
+            "compact",
+            "comfortable"
+          ],
+          "enumDescriptions": [
+            "紧凑：原文和候选紧邻换行",
+            "宽松：原文和候选之间增加段落间距"
+          ],
+          "default": "compact",
+          "description": "原生审核卡片内部布局。外框宽度、行号区域和字体由 VS Code 控制，不修改原生界面。"
         },
         "localLatex.reviewStyle.showLegend": {
-          "type": "boolean", "default": true,
+          "type": "boolean",
+          "default": true,
           "description": "在卡片和审核 PDF 中显示样式图例。关闭仅隐藏图例，不隐藏审核内容或操作。"
         },
         "localLatex.reviewStyle.candidateFontSize": {
-          "type": "number", "default": 16, "minimum": 10, "maximum": 32,
+          "type": "number",
+          "default": 16,
+          "minimum": 10,
+          "maximum": 32,
           "description": "候选编辑／精准批注面板的文字大小（像素）。不改变论文字号或原生评论外框。"
         },
         "localLatex.reviewStyle.candidateLineHeight": {
-          "type": "number", "default": 1.5, "minimum": 1, "maximum": 2.5,
+          "type": "number",
+          "default": 1.5,
+          "minimum": 1,
+          "maximum": 2.5,
           "description": "候选编辑／精准批注面板的行高倍数。长内容继续自动换行。"
         },
         "localLatex.texFmtPath": {
@@ -834,6 +904,11 @@
           "default": "rg",
           "scope": "machine",
           "description": "供 Todo Tree 使用的本机 ripgrep；优先稳定安装位置，Mac 可用 Homebrew 安装，不固定到版本化的 VS Code 目录。"
+        },
+        "localLatex.reviewPDF.followPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "固定审核页切换预览方案或保存当前预览候选后，后台合并请求更新同一完整审核 PDF；关闭后需手动更新。输入批注、翻译和展开内容不编译。接收后的更新由 autoUpdateAfterAccept 独立控制。"
         }
       }
     },
@@ -936,7 +1011,7 @@
       },
       {
         "key": "ctrl+alt+r",
-        "command": "localLatex.inlineReview",
+        "command": "localLatex.reviewWorkbench",
         "when": "editorTextFocus && resourceScheme == file && editorLangId == latex && isWorkspaceTrusted",
         "mac": "cmd+alt+r"
       },

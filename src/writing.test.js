@@ -14,16 +14,19 @@ test('writing context uses installed guide and current source, adds both to Code
             getCommands: async () => ['chatgpt.addFileToThread'], executeCommand: async (...args) => calls.push(args)}};
     await activate({subscriptions: [], globalState: {get: (_, fallback) => fallback}}, vscode).ready;
     await handlers.get('localLatex.addWritingContext')();
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     assert(calls.every(x => x[0] === 'chatgpt.addFileToThread'));
     assert(calls[0][1].fsPath.endsWith('writing-guide.md'));
-    assert.equal(calls[1][1], source);
+    assert(calls[1][1].fsPath.endsWith('collaboration-guide.md'));
+    assert.equal(calls[2][1], source);
     assert(messages[0].includes('自行发送'));
 });
 
 test('AI setup prompt is portable, complete and reuses one configuration/shortcut authority', async () => {
     const prompt = await buildPrompt();
     assert(prompt.includes('全局 SKILL'));
+    assert(prompt.includes('不要修改或安装全局 SKILL'));
+    assert(prompt.includes('propose-options'));
     assert(prompt.includes('先检测系统'));
     assert(prompt.includes('不是让我反复手动安装技能的教程'));
     for (let n = 1; n <= 40; n++) assert(prompt.includes('\n' + n + '. '), 'missing approved migration group ' + n);

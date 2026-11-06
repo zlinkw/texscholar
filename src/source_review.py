@@ -371,7 +371,45 @@ class Review:
         return updated
 
     def payload(self, edit):
-        return json.loads(self.contents(edit["versions"][-1], "span.json"))
+        item = json.loads(self.contents(edit["versions"][-1], "span.json"))
+        if edit.get('accepted_option'):
+            item['after'] = self.option(item, edit['accepted_option'])['after']
+        return item
+
+    @staticmethod
+    def option(item, label):
+        options = item.get('options', [{'label': 'A', 'after': item['after'], 'reason': '已有单方案'}])
+        for option in options:
+            if option['label'] == label:
+                return option
+        raise Conflict('Unknown candidate option: ' + str(label))
+
+    @staticmethod
+    def validate_options(spec, required=False):
+        if 'options' not in spec:
+            if required:
+                raise Conflict('Provide ranked options A/B/C in one request; read collaboration-contract first')
+            return None
+        options = spec['options']
+        if not isinstance(options, list) or not 1 <= len(options) <= 3:
+            raise Conflict('Provide one to three ranked options')
+        if len(options) < 3 and not str(spec.get('fewer_options_reason', '')).strip():
+            raise Conflict('Fewer than three options requires fewer_options_reason; do not invent filler variants')
+        for i, option in enumerate(options):
+            if not isinstance(option, dict) or option.get('label') != 'ABC'[i] or not isinstance(option.get('after'), str) or not isinstance(option.get('reason'), str) or not option['reason'].strip():
+                raise Conflict('Each ranked option needs sequential label A/B/C, after text and a reason')
+        if len({o['after'] for o in options}) != len(options):
+            raise Conflict('Options must contain distinct text, not duplicate candidates')
+        return copy.deepcopy(options)
+
+    def propose_options(self, spec, id_=None, version=None):
+        self.validate_options(spec, required=True)
+        if id_:
+            edit = self.state['edits'].get(id_)
+            if not edit or edit['versions'][-1] != version:
+                raise Conflict('Displayed candidate is stale; reread before replacing options')
+        spec = {**spec, 'deferred': True}
+        return self.propose(spec, id_)
 
     @staticmethod
     def live_excerpt(edit, item):
@@ -533,12 +571,17 @@ class Review:
                 raise Conflict("新候选必须 deferred=true；接收后才替换正文。旧记录仍可读取。")
         text = self.read(rel)
         a, b = locate(text, before, left, right)
-        after = spec["after"]
-        if before == after or (rework and old["after"] == after):
+        options = self.validate_options(spec)
+        after = options[0]['after'] if options else spec["after"]
+        if (not options and (before == after or (rework and old["after"] == after))) or (options and all(o['after'] == original for o in options)):
             raise Conflict("No content change")
+        if rework and options and options == old.get('options'):
+            raise Conflict('No content change')
         if self.storage == 'files' and (not rework or edit.get('scope_policy') == 'single-unit'):
             validate_review_unit(original)
             validate_review_unit(after)
+            for option in options or []:
+                validate_review_unit(option['after'])
         # Refuse overlap with another unresolved edit, including insertion boundaries.
         for id_, other in edits.items():
             if id_ == rework or other["file"] != rel or other["status"] not in PENDING:
@@ -574,6 +617,9 @@ class Review:
                 edit["deferred"] = True
             edits[id_] = edit
         item = {"before": original, "after": after, "left": text[max(0, a - 120):a], "right": text[b:b + 120]}
+        if options:
+            item['options'] = options
+            item['fewer_options_reason'] = spec.get('fewer_options_reason', '')
         if self.storage == 'files':
             item['batch'] = self.state['session']
         commit = self.snapshot({"original.tex": original.encode("utf-8"), "candidate.tex": after.encode("utf-8"),
@@ -609,7 +655,7 @@ class Review:
                 self.state["edits"][k]["freshness"] = "needs-recheck"
             seen |= more
 
-    def decide(self, accept, reject, expected_versions=None):
+    def decide(self, accept, reject, expected_versions=None, option=None):
         self.assert_ready()
         if not accept and not reject or set(accept) & set(reject):
             raise Conflict("Specify distinct exact IDs")
@@ -625,6 +671,12 @@ class Review:
             text = updated.get(rel, self.read(rel))
             item = self.payload(edit)
             a, b = locate(text, self.live_excerpt(edit, item), item["left"], item["right"])
+            if id_ in accept:
+                if item.get('options') and option is None:
+                    raise Conflict('Choose an explicit option A/B/C before accepting')
+                if option is not None:
+                    item['after'] = self.option(item, option)['after']
+                    edit['accepted_option'] = option
             if id_ in reject:
                 if not edit.get("deferred", False):
                     updated[rel] = text[:a] + item["before"] + text[b:]
@@ -659,6 +711,12 @@ class Review:
             raise Conflict("Version does not belong to the selected review item")
         result = {"id": id_, "edit": copy.deepcopy(edit), "version": version, "sha256": digest(self.raw),
                   "original": self.contents(version, "original.tex"), "candidate": self.contents(version, "candidate.tex")}
+        shown = json.loads(self.contents(version, 'span.json'))
+        result['options'] = [{**o, 'changes': word_changes(result['original'], o['after'])} for o in
+                             shown.get('options', [{'label': 'A', 'after': result['candidate'], 'reason': '已有单方案；可由 AI 重新生成三方案'}])]
+        result['fewer_options_reason'] = shown.get('fewer_options_reason', '')
+        if edit.get('accepted_option'):
+            result['candidate'] = self.option(shown, edit['accepted_option'])['after']
         obj = self.payload(edit)
         try:
             locate(self.read(edit["file"]), self.live_excerpt(edit, obj), obj["left"], obj["right"])
@@ -689,7 +747,11 @@ class Review:
         side = spec["side"]
         if side not in ("original", "candidate"):
             raise Conflict("Annotation side must be original or candidate")
-        selected = self.contents(spec["version"], side + ".tex")
+        option = spec.get('option')
+        payload = self.payload(edit)
+        if side == 'candidate' and payload.get('options') and option is None:
+            raise Conflict('Candidate annotations must name their exact option')
+        selected = self.option(payload, option)['after'] if side == 'candidate' and option else self.contents(spec["version"], side + ".tex")
         start, end = spec["start"], spec["end"]
         if type(start) is not int or type(end) is not int or not 0 <= start <= end <= len(selected):
             raise Conflict("Invalid Unicode code-point selection offsets")
@@ -703,6 +765,9 @@ class Review:
         locate(self.read(edit["file"]), self.live_excerpt(edit, obj), obj["left"], obj["right"])
         request = {"id": uuid.uuid4().hex[:12], "text": text.strip(), "status": "open", "side": side,
                    "version": spec["version"], "start": start, "end": end, "quote": spec["quote"]}
+        if option:
+            self.option(payload, option)
+            request['option'] = option
         edit.setdefault("requests", []).append(request)
         edit["status"] = "rework"
         return {}, {"id": id_, "request": request, "rewritten": False}
@@ -849,12 +914,15 @@ class Review:
                 version = note['version']
                 if version not in edit['versions']:
                     raise Conflict('Feedback refers to a missing candidate generation; preserve it for reconciliation')
-                key = (id_, version)
+                option = note.get('option')
+                key = (id_, version, option)
                 if key not in groups:
                     groups[key] = {'id': id_, 'file': edit['file'], 'version': version,
                                    'current_version': edit['versions'][-1],
                                    'original': self.contents(version, 'original.tex'),
-                                   'candidate': self.contents(version, 'candidate.tex'), 'requests': []}
+                                   'candidate': self.option(json.loads(self.contents(version, 'span.json')), option or 'A')['after'],
+                                   'option': option, 'requests': []}
+                    groups[key]['options'] = json.loads(self.contents(version, 'span.json')).get('options')
                 groups[key]['requests'].append(copy.deepcopy(note))
         if self.state_path.read_bytes() != self.raw:
             raise Conflict('Concurrent review modification while reading feedback context')
@@ -896,9 +964,15 @@ def main():
     p.add_argument("--round", required=True)
     p.add_argument("--files", nargs="+", required=True)
     p.add_argument("--submission")
-    sub.add_parser("propose", help="UTF-8 JSON spec on stdin")
-    p = sub.add_parser("rework", help="UTF-8 JSON {after,...} on stdin")
-    p.add_argument("--id", required=True)
+    sub.add_parser('collaboration-contract', help='Read the current plugin-owned AI contract; no SKILL edits')
+    sub.add_parser('propose-options', help='Ranked options A/B/C in one UTF-8 JSON spec')
+    p = sub.add_parser('rework-options', help='Replace an unresolved group with ranked A/B/C options')
+    p.add_argument('--id', required=True)
+    p.add_argument('--version', required=True)
+    p = sub.add_parser('edit-option', help='Save a manually edited option, preserving other alternatives')
+    p.add_argument('--id', required=True)
+    p.add_argument('--version', required=True)
+    p.add_argument('--option', required=True, choices=list('ABC'))
     p = sub.add_parser('link-questions', help='Update only verified questions metadata; UTF-8 JSON {questions:[...]} on stdin')
     p.add_argument('--id', required=True)
     p.add_argument('--version', required=True)
@@ -907,6 +981,7 @@ def main():
     p.add_argument("--accept", nargs="*", default=[])
     p.add_argument("--reject", nargs="*", default=[])
     p.add_argument("--version", help="Displayed immutable version, for a single-item GUI decision")
+    p.add_argument('--option', choices=list('ABC'), help='Explicit candidate option to accept')
     sub.add_parser("status")
     sub.add_parser("cards", help="Read pending UI cards with shared live-source text; no PDF or writes")
     sub.add_parser('feedback-context', help='Read open notes with their exact original/candidate generation; no writes')
@@ -931,7 +1006,10 @@ def main():
 
 
 def dispatch(r, args):
-    if args.command == "status":
+    if args.command == 'collaboration-contract':
+        result = {'protocol': 'ranked-options-v1', 'guide': str(Path(__file__).with_name('collaboration-guide.md')),
+                  'rules': Path(__file__).with_name('collaboration-guide.md').read_text(encoding='utf-8')}
+    elif args.command == "status":
         result = r.status()
     elif args.command == "cards":
         result = r.cards()
@@ -953,13 +1031,27 @@ def dispatch(r, args):
             updated, result = r.begin(args.round, args.files, args.submission)
         elif args.command == "migrate":
             updated, result = r.migrate_storage(args.defer_pending)
-        elif args.command in ("propose", "rework"):
+        elif args.command in ('propose-options', 'rework-options', 'edit-option'):
             spec = json.loads(sys.stdin.read())
-            if args.command == "propose":
+            if args.command in ('rework-options', 'edit-option'):
+                edit = r.state['edits'].get(args.id)
+                if not edit or edit['versions'][-1] != args.version:
+                    raise Conflict('Displayed candidate is stale; reread before replacing options')
+            if args.command == 'edit-option':
+                old = r.payload(edit)
+                options = copy.deepcopy(old.get('options', [{'label': 'A', 'after': old['after'], 'reason': '已有单方案'}]))
+                selected = next((o for o in options if o['label'] == args.option), None)
+                if selected is None or not isinstance(spec.get('after'), str):
+                    raise Conflict('Manual edit needs an existing option and after text')
+                selected['after'] = spec['after']
+                spec = {'options': options, 'fewer_options_reason': (old.get('fewer_options_reason') or '手动编辑已有候选，不自动生成备选') if len(options) < 3 else ''}
+            if args.command in ('propose-options', 'rework-options'):
+                r.validate_options(spec, required=True)
+            if args.command == 'propose-options':
                 spec.setdefault("deferred", True)
                 if spec['deferred'] is False:
                     raise Conflict("新候选必须 deferred=true；接收后才替换正文。旧记录仍可读取。")
-            updated, result = r.propose(spec, getattr(args, "id", None))
+            updated, result = r.propose(spec, args.id) if args.command == 'edit-option' else r.propose_options(spec, getattr(args, 'id', None), getattr(args, 'version', None))
         elif args.command == "feedback":
             updated, result = r.feedback(json.loads(sys.stdin.read()))
         elif args.command == 'link-questions':
@@ -969,10 +1061,12 @@ def dispatch(r, args):
             ids = args.accept + args.reject
             if args.version and len(ids) != 1:
                 raise Conflict("--version requires exactly one decision ID")
-            updated, result = r.decide(args.accept, args.reject, {ids[0]: args.version} if args.version else None)
+            if args.option and len(args.accept) != 1:
+                raise Conflict('--option requires exactly one accepted ID')
+            updated, result = r.decide(args.accept, args.reject, {ids[0]: args.version} if args.version else None, args.option)
         if args.apply:
             r.persist(updated, args.expect)
-            if args.command in ('feedback', 'rework'):
+            if args.command in ('feedback', 'rework-options', 'edit-option'):
                 result['card'] = r.inspect(result['id'], source=True)
                 result['owner_text'] = r.encode(r.embedded()).decode('utf-8-sig')
         result.update({"applied": args.apply, "expected_sha256": digest(r.raw)})

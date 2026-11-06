@@ -5,6 +5,10 @@ function activate(context, vscode = require('vscode')) {
     const guide = vscode.Uri.file(path.join(__dirname, 'writing-guide.md'));
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.openWritingGuide', async () =>
         vscode.commands.executeCommand('markdown.showPreview', guide)));
+    context.subscriptions.push(vscode.commands.registerCommand('localLatex.copyReviewContract', async () => {
+        await vscode.env.clipboard.writeText(await require('node:fs/promises').readFile(path.join(__dirname, 'collaboration-guide.md'), 'utf8'));
+        vscode.window.showInformationMessage('已复制本次 AI 三方案协作协议，不要求改全局 SKILL；请粘贴到论文会话。');
+    }));
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.addWritingContext', async () => {
         try {
             const editor = vscode.window.activeTextEditor;
@@ -13,6 +17,7 @@ function activate(context, vscode = require('vscode')) {
             if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread'))
                 throw new Error('未找到 Codex 的添加上下文入口；可先打开内置写作指南，不会启动其他 AI。');
             await vscode.commands.executeCommand('chatgpt.addFileToThread', guide);
+            await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(path.join(__dirname, 'collaboration-guide.md')));
             await vscode.commands.executeCommand('chatgpt.addFileToThread', editor.document.uri);
             vscode.window.showInformationMessage('写作规则与当前源文件已加入 Codex 输入区；请说明写作目标后自行发送。没有生成论文文件或自动接收修改。');
         } catch (error) {vscode.window.showErrorMessage(error.message);}

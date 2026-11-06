@@ -14,11 +14,12 @@ async function buildPrompt() {
         .filter(([key]) => key === 'localLatex.configurationProfile' || key.startsWith('localLatex.review') || key.startsWith('localLatex.translation'))
         .map(([key, value]) => [key, value.default]));
     return [
-        '# 请配置 TeXScholar 本地科研写作，并合并到你的全局 SKILL',
+        '# 请配置 TeXScholar 本地科研写作，并读取插件任务级协作协议',
         '',
         '这是一项实际配置请求，不是让我反复手动安装技能的教程。请先读取当前电脑、已安装插件、全局 AGENTS 和相关 SKILL，再执行必要且获准的配置。不得仅口头承诺“已经记住”。',
-        '适用于论文撰写、修改、回复信与作者审核。先把下方协作规则去重合并到你实际使用的全局科研写作 SKILL，按需拆到其已有引用模块，保持自动识别自然语言任务；不要要求作者记住技能名。不得覆盖现有科学规则、安全规则或其他任务的技能。若当前助手没有全局 SKILL 写入能力，请明确限制，不假称已保存，也不擅自在论文项目新建一套 Markdown 管理文件。',
-        '合并后重新读取实际修改位置，报告全局 SKILL 的真实位置与改动；只有实际完成后，作者才应在插件中选择“已配置，不再提示”。复制本提示词不等于已经配置。',
+        '适用于论文撰写、修改、回复信与作者审核。不要修改或安装全局 SKILL，不覆盖现有科学规则、安全规则和其他任务的技能；本次协作规则由插件内置资源维护。每次写作或返修先读取当前 collaboration-guide.md 与 source_review.py collaboration-contract；从插件加入上下文时会再次附带。不得在论文项目新建 Markdown 管理文件。',
+        '实际核对环境和协作接口后再报告结果，作者可选择“已配置，不再提示”。复制不等于配置完成，也不能保证任意新聊天自动获得协议；新会话使用插件“将写作规则与当前源文件加入 Codex”或复制三方案协议。',
+        '插件以 VSIX 安装，MCP 是内置本地通信入口，不是另一个产品。通过“连接 Codex”只添加插件专属 MCP 连接，重启 Codex 后新会话可发现工具及初始化指引。论文任务先调用 read_context，随后 propose_options/rework_options；AI 可直接读取 read_feedback 获取完整原文、备选和准确选区，不必依赖请求快照。元数据关联走 link_questions。作者接收和 Git 仍保留原有界面操作。可用“开始 AI 论文任务”准备带协议的首条消息，再由作者发送。不得修改其他 MCP、模型、代理或凭据。',
         '',
         '## 新电脑迁移与配置范围（1～40）',
         '以下为可迁移行为，不含任何旧电脑绝对路径、完整 PATH、代理、凭据、账号、论文路径或 Git 远端。不得凭插件公开仓库地址创建或连接论文备份仓库。',
@@ -32,7 +33,7 @@ async function buildPrompt() {
         '8. 保留增量缓存，关闭自动清理和自动清理后重试；不能为排错擅自删除缓存。',
         '9. 正式 PDF 使用 Workshop 右侧预览，按页宽、纵向连续、单页显示。',
         '10. PDF 双击反向定位；源码右键或快捷键正向定位；启用 SyncTeX。',
-        '11. 首次手动生成完整审核 PDF，使用 VS Code 官方浮动编辑器窗口双屏查看，与源码共享工作区和 Workshop 实例，不另启独立工作区；后续更新同一文件。接收候选后默认后台更新已有审核 PDF，用户可在插件设置关闭；打开卡片、保存候选和添加批注不触发编译。',
+        '11. 完整审核 PDF 使用官方浮动编辑器窗口双屏查看，共享工作区和 Workshop 实例，不另启独立工作区；后续更新同一文件。固定审核页默认自动跟随预览方案和已保存的当前预览候选，可关闭 followPreview；接收后自动更新已有 PDF 可独立关闭。打开卡片、翻译和添加批注不编译。',
         '12. TeX 子进程设置 LC_ALL=C、LC_CTYPE=C、LANG=C；中文源码、JSON、日志和工具通信显式 UTF-8，不用 Windows ANSI/GBK 读写论文。',
         '13. LaTeX 编辑区约 110 列视觉换行，不把视觉折行写成源码换行。',
         '14. LaTeX 专用字号 16、行高 26、关闭缩略图、开启顶部固定章节提示；不覆盖其他语言或 Typst 的显示偏好。',
@@ -54,7 +55,7 @@ async function buildPrompt() {
         '30. 可选英文转简体中文悬浮翻译，多行合并、最长 1000 字符；明确外部供应商可能接收文字，不自动上传论文。',
         '31. 使用官方简体中文语言包；语言切换或原生布局需用户重载／操作时明确告知。',
         '32. .tex 项目自动显示行侧审核入口和底部评论；无唯一审核状态时不擅自初始化论文；代码项目和纯 Typst 项目不触发。',
-        '33. 候选与正文分离，支持手动编辑候选、精确批注、一键接收／拒绝，接收后自动打开下一待审项；原生卡片选区不能被扩展自动获取，精准候选选区走专用面板。',
+        '33. 一个固定论文审核标签页跨正文／回复信复用。原文一次，A/B/C 按推荐排序并排；正常字号、窄屏上下排列，可展开单方案。选中预览不是接收；接收具体方案后转下一项。精确划词批注与编辑在固定页完成；不声称获取原生评论卡片选区。',
         '34. 完整论文审核 PDF 仅重复实际修改句，原文在上、灰线、候选在下，仅变化词标记；真实段落边界有类型和 ¶，公式、图注、表注独立处理。',
         '35. AI 科研要求、段落逻辑和交接状态进入规范源码注释块；机器记录不得进入正文候选或 ChkTeX 正文检查。',
         '36. 返修上下文含编号、文件、原文、候选和精确选区；批注加入 Codex 输入框但不自动发送，保存批注不自动启动 AI。',
@@ -69,7 +70,7 @@ async function buildPrompt() {
         '不为安装插件创建论文仓库、接收候选、迁移旧审核块或清理真实论文。新论文的本地／私有远端初始化另按项目授权：先识别源码、图表、模板、参考文献，再建立忽略规则，排除 .codex-review、.latex-build、运行缓存和临时审核预览。已跟踪的生成文件不能仅靠 .gitignore 修复，也不能擅自撤销暂存。',
         '只有需要验证新机器工具链时使用隔离最小样例核验正文、文献及 SyncTeX；不拿真实论文做安装测试。报告真实通过／失败和需要用户登录、重载或手动布局的部分。缺少权限、网络或 Mac 实机时如实说明，不假称已完成。',
         '审核颜色和布局只是插件的显示偏好，不能变成 AI 向正式 .tex 插入颜色宏、删除线或改写候选的指令。最终投稿标记遵循作者和期刊规则，与审核显示样式分开。',
-        '卡片中文翻译默认开启，默认来源 Bing，可在 localLatex.translation.autoTranslate 关闭、在 localLatex.translation.provider 换源。仅对当前编辑区可见的待审卡片，后台逐项翻译原文、候选和关联问题，不预翻译整个项目、不自动重试或换源。关闭自动翻译后保留手动入口；译文可随时收起。数学和引用标记尽量还原。译文不写入正文、候选、审核状态或 Git，也不代表科学核验。关联原始问题默认展开，标题行使用纯文本图例且不重复显示编号。',
+        '卡片中文翻译默认开启，默认来源 Bing，可在 localLatex.translation.autoTranslate 关闭、在 localLatex.translation.provider 换源。仅对当前编辑区可见的待审卡片，后台逐项翻译原文、候选和关联问题，不预翻译整个项目、不自动重试或换源。关闭自动翻译后保留手动入口；译文可随时收起。数学和引用标记尽量还原。译文不写入正文、候选、审核状态或 Git，也不代表科学核验。关联原始问题默认展开，审核界面不展示重复图例，也不重复显示编号。',
         '',
         '## 配套扩展（按功能选择，缺失才安装）',
         ...RECOMMENDED.map(([id, purpose]) => '- ' + id + '：' + purpose),
@@ -84,8 +85,9 @@ async function buildPrompt() {
         '## 插件贡献的快捷键（勿重复写入用户配置）',
         JSON.stringify(metadata.contributes.keybindings, null, 2),
         '',
-        '## 需合并到全局科研写作 SKILL 的协作规则',
-        '将以下规则与现有技能去重，保留作者规则优先级。相对指南链接应改为按需读取当前实际安装的 TeXScholar 资源，不复制成本机绝对路径或旧版本固定目录；工具参数先读取当前 --help，不凭聊天记忆。',
+        '## 插件维护的任务级协作规则（不要修改全局 SKILL）',
+        '读取当前实际安装的资源和 --help，不复制成本机绝对路径或旧版固定目录。每个位置一个编号，一次通过 propose-options/rework-options 提交排序的 A/B/C。',
+        await fs.readFile(path.join(__dirname, 'collaboration-guide.md'), 'utf8'),
         guide,
         '',
         '## 原始审稿问题关联的精确接口与示例',
@@ -97,7 +99,7 @@ function activate(context, vscode) {
     let announced = false;
     const copy = async () => {
         await vscode.env.clipboard.writeText(await buildPrompt());
-        vscode.window.showInformationMessage('已复制本地配置与全局 SKILL 协作提示词。交给 AI 实际完成后，再标记“已配置，不再提示”。');
+        vscode.window.showInformationMessage('已复制本地配置与任务级三方案协议，不要求改全局 SKILL。实际完成后再标记“已配置，不再提示”。');
     };
     const show = async explicit => {
         if (!explicit && (announced || context.globalState.get('aiSetupConfigured', false) || !vscode.workspace.isTrusted)) return;
@@ -105,7 +107,7 @@ function activate(context, vscode) {
         if (!explicit && (announced || context.globalState.get('aiSetupConfigured', false))) return;
         announced = true;
         // Do not wait for the user to dismiss a notification during activation.
-        vscode.window.showInformationMessage('TeXScholar：让 AI 配合审核并配置本地 LaTeX。可复制包含 1～40 项配置与全局 SKILL 合并规则的提示词；不含个人路径、代理或凭据。',
+        vscode.window.showInformationMessage('TeXScholar：让 AI 配合三方案审核并配置本地 LaTeX。可复制 1～40 项配置与任务级协议，不修改全局 SKILL，不含个人路径、代理或凭据。',
             '一键复制提示词', '已配置，不再提示', '查看完整提示词').then(async choice => {
             if (choice === '一键复制提示词') await copy();
             else if (choice === '已配置，不再提示') await context.globalState.update('aiSetupConfigured', true);

@@ -114,9 +114,9 @@ class Flow(unittest.TestCase):
         before = self.read("main.tex")
         review = self.review()
         command = [sys.executable, "-X", "utf8", str(HERE / "source_review.py"), "--repo", str(self.root),
-                   "--state", "reply.tex", "--git", GIT, "--apply", "--expect", m.digest(review.raw), "propose"]
+                   "--state", "reply.tex", "--git", GIT, "--apply", "--expect", m.digest(review.raw), "propose-options"]
         result = subprocess.run(command, input=json.dumps({"file": "main.tex", "kind": "manuscript",
-                                "before": "It remains efficient.", "after": "It remains efficient in this setting."}).encode("utf-8"),
+                                "before": "It remains efficient.", "options": [{"label":"A","after":"It remains efficient in this setting.","reason":"隔离样例"}], "fewer_options_reason":"隔离测试仅检查一个选项的正文保护"}).encode("utf-8"),
                                 capture_output=True, env=self.env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.read("main.tex"), before)
@@ -326,7 +326,7 @@ class Flow(unittest.TestCase):
     def test_preview_stale_state_path_and_legacy_guards(self):
         raw = (self.root / "reply.tex").read_bytes()
         p = subprocess.run([sys.executable, "-X", "utf8", str(HERE / "source_review.py"), "--repo", str(self.root),
-                            "--state", "reply.tex", "--git", GIT, "propose"], input=json.dumps({"file": "main.tex", "kind": "manuscript", "before": "It remains efficient.", "after": "It is efficient."}).encode(), capture_output=True)
+                            "--state", "reply.tex", "--git", GIT, "propose-options"], input=json.dumps({"file": "main.tex", "kind": "manuscript", "before": "It remains efficient.", "options": [{"label":"A","after":"It is efficient.","reason":"隔离样例"}],"fewer_options_reason":"隔离测试"}).encode('utf-8'), capture_output=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertFalse(json.loads(p.stdout)["applied"])
         self.assertEqual((self.root / "reply.tex").read_bytes(), raw)
