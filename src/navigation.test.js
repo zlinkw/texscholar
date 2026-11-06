@@ -41,7 +41,8 @@ test('native unused-citation check resolves output placeholders, preserves files
 });
 test('existing CODEX blocks fold without inserting source comments or changing the document', async () => {
     const source = ['% CODEX-RULES-BEGIN', '% 中文规则', '% CODEX-RULES-END', '\\section{Method}',
-        '% CODEX-PARAGRAPH-PLAN-BEGIN', '% paragraph plan', '% CODEX-PARAGRAPH-PLAN-END', 'Text.'];
+        '% CODEX-PARAGRAPH-PLAN-BEGIN', '% paragraph plan', '% CODEX-PARAGRAPH-PLAN-END', 'Text.',
+        '% CODEX-FILE-ROLES-BEGIN', '% {"schema":1}', '% CODEX-FILE-ROLES-END'];
     const original = source.join('\n');
     let provider; const commands = {}, calls = [];
     const document = {languageId: 'latex', lineCount: source.length, lineAt: i => ({text: source[i]})};
@@ -59,10 +60,10 @@ test('existing CODEX blocks fold without inserting source comments or changing t
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'navigation.js'), 'utf8'), sandbox);
     sandbox.module.exports.activate({subscriptions: []});
     const ranges = provider.provideFoldingRanges(document);
-    assert.deepEqual(Array.from(ranges, r => [r.start, r.end]), [[0, 2], [4, 6]]);
+    assert.deepEqual(Array.from(ranges, r => [r.start, r.end]), [[0, 2], [4, 6], [8, 10]]);
     await commands['localLatex.foldReviewComments']();
     assert.equal(calls[0][0], 'editor.fold');
-    assert.deepEqual(Array.from(calls[0][1].selectionLines), [0, 4]);
+    assert.deepEqual(Array.from(calls[0][1].selectionLines), [0, 4, 8]);
     assert.equal(source.join('\n'), original);
     assert.equal(commands['localLatex.compareHistory'], undefined);
 });

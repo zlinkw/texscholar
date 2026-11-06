@@ -61,6 +61,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     const allCards = {'1': data};
     const backend = async (_, args, cwd, input) => {
         backendCalls.push({args, input});
+        if (args.some(x => String(x).endsWith('document_roles.py'))) return JSON.stringify({status: 'unconfirmed'});
         if (args.includes('cards')) return JSON.stringify({session: 'batch', sha256: 'fresh', edits: Object.fromEntries(Object.entries(allCards).map(([id, item]) => [id, item.edit])),
             cards: Object.fromEntries(Object.entries(allCards).filter(([, item]) => ['pending', 'rework'].includes(item.edit.status))), sources: {[path.basename(file)]: value}});
         if (args.includes('inspect')) return JSON.stringify(allCards[args[args.indexOf('--id') + 1]]);

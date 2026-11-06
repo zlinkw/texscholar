@@ -4,6 +4,14 @@
 
 ## 候选生成
 
+### 先确认文件角色
+
+每次论文任务先读 read_context 返回的 file_roles。插件按实际 TeX 内容、documentclass、input/include/subfile/import 和 !TeX root 提供建议，不要求特定文件名。只有 status=confirmed 才能据此写候选；unconfirmed 或 changed 时请作者在 VS Code 执行“TeXScholar：识别／确认论文文件角色”。不要自行伪造确认、猜测用途或绕过 MCP 检查。首次新项目可在作者授权下先创建必要模板骨架，但不能将草稿直接冒充已接收正文。
+
+确认后项目只保留一个顶部 CODEX-FILE-ROLES-BEGIN/END 注释块，其中 JSON schema=1 的 files 数组逐项记录 file、roles、root，structure 保存用于检测变更的编译关系。file/root 均为项目相对路径，root=null 表示未指定编译入口。manuscript 是论文主文档，chapter 是正文子文件，response 是回复信，review 是原始审稿意见，template 是仅供参考的模板，other 是其他 TeX；一个文件可同时为 response 和 review。不要把结构快照当正文、批注或候选，也不另建 Markdown／JSON 登记副本。该稳定配置不同于唯一审核状态，不初始化审核、不改变编号或审核决定。
+
+增删改名、documentclass、包含关系或 !TeX root 改变才需重新确认；普通正文润色、保存、接收和批注不重做首次确认。动态宏和共享子文件可能无法唯一解析，按作者实际指定入口，不做模糊自动配对。template 不作为论文改写目标；确实需改模板，先请作者在文件角色中调整用途。confirmed 映射也是插件选择审核 PDF 主文档的依据。
+
 - 先读取真实正文、作者顶部 CODEX-RULES、相关局部逻辑注释、唯一审核状态、当前候选与返修要求。不要修改无关区域。
 - 同一原文位置只有一个审核编号；一次请求提交 A/B/C 三个有实质区别的方案，按作者要求、科学准确性、逻辑和简洁程度排序。A 是优先推荐，不是已经接收。每个方案附简短 reason，指出取舍，不给伪造置信度。
 - 三方案共享事实、数据和约束，不凑同义词版本，不编造实验或引文。确实不足三个合理方案时，提供一或两个并明确 fewer_options_reason。工具只能核对结构和文字是否重复，科学合理性仍需核验。

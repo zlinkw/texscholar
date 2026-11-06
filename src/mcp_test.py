@@ -11,9 +11,16 @@ from mcp_server import Server, TOOLS
 from mcp_config import configure
 import native_review_test as fixtures
 from source_review import digest
+from document_roles import scan as scan_roles, save as save_roles
 
 class MCP(unittest.TestCase):
-    setUp = fixtures.NativeReview.setUp
+    def setUp(self):
+        fixtures.NativeReview.setUp(self)
+        data = scan_roles(self.root)
+        save_roles(self.root, {'owner': 'main.tex', 'previous_owner': None, 'previous_files': [],
+            'owner_sha256': digest((self.root / 'main.tex').read_bytes()), 'structure': data['structure'], 'files': [
+                {'file': 'main.tex', 'roles': ['manuscript'], 'root': 'main.tex'},
+                {'file': 'reply.tex', 'roles': ['response', 'review'], 'root': 'reply.tex'}]})
     apply = fixtures.NativeReview.apply
     review = fixtures.NativeReview.review
 
@@ -96,3 +103,22 @@ class MCP(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unmanaged'):
             configure(home, launcher, sys.executable, True)
         self.assertIn('author-command', path.read_text(encoding='utf-8'))
+
+    def test_roles_are_shared_with_ai_and_ambiguous_or_wrong_kind_writes_stop(self):
+        server = self.server()
+        context = server.call('read_context', {'project': str(self.root)})
+        self.assertEqual(context['file_roles']['status'], 'confirmed')
+        self.assertEqual(context['file_roles']['owner'], 'main.tex')
+        spec = {'file': 'main.tex', 'kind': 'response', 'before': 'The model is strong and fast.', 'options': [
+            {'label': label, 'after': 'The model is ' + word + '.', 'reason': label} for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]}
+        args = {'project': str(self.root), 'state': 'reply.tex', 'expected_sha256': digest(self.review().raw), 'spec': spec}
+        original, state = (self.root / 'main.tex').read_bytes(), self.review().raw
+        with self.assertRaisesRegex(ValueError, '文件角色不符'):
+            server.call('propose_options', args)
+        (self.root / 'new.tex').write_text('New chapter.', encoding='utf-8')
+        self.assertEqual(server.call('read_context', {'project': str(self.root)})['file_roles']['status'], 'changed')
+        spec['kind'] = 'manuscript'
+        with self.assertRaisesRegex(ValueError, '未确认或结构已变化'):
+            server.call('propose_options', args)
+        self.assertEqual((self.root / 'main.tex').read_bytes(), original)
+        self.assertEqual(self.review().raw, state)

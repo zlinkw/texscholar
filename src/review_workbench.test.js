@@ -20,7 +20,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
         save: async (c, label, after) => {const r = records.get(c.id); r.data.options.find(o => o.label === label).after = after;
             r.c.version = r.data.version = 'v2'; r.data.edit.versions.push('v2'); view.sync(records, c); return structuredClone(r.data);},
         saved() {}, accept: async c => {events.push({type: 'accept', c}); records.delete(c.id); view.sync(records, c);},
-        copy: async () => events.push({type: 'copy'}), handoff() {}, finish() {}};
+        reopen: async () => events.push({type: 'reopen'}), copy: async () => events.push({type: 'copy'}), handoff() {}, finish() {}};
     const view = createWorkbench(vscode, {subscriptions: []}, services);
     view.setRecords(records); await view.show(records.get('1').c); await receive({type: 'ready'});
     const count = messages.length;
@@ -28,6 +28,9 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     view.status({...view.active, id: 'a'}, 'PDF 最新');
     assert.equal(messages.length, count, 'another document or stale version cannot label the current PDF latest');
     const send = (type, extra = {}) => receive({type, id: view.active.id, version: view.active.version, ...extra});
+    await send('reopen');
+    assert.equal(events.pop().type, 'reopen', 'top button opens an existing PDF without invoking compile/preview');
+    assert(html('test').includes('data-action="reopen">打开 PDF 窗口'));
     await send('note', {option: 'B', side: 'candidate', value: 'The model is compact.', start: 13, end: 20, text: '限定这个词'});
     assert.deepEqual(events[0].selection, {side: 'candidate', option: 'B', start: 13, end: 20, quote: 'compact'});
     assert(messages.some(m => m.type === 'notes'));

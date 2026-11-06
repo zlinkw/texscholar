@@ -540,6 +540,7 @@ function createInlineReview(vscode, context, execute = run) {
             else vscode.window.showInformationMessage('该项已处理，本批状态保留其关联；成功成果可查 Git。');
         },
         changeProvider: () => vscode.commands.executeCommand('localLatex.inlineTranslationSource', workbench.active),
+        reopen: reopenPreview,
         copy: () => vscode.commands.executeCommand('localLatex.copyReviewContract'),
         handoff: addRequests,
         finish: () => vscode.commands.executeCommand('localLatex.finishReview'),
@@ -562,6 +563,8 @@ function createInlineReview(vscode, context, execute = run) {
     }
     async function resolvePDFDocument(c) {
         const data = await current(c);
+        const registered = await require('./document_roles').confirmedRoot(vscode, c.repo, path.join(c.repo, data.edit.file), execute);
+        if (registered) return registered;
         if (/^\s*\\documentclass\b/m.test(data.source.text)) return path.join(c.repo, data.edit.file);
         const files = await vscode.workspace.findFiles(new vscode.RelativePattern(c.repo, '**/*.tex'), EXCLUDE);
         const roots = [];
@@ -635,15 +638,8 @@ function createInlineReview(vscode, context, execute = run) {
     }
     async function preview(arg) {
         const c = contextFor(arg), data = await current(c);
-        let document = path.join(c.repo, data.edit.file);
-        if (!/^\s*\\documentclass\b/m.test(data.source.text)) {
-            const files = await vscode.workspace.findFiles(new vscode.RelativePattern(c.repo, '**/*.tex'), '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**');
-            const roots = [];
-            for (const file of files) if (/^\s*\\documentclass\b/m.test(await fs.readFile(file.fsPath, 'utf8'))) roots.push({label: path.relative(c.repo, file.fsPath), file: file.fsPath});
-            const picked = roots.length === 1 ? roots[0] : await vscode.window.showQuickPick(roots, {placeHolder: '选择该段落实际所属的可编译主文档'});
-            if (!picked) return;
-            document = picked.file;
-        }
+        const document = await resolvePDFDocument(c);
+        if (!document) return;
         return serializePDF(() => generatePDF(c, document, false));
     }
     async function generatePDF(c, document, automatic, requestFile) {
@@ -678,6 +674,14 @@ function createInlineReview(vscode, context, execute = run) {
             } else if (!automatic) vscode.window.showInformationMessage(result.reused_pdf ? '审核内容未变化，已复用核验后的 PDF，没有重新编译。'
                 : '已更新同一份审核 PDF；现有预览窗口会重新加载。窗口已关闭时，可用“重新打开审核 PDF 窗口”。');
         });
+    }
+    async function reopenPreview() {
+        const files = [...new Set([...openedPDFs, ...(context.workspaceState?.get('reviewPDFs', []) || [])])];
+        if (!files.length) throw new Error('尚未生成审核 PDF，请先使用生成／更新按钮。');
+        const file = files.length === 1 ? files[0] : await vscode.window.showQuickPick(files, {placeHolder: '重新打开已生成的审核 PDF（不编译）'});
+        if (!file) return;
+        await fs.access(file);
+        await require('./pdf_navigation').openFloating(vscode, vscode.Uri.file(file));
     }
     async function addRequests() {
         const c = await discover(), state = await backend(c, ['feedback-context']);
@@ -749,14 +753,7 @@ function createInlineReview(vscode, context, execute = run) {
         if (!meta) throw new Error('尚无该文件的审核 PDF，请先用生成／更新按钮打开。');
         await require('./pdf_navigation').locate(vscode, context, meta, c);
     });
-    command('localLatex.inlineReopenPreview', async () => {
-        const files = [...new Set([...openedPDFs, ...(context.workspaceState?.get('reviewPDFs', []) || [])])];
-        if (!files.length) throw new Error('尚未生成审核 PDF，请先使用生成／更新按钮。');
-        const file = files.length === 1 ? files[0] : await vscode.window.showQuickPick(files, {placeHolder: '重新打开已生成的审核 PDF（不编译）'});
-        if (!file) return;
-        await fs.access(file);
-        await require('./pdf_navigation').openFloating(vscode, vscode.Uri.file(file));
-    });
+    command('localLatex.inlineReopenPreview', reopenPreview, true);
     command('localLatex.openFloatingPDF', async arg => {
         const selected = arg?.scheme ? arg : vscode.window.tabGroups.activeTabGroup.activeTab?.input?.uri;
         await require('./pdf_navigation').openFloating(vscode, selected, true);

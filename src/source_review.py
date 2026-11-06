@@ -28,6 +28,36 @@ class Conflict(ValueError):
     pass
 
 
+@contextmanager
+def writer_lock_at(parent):
+    """Share the existing project writer lock with metadata-only configuration."""
+    if parent.is_symlink() or parent.is_junction():
+        raise Conflict('审核锁目录不能是链接。')
+    parent.mkdir(exist_ok=True)
+    lock = parent / 'writer.lock'
+    if lock.is_symlink() or lock.is_junction():
+        raise Conflict('审核锁文件不能是链接。')
+    with lock.open('a+b') as stream:
+        if os.name == 'nt':
+            import msvcrt
+            acquire = lambda: msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            release = lambda: msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            acquire = lambda: fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            release = lambda: fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        stream.seek(0)
+        try:
+            acquire()
+        except OSError as error:
+            raise Conflict('另一个审核写入或缓存清理正在进行；未覆盖数据，请待其结束后重试。') from error
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            release()
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -204,35 +234,8 @@ class Review:
         self.original = {}
         self.question_original = {}
 
-    @contextmanager
     def writer_lock(self):
-        """Serialize CLI object creation/state persistence with object-cache cleanup."""
-        parent = self.object_root.parent
-        if parent.is_symlink() or parent.is_junction():
-            raise Conflict('审核锁目录不能是链接。')
-        parent.mkdir(exist_ok=True)
-        lock = parent / 'writer.lock'
-        if lock.is_symlink() or lock.is_junction():
-            raise Conflict('审核锁文件不能是链接。')
-        with lock.open('a+b') as stream:
-            if os.name == 'nt':
-                import msvcrt
-                acquire = lambda: msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-                release = lambda: msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                acquire = lambda: fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                release = lambda: fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-            stream.seek(0)
-            try:
-                acquire()
-            except OSError as error:
-                raise Conflict('另一个审核写入或缓存清理正在进行；未覆盖数据，请待其结束后重试。') from error
-            try:
-                yield
-            finally:
-                stream.seek(0)
-                release()
+        return writer_lock_at(self.object_root.parent)
 
     def git(self, *args, data=None):
         # Per-invocation Windows long-path support; do not mutate user/repository config.
@@ -571,8 +574,14 @@ class Review:
                 raise Conflict("新候选必须 deferred=true；接收后才替换正文。旧记录仍可读取。")
         text = self.read(rel)
         a, b = locate(text, before, left, right)
+        from document_roles import block_span, BEGIN as ROLE_BEGIN, END as ROLE_END
+        protected = block_span(text)
+        if protected and (a < protected[1] and b > protected[0] or a == b and protected[0] <= a < protected[1]):
+            raise Conflict('文件角色登记是项目配置，不是正文候选；请通过文件角色确认入口更新。')
         options = self.validate_options(spec)
         after = options[0]['after'] if options else spec["after"]
+        if any(marker in value for value in [before, after, *[o['after'] for o in options or []]] for marker in (ROLE_BEGIN, ROLE_END)):
+            raise Conflict('不能把文件角色登记混入正文候选。')
         if (not options and (before == after or (rework and old["after"] == after))) or (options and all(o['after'] == original for o in options)):
             raise Conflict("No content change")
         if rework and options and options == old.get('options'):

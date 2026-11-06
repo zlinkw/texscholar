@@ -15,6 +15,7 @@ from contextlib import nullcontext
 from datetime import datetime, timezone
 
 from source_review import Review, Conflict, PENDING, digest, letters
+from document_roles import block_span as role_span, without_block as without_roles, replace_block as replace_roles, scan as scan_roles
 
 
 def source_text(text):
@@ -43,6 +44,14 @@ def plan(r):
     for name in r.state['rounds'][-1]['files']:
         current = r.read(name)
         approved = r.contents(r.state['accepted'], name)
+        if source_text(current) != source_text(approved) and role_span(current):
+            registry = scan_roles(r.repo)
+            if registry['status'] == 'confirmed' and registry['owner'] == name:
+                # A separately author-confirmed stable file map may accompany
+                # accepted prose; it never authorizes unrelated manual prose.
+                if source_text(without_roles(current)) == source_text(without_roles(approved)):
+                    a, b = role_span(current)
+                    approved = replace_roles(approved, current[a:b])
         if source_text(current) != source_text(approved):
             raise Conflict('存在未纳入已接收投影的手动修改，请先核对，不自动提交：' + name)
         text = source_text(approved)

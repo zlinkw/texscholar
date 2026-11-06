@@ -10,6 +10,16 @@
 
 唯一插件源码位于 `src/`，根目录 `package.json` 为发行清单；旧本机脚本和 SKILL 内历史分发副本不是新的维护入口。纯 JavaScript 直接运行，不需要 npm install、TypeScript 转译或独立编译缓存。打包只组装已经验证的源文件，不重新运行测试；安装和发行使用同一个 VSIX。
 
+## 文件角色登记与当前验证范围
+
+`document_roles.py` 是文件角色结构、读取和保存的唯一规则实现；`document_roles.js` 负责 VS Code 非阻塞通知、作者确认和事件筛选。使用已有项目 writer.lock，不创建审核状态或重置编号。一个顶部 CODEX-FILE-ROLES 注释块保存项目相对路径、可多选角色、可为空的编译入口和结构快照；不另建登记 JSON。普通正文／状态写入不触发全项目角色扫描，文件事件只在结构命令或角色块变化时调用核心，不轮询。
+
+MCP read_context 返回同一 file_roles；AI 写候选前在共享锁内重新核对确认状态及目标角色。未确认、结构变化、目标类型不符和参考模板改写均停止，不假定文件名。审核 PDF 根文件读取确认映射；普通 Workshop 编译及 Typst 设置保留。稳定角色配置可随已接收成果投影提交，仍逐字核对除此配置之外的正式源码，不放过未批准手改。ChkTeX 只排除完整、位于顶部且逐行注释的角色块；坏块和正文继续检查。折叠复用既有注释折叠入口。
+
+本轮规定检查：现有 editor、backend、backup 组；新模块边界和最终变更用定向套件补跑，保留原生 Windows 界面检查。PDF 排版／翻译／清理算法未改，不额外跑独立全量组或性能测试。纯 JS／标准库 Python 没有编译步骤，直接运行同一源码；打包只组装已有验证输入，安装和发行复用同一 VSIX。
+
+实际结果：editor 70 项、backend 48 项和 backup 15 项通过；之后新增角色备份边界、MCP 类型保护与紧凑注释格式，定向 Python 13 项及 editor 22 项通过。普通保存、精确原文批注、单方案接收、自动下一项、源码保护和 Typst 隔离保留覆盖。隔离原生 UI 首次在 extensionTestsPath 下因 VS Code 禁止模态对话而无法验证；后改为不带测试模式的独立开发宿主，Windows 原生系统对话不在 CDP 表面内，改用该隔离 profile 支持的 custom dialog；未修改产品或真实用户设置。Windows custom dialog 已实际确认，新增顶部注释之外的论文正文及 reply 审核状态字节不变；审核页顶部重开按钮存在、无 PDF 时明确报错且不编译；菜单外点击自动收起、菜单内点击不误收起。截图检查首次只匹配 LF，遇到 Windows CRLF 断言失败，修正该夹具后通过。所有首次结果及完整日志保留，Mac 未实机验证。
+
 ## 开发依赖
 
 Node.js 22 或更新版本、Python 3.12 或更新的 Python 3、Git、tex-fmt、TeX Live/TinyTeX/MacTeX。Python PDF 测试另需 `pypdf`，不是插件后端的运行依赖。ChkTeX 测试需要实际安装的 LaTeX Workshop 的 `out/src/lint/latex-code-actions.js`，通过环境变量指定，不依赖个人扩展目录或固定版本。

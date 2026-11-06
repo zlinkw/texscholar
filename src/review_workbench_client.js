@@ -104,6 +104,9 @@ function selectionChanged(event) {
     $('scope').textContent = (selected.option ? '方案 ' + selected.option : '原文') + '选区：' + selected.value.slice(selected.start, selected.end);
 }
 document.addEventListener('mouseup', selectionChanged);
+document.addEventListener('pointerdown', event => {
+    for (const menu of document.querySelectorAll('details.more[open]')) if (!menu.contains(event.target)) menu.open = false;
+});
 document.addEventListener('keyup', event => {if (event.shiftKey) selectionChanged(event);});
 document.addEventListener('input', event => {
     if (event.target.classList.contains('edit')) {drafts.set(event.target.dataset.option, event.target.value); selected = undefined;}

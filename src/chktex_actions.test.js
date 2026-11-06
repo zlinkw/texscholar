@@ -309,6 +309,12 @@ test('real ChkTeX adapter excludes only complete comment-only machine ledgers an
             assert.deepEqual(checked(['-I0', format], malformed).stdout, original.stdout, 'malformed markers or real TeX never mask prose');
         }
     }
+    const roleSource = '% CODEX-FILE-ROLES-BEGIN\r\n% {"note":"$x$"}\r\n% CODEX-FILE-ROLES-END\r\n' + header + '$x$\n\\vskip1mm' + tail;
+    const roleNative = cp.spawnSync(chktex, [...flags, '-I0', format], {input: roleSource, windowsHide: true});
+    assert.ifError(roleNative.error);
+    const roleNormal = records(roleNative.stdout).filter(line => Number(/^[^]*?:(\d+):/.exec(line)[1]) > 3);
+    assert.deepEqual(records(checked(['-I0', format], roleSource).stdout), roleNormal, 'top file-role comments are excluded without suppressing ordinary body warnings');
+    assert(roleNormal.some(line => /:46:/.test(line)));
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'chktex-交接 ledger-'));
     const child = '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA {"note":"handoff"}\n% CODEX-REVIEW-STATE-END\n$x$\n';
     const main = header + '\\input{child}\n$x$' + tail;

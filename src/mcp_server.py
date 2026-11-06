@@ -5,11 +5,12 @@ import json
 import os
 import sys
 from source_review import Review, Conflict, body, digest
+from document_roles import scan as scan_roles
 
 HERE = Path(__file__).resolve().parent
 INSTRUCTIONS = (
     'TeXScholar manages local LaTeX manuscript and reviewer-response drafting/revision. '
-    'For these tasks first call read_context in the trusted project and follow its current protocol. '
+    'First call read_context; use author-confirmed file_roles, never guess filenames or overwrite templates. '
     'Submit ranked A/B/C together for one source location via propose_options or rework_options; '
     'never overwrite formal prose before author acceptance. No global SKILL edits. '
     'Read exact author notes, current versions and feedback; no guessed question links. '
@@ -67,6 +68,7 @@ class Server:
         if name == 'get_instructions':
             return {'protocol': protocol(), 'version': json.loads((HERE.parent / 'package.json').read_text(encoding='utf-8'))['version']}
         root, git = self.project(args['project'])
+        roles = scan_roles(root) if name == 'read_context' else None
         state = args.get('state')
         if name == 'read_context' and not state:
             owners, sources = [], []
@@ -81,7 +83,7 @@ class Server:
                     if '% CODEX-REVIEW-STATE-BEGIN' in text and '% CODEX-REVIEW-STATE-END' in text:
                         owners.append(path.relative_to(root).as_posix())
             if not owners:
-                return {'initialized': False, 'files': sources, 'protocol': protocol(),
+                return {'initialized': False, 'files': sources, 'file_roles': roles, 'protocol': protocol(),
                         'next': 'Read actual author files. During authorized paper work establish one comment-only state header, then begin_review. Do not initialize merely for tool installation.'}
             if len(owners) != 1:
                 raise Conflict('Reconcile multiple state owners; do not guess')
@@ -91,7 +93,7 @@ class Server:
             result = review.cards() if review.state else review.status()
             if 'sources' in result:
                 result['sources'] = {file: body(text) for file, text in result['sources'].items()}
-            return {'owner': state, 'context': result, 'protocol': protocol()}
+            return {'owner': state, 'context': result, 'file_roles': roles, 'protocol': protocol()}
         if name == 'read_feedback':
             return review.feedback_context()
         if name not in {'begin_review', 'propose_options', 'rework_options', 'link_questions'}:
@@ -108,6 +110,15 @@ class Server:
                 updated, result = r.begin(args['round'], args['files'], args.get('submission'))
             elif name in {'propose_options', 'rework_options'}:
                 spec = args['spec']
+                actual_roles = scan_roles(root)
+                if actual_roles['status'] != 'confirmed':
+                    raise Conflict('请先在 VS Code 执行“识别／确认论文文件角色”；文件映射未确认或结构已变化，不能猜测正文与回复信。')
+                file = spec['file'] if name == 'propose_options' else r.state['edits'][args['id']]['file']
+                kind = spec['kind'] if name == 'propose_options' else r.state['edits'][args['id']]['kind']
+                entry = next((item for item in actual_roles['files'] if item['file'] == file), None)
+                allowed = {'manuscript', 'chapter'} if kind == 'manuscript' else {'response'}
+                if not entry or not allowed.intersection(entry['roles']) or 'template' in entry['roles']:
+                    raise Conflict('候选类型与已确认文件角色不符，或目标是参考模板；请由作者确认用途，不自动改写参考资料。')
                 updated, result = r.propose_options(spec, args['id'] if name == 'rework_options' else None, args.get('version'))
             else:
                 if type(args.get('replace', False)) is not bool:
@@ -129,7 +140,7 @@ class Server:
         if method == 'initialize':
             requested = request.get('params', {}).get('protocolVersion')
             return {'jsonrpc': '2.0', 'id': id_, 'result': {'protocolVersion': requested if requested in {'2024-11-05', '2025-03-26', '2025-06-18'} else '2025-03-26',
-                    'serverInfo': {'name': 'texscholar', 'version': '0.9.1'}, 'capabilities': {'tools': {}}, 'instructions': INSTRUCTIONS}}
+                    'serverInfo': {'name': 'texscholar', 'version': '0.9.2'}, 'capabilities': {'tools': {}}, 'instructions': INSTRUCTIONS}}
         if method == 'ping':
             result = {}
         elif method == 'tools/list':

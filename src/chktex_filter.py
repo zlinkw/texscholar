@@ -15,14 +15,21 @@ DIAGNOSTIC = re.compile(rb'^(.*?):(\d+):\d+:\d+:[^:]*:\d+:.*$')
 
 def ledger_lines(raw):
     lines = raw.splitlines(keepends=True)
-    starts = [i for i, line in enumerate(lines) if line.rstrip(b'\r\n') == b'% CODEX-REVIEW-STATE-BEGIN']
-    ends = [i for i, line in enumerate(lines) if line.rstrip(b'\r\n') == b'% CODEX-REVIEW-STATE-END']
-    if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
-        return set()
-    # A malformed marker must never turn real TeX into an excluded region.
-    if any(line.strip() and not line.lstrip().startswith(b'%') for line in lines[starts[0]:ends[0] + 1]):
-        return set()
-    return set(range(starts[0] + 1, ends[0] + 2))
+    if lines:
+        lines[0] = lines[0].removeprefix(b'\xef\xbb\xbf')
+    excluded = set()
+    for kind in [b'REVIEW-STATE', b'FILE-ROLES']:
+        starts = [i for i, line in enumerate(lines) if line.rstrip(b'\r\n') == b'% CODEX-' + kind + b'-BEGIN']
+        ends = [i for i, line in enumerate(lines) if line.rstrip(b'\r\n') == b'% CODEX-' + kind + b'-END']
+        if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
+            continue
+        # A malformed marker must never turn real TeX into an excluded region.
+        if any(line.strip() and not line.lstrip().startswith(b'%') for line in lines[starts[0]:ends[0] + 1]):
+            continue
+        if kind == b'FILE-ROLES' and any(line.strip() and not line.lstrip().startswith(b'%') for line in lines[:starts[0]]):
+            continue
+        excluded.update(range(starts[0] + 1, ends[0] + 2))
+    return excluded
 
 
 def mask_ledger(raw, excluded):

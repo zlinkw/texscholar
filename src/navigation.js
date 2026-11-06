@@ -58,7 +58,7 @@ function activate(context) {
         if (!editor || editor.document.languageId !== 'latex') return;
         const starts = [];
         for (let i = 0; i < editor.document.lineCount; i++) {
-            if (/^\s*%\s*(?:region\b|CODEX-(?:RULES|REVIEW-STATE|WRITING-PROFILE|PARAGRAPH-PLAN|REVIEW-PREAMBLE)-BEGIN\b)/.test(editor.document.lineAt(i).text)) starts.push(i);
+            if (/^\s*%\s*(?:region\b|CODEX-(?:RULES|FILE-ROLES|REVIEW-STATE|WRITING-PROFILE|PARAGRAPH-PLAN|REVIEW-PREAMBLE)-BEGIN\b)/.test(editor.document.lineAt(i).text)) starts.push(i);
         }
         if (starts.length) await vscode.commands.executeCommand('editor.fold', {selectionLines: starts});
     }));
@@ -67,9 +67,9 @@ function activate(context) {
             const ranges = [], stack = [];
             for (let i = 0; i < document.lineCount; i++) {
                 const text = document.lineAt(i).text;
-                const start = text.match(/^\s*%\s*(CODEX-(?:RULES|REVIEW-STATE|WRITING-PROFILE|PARAGRAPH-PLAN|REVIEW-PREAMBLE))-BEGIN\b/);
+                const start = text.match(/^\s*%\s*(CODEX-(?:RULES|FILE-ROLES|REVIEW-STATE|WRITING-PROFILE|PARAGRAPH-PLAN|REVIEW-PREAMBLE))-BEGIN\b/);
                 if (start) stack.push({tag: start[1], line: i});
-                const end = text.match(/^\s*%\s*(CODEX-(?:RULES|REVIEW-STATE|WRITING-PROFILE|PARAGRAPH-PLAN|REVIEW-PREAMBLE))-END\b/);
+                const end = text.match(/^\s*%\s*(CODEX-(?:RULES|FILE-ROLES|REVIEW-STATE|WRITING-PROFILE|PARAGRAPH-PLAN|REVIEW-PREAMBLE))-END\b/);
                 if (end && stack.length && stack[stack.length - 1].tag === end[1]) {
                     const begin = stack.pop();
                     if (i > begin.line) ranges.push(new vscode.FoldingRange(begin.line, i, vscode.FoldingRangeKind.Comment));
