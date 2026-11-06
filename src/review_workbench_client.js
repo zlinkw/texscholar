@@ -2,22 +2,24 @@
 'use strict';
 const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
 let current, data, options = [], preview = 'A', selected, waiting = false, unavailable = false, conflict = false, focused, chinese = true;
-const noteDrafts = new Map();
+let editingNote;
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map();
 let sourceMode = false;
 const math = globalThis.TeXScholarMath;
 const esc = text => String(text).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 function send(type, extra = {}, blocks = true) {
     if (!current) return;
-    if (blocks) {waiting = true; buttons();}
+    if (blocks) {waiting = true; status(''); buttons();}
     api.postMessage({type, id: current.id, version: current.version, ...extra});
 }
 function status(message, error = false) {$('status').textContent = message || ''; $('status').className = error ? 'error' : '';}
 function dirty() {
     const changed = options.some(o => drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n'));
-    send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim() || noteDrafts.size > 0}, false); return changed;
+    send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim() || !!editingNote}, false); return changed;
 }
 function buttons() {
+    $('note').readOnly = waiting;
+    for (const b of document.querySelectorAll('[data-action="newNote"],[data-action="cancelNote"],[data-action="editNoteOpen"]')) b.disabled = waiting;
     for (const button of document.querySelectorAll('button[data-write]')) button.disabled = waiting || unavailable || conflict;
 }
 function style(value) {
@@ -81,18 +83,29 @@ function renderNotes(requests) {
         let node = [...container.children].find(node => node.dataset.noteId === n.id);
         if (!node) {node = document.createElement('div'); node.className = 'note'; node.dataset.noteId = n.id; container.appendChild(node);}
         const signature = JSON.stringify(n);
-        if (node.dataset.signature === signature || noteDrafts.has(n.id)) continue;
+        if (node.dataset.signature === signature) continue;
         node.dataset.signature = signature;
-        node.innerHTML = '<strong>' + esc(n.option || '整项') + ' · ' + esc(n.status) + '</strong><div class="text">' + esc(n.quote) + '</div><div class="text">' + esc(n.text) + '</div>' +
-            (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button><div class="note-editor" hidden><textarea aria-label="修改返修批注"></textarea><button data-action="editNoteSave" data-write>保存修改</button><button data-action="editNoteCancel" class="secondary">取消</button></div>' : '');
+        node.innerHTML = '<strong>' + esc(n.option || '整项') + ' · ' + esc(n.status) + '</strong><div class="text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><div class="text">' + esc(n.quote) + '</div></details>' +
+            (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '');
     }
     buttons();
+}
+function closeComposer() {
+    status('');
+    editingNote = undefined; selected = undefined; $('note').value = ''; $('noteComposer').hidden = true; $('noteMode').textContent = '新增返修批注';
+    $('noteScopeControls').hidden = false; $('saveNote').textContent = '保存返修批注'; dirty();
+}
+function openComposer() {$('noteComposer').hidden = false;}
+function canChangeNote() {
+    if (editingNote || $('note').value.trim()) {status('请先保存或取消当前批注输入。', true); return false;}
+    return true;
 }
 function scope() {
     selected = undefined;
     $('scope').textContent = $('scopeChoice').value === 'group' ? '针对本项全部方案，不需要逐个拒绝。' : $('scopeChoice').value === 'original' ? '针对完整原文。' : '针对方案 ' + $('scopeChoice').value + ' 整体。';
 }
 function selectionChanged(event) {
+    if (editingNote) return;
     if (event.target instanceof HTMLTextAreaElement && event.target.classList.contains('edit')) {
         const node = event.target, o = options.find(o => o.label === node.dataset.option);
         if (node.selectionStart === node.selectionEnd) return;
@@ -111,6 +124,7 @@ function selectionChanged(event) {
             start: model.raw.slice(0, bounds.start).replace(/\r\n/g, '\n').length,
             end: model.raw.slice(0, bounds.end).replace(/\r\n/g, '\n').length, wholeMath: bounds.wholeMath};
     }
+    openComposer();
     $('scope').textContent = (selected.option ? '方案 ' + selected.option : '原文') + '选区：' + selected.value.slice(selected.start, selected.end) + (selected.wholeMath ? '（整式；细部请切换源码）' : '');
 }
 document.addEventListener('mouseup', selectionChanged);
@@ -120,7 +134,6 @@ document.addEventListener('pointerdown', event => {
 document.addEventListener('keyup', event => {if (event.shiftKey) selectionChanged(event);});
 document.addEventListener('input', event => {
     if (event.target.classList.contains('edit')) {drafts.set(event.target.dataset.option, event.target.value); selected = undefined;}
-    if (event.target.closest('.note-editor')) noteDrafts.get(event.target.closest('.note').dataset.noteId).text = event.target.value;
     if (event.target.matches('textarea')) dirty();
 });
 $('scopeChoice').addEventListener('change', scope);
@@ -130,15 +143,17 @@ document.addEventListener('click', event => {
     if (!button) return;
     const type = button.dataset.action, option = button.dataset.option;
     const menu = button.closest('.more'); if (menu) menu.open = false;
-    if (type.startsWith('editNote')) {
-        const node = button.closest('.note'), id = node.dataset.noteId, editor = node.querySelector('.note-editor'), textarea = editor.querySelector('textarea');
-        if (type === 'editNoteOpen') {
-            if (noteDrafts.has(id)) {textarea.focus(); return;}
-            const note = data.edit.requests.find(n => n.id === id);
-            noteDrafts.set(id, {text: note.text, previousText: note.text}); textarea.value = note.text; editor.hidden = false; textarea.focus(); dirty();
-        } else if (type === 'editNoteCancel') {noteDrafts.delete(id); editor.hidden = true; renderNotes(data.edit.requests || []); dirty();}
-        else {const draft = noteDrafts.get(id); send('editNote', {request: id, text: draft.text, previousText: draft.previousText});}
-        return;
+    if (type === 'newNote') {if (!canChangeNote()) return; scope(); $('noteMode').textContent = '新增返修批注'; openComposer(); $('note').focus(); return;}
+    if (type === 'cancelNote') {closeComposer(); return;}
+    if (type === 'editNoteOpen') {
+        const id = button.closest('.note').dataset.noteId;
+        if (editingNote?.id === id) {$('note').focus(); return;}
+        if (!canChangeNote()) return;
+        const note = data.edit.requests.find(n => n.id === id);
+        editingNote = {id, previousText: note.text}; selected = undefined;
+        $('note').value = note.text; $('noteMode').textContent = '编辑返修批注';
+        $('noteScopeControls').hidden = true; $('scope').textContent = '原批注范围保持不变：' + (note.option || '整项');
+        $('saveNote').textContent = '保存修改'; openComposer(); $('note').focus(); dirty(); return;
     }
     if (type === 'mathMode') {toggleMathMode(); return;}
     if (type === 'toggleChinese') {chinese = !chinese; document.querySelectorAll('.zh').forEach(n => n.hidden = !chinese); return;}
@@ -148,9 +163,10 @@ document.addEventListener('click', event => {
         button.textContent = focused ? '返回比较' : '展开阅读'; return;
     }
     if (type === 'whole') {$('scopeChoice').value = 'group'; scope(); return;}
-    if (type === 'optionNote') {$('scopeChoice').value = option; scope(); $('note').focus(); return;}
+    if (type === 'optionNote') {if (!canChangeNote()) return; $('scopeChoice').value = option; scope(); openComposer(); $('note').focus(); return;}
     if (type === 'editToggle') {$('editor-' + option).hidden = !$('editor-' + option).hidden; if (!$('editor-' + option).hidden) $('edit-' + option).focus(); return;}
     if (type === 'note') {
+        if (editingNote) {send('editNote', {request: editingNote.id, text: $('note').value, previousText: editingNote.previousText}); return;}
         const value = $('scopeChoice').value;
         send('note', {...(selected || {side: 'original', option: 'ABC'.includes(value) && value.length === 1 ? value : undefined}), text: $('note').value}); return;
     }
@@ -159,6 +175,7 @@ document.addEventListener('click', event => {
 });
 window.addEventListener('message', ({data: message}) => {
     if (message.type === 'sourceSelection') {
+        if (!canChangeNote()) return; openComposer();
         selected = message.selection;
         if (selected) $('scope').textContent = '原文选区：' + selected.value.slice(selected.start, selected.end);
         else {$('scopeChoice').value = 'group'; scope();}
@@ -179,9 +196,9 @@ window.addEventListener('message', ({data: message}) => {
         const chosen = options.find(o => o.label === preview);
         renderText($('original'), data.original, chosen.changes, 'original'); return;
     }
-    if (message.type === 'noteEdited') {noteDrafts.delete(message.request); data.edit.requests = message.requests; const n = [...$('notes').children].find(n => n.dataset.noteId === message.request); if (n) n.dataset.signature = ''; renderNotes(message.requests); dirty();}
+    if (message.type === 'noteEdited') {data.edit.requests = message.requests; closeComposer(); renderNotes(message.requests);}
     if (message.type === 'notes') {data.edit.requests = message.requests; renderNotes(message.requests); renderQuestions(message.questions); return;}
-    if (message.type === 'noteSaved') {$('note').value = ''; selected = undefined; dirty();}
+    if (message.type === 'noteSaved') closeComposer();
     if (message.type === 'conflict') {
         conflict = true;
         if (!$('latest')) {const b = document.createElement('button'); b.id = 'latest'; b.dataset.action = 'latest'; b.textContent = '载入最新（需确认放弃草稿）'; $('status').after(b);}
@@ -194,13 +211,14 @@ window.addEventListener('message', ({data: message}) => {
         $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length;
         $('pdfStatus').textContent = message.pdfStatus;
         renderDirectory(message.directory);
-        if (!saved) {noteDrafts.clear(); translatedText.clear(); drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; $('questions').dataset.signature = '';}
+        if (!saved) {editingNote = undefined; $('noteComposer').hidden = true; $('noteScopeControls').hidden = false; $('saveNote').textContent = '保存返修批注'; translatedText.clear(); drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; $('questions').dataset.signature = '';}
         else drafts.delete(message.option);
         renderText($('original'), data.original, options.find(o => o.label === preview)?.changes || options[0].changes, 'original');
         for (const o of options) if (!saved || o.label === message.option) renderOption(o);
         $('scopeChoice').innerHTML = '<option value="group">本项全部方案（默认）</option><option value="original">完整原文</option>' + options.map(o => '<option value="' + o.label + '">方案 ' + o.label + ' 整体</option>').join('');
         scope(); renderNotes(data.edit.requests || []); renderQuestions(data.edit.questions || []);
         if (message.sourceSelection) {
+            openComposer();
             selected = message.sourceSelection;
             $('scope').textContent = '原文选区：' + selected.value.slice(selected.start, selected.end);
             $('note').focus();
