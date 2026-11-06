@@ -175,7 +175,6 @@ window.addEventListener('message', ({data: message}) => {
         if (!saved) {translatedText.clear(); drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; $('questions').dataset.signature = '';}
         else drafts.delete(message.option);
         renderText($('original'), data.original, options.find(o => o.label === preview)?.changes || options[0].changes, 'original');
-        $('originalSource').textContent = data.original;
         for (const o of options) if (!saved || o.label === message.option) renderOption(o);
         $('scopeChoice').innerHTML = '<option value="group">本项全部方案（默认）</option><option value="original">完整原文</option>' + options.map(o => '<option value="' + o.label + '">方案 ' + o.label + ' 整体</option>').join('');
         scope(); renderNotes(data.edit.requests || []); renderQuestions(data.edit.questions || []);

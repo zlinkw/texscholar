@@ -107,21 +107,18 @@
                 let denied = false;
                 katex.render(previewTex(part.tex), preview, {displayMode: part.display, throwOnError: true,
                     trust: () => {denied = true; return false;}, output: 'htmlAndMathml', strict: 'warn'});
-                if (denied) error = '此公式含外链、HTML 或资源命令，阅读预览不执行，已保留准确源码。';
+                if (denied) error = '此公式含外链、HTML 或资源命令，阅读预览不执行。请切换 LaTeX 源码查看。';
             }
-            catch (e) {if (!(e instanceof katex.ParseError)) throw e; error = '此公式暂不能预览，已显示准确源码：' + e.message;}
+            catch (e) {if (!(e instanceof katex.ParseError)) throw e; error = e.message;}
             if (error) {
-                const notice = doc.createElement('small'); notice.className = 'math-error'; notice.textContent = error;
-                formula.appendChild(notice); plain(formula, part.start, part.end);
+                const notice = doc.createElement('small'); notice.className = 'math-error';
+                notice.textContent = '［公式暂无法预览，请切换 LaTeX 源码］'; notice.title = error;
+                formula.appendChild(notice);
+                model.anchors.push({node: notice, start: part.start, end: part.end, atomic: true});
             } else {
                 formula.appendChild(preview);
                 preview.title = '预览中的公式选区按整式绑定；细部请切换 LaTeX 源码。';
                 model.anchors.push({node: preview, start: part.start, end: part.end, atomic: true});
-                if (ranges.some(([a, b]) => a < b && model.offsets[part.start] < b && model.offsets[part.end - 1] + 1 > a)) {
-                    const source = doc.createElement('details'); source.className = 'math-source-diff'; source.open = true;
-                    const title = doc.createElement('summary'); title.textContent = '公式源码差异'; source.appendChild(title);
-                    const code = doc.createElement('span'); code.className = 'math-code'; plain(code, part.start, part.end); source.appendChild(code); formula.appendChild(source);
-                }
             }
             fragment.appendChild(formula);
         }

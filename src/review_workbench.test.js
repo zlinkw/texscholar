@@ -55,4 +55,5 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert(page.includes('nonce="nonce-test" src="vscode-resource:/katex.min.js"'));
     assert(page.includes('href="vscode-resource:/katex.min.css"'));
     assert(page.includes('id="mathMode"'));
+    assert(!page.includes('id="originalSource"'), 'full source is available through the mode button, not a second source block');
 });
