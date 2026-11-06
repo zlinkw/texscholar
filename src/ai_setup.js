@@ -49,8 +49,8 @@ async function buildPrompt() {
         '24. 文件树隐藏 .latex-build，搜索、补全与主文件识别排除生成物，辅助文件折叠归组。',
         '25. 保留 ChkTeX 正常正文检查；只通过插件适配器排除规范的机器状态注释块，不关闭项目检查、不修改第三方插件。',
         '26. 悬浮处理保留接受建议、接受全文此类建议、忽略本行警告、忽略全文此类警告；只接受有可靠修复的建议，不盲改模板宏。',
-        '27. LTeX+ 使用 en-US、中文母语、保存时检查并合并科研词典；不静默设置远程语言服务器。',
-        '28. Error Lens 展示 error/warning，600 ms 延迟、160 字符上限，避免重复显示 LTeX 行内信息。',
+        '27. 英文语法与科研措辞由作者按需交给 AI 核对；不安装、恢复或启用常驻 Java 语言检查服务。',
+        '28. Error Lens 展示 error/warning，600 ms 延迟、160 字符上限。',
         '29. 保存时更新 TeX 字数，保留手动字数统计及未引用文献检查。',
         '30. 可选英文转简体中文悬浮翻译，多行合并、最长 1000 字符；明确外部供应商可能接收文字，不自动上传论文。',
         '31. 使用官方简体中文语言包；语言切换或原生布局需用户重载／操作时明确告知。',
@@ -65,7 +65,7 @@ async function buildPrompt() {
         '40. 使用插件内置 Windows／Mac 快捷键，先核对现有冲突；不要再把同样绑定写入用户 keybindings.json。Mac Cmd／Option 适配不等于已有实机通过证据。',
         '',
         '## 实际迁移顺序与边界',
-        '先检测系统、CPU 架构、VS Code、插件版本、已有 TeX、Python 3.12+、tex-fmt、Git、GitHub CLI、latexdiff、SyncTeX、ChkTeX、texcount、checkcites、ripgrep 及所需 Perl／语言服务器依赖。复用已有安装；缺失部分从官方来源按当前机器安装。GUI 启动的 PATH 也须核对。不要让用户为每项重复手配，但系统安装或账号授权仍遵守当前助手权限。',
+        '先检测系统、CPU 架构、VS Code、插件版本、已有 TeX、Python 3.12+、tex-fmt、Git、GitHub CLI、latexdiff、SyncTeX、ChkTeX、texcount、checkcites、ripgrep 及所需 Perl 依赖。复用已有安装；缺失部分从官方来源按当前机器安装。GUI 启动的 PATH 也须核对。不要让用户为每项重复手配，但系统安装或账号授权仍遵守当前助手权限。',
         '先运行插件的“检查本地写作环境与跨平台工具”，再按需“安装缺少的配套扩展”和“导入／重新应用论文写作配置”。机器可执行文件路径只保存在新电脑设置，不写入全局共享规则或论文源码。不同 TeX 版本、包和字体会影响版式，不能保证与旧机器逐像素一致。',
         '不为安装插件创建论文仓库、接收候选、迁移旧审核块或清理真实论文。新论文的本地／私有远端初始化另按项目授权：先识别源码、图表、模板、参考文献，再建立忽略规则，排除 .codex-review、.latex-build、运行缓存和临时审核预览。已跟踪的生成文件不能仅靠 .gitignore 修复，也不能擅自撤销暂存。',
         '只有需要验证新机器工具链时使用隔离最小样例核验正文、文献及 SyncTeX；不拿真实论文做安装测试。报告真实通过／失败和需要用户登录、重载或手动布局的部分。缺少权限、网络或 Mac 实机时如实说明，不假称已完成。',
@@ -159,7 +159,7 @@ function activate(context, vscode) {
         vscode.commands.registerCommand('localLatex.copyAISetupPrompt', async () => vscode.env.clipboard.writeText(await buildPrompt())));
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
     const refresh = () => check(false);
-    context.subscriptions.push(watcher, watcher.onDidCreate(refresh), vscode.workspace.onDidChangeWorkspaceFolders(refresh),
+    context.subscriptions.push(watcher, watcher.onDidCreate(file => {if (file.scheme === 'file' && !/(?:^|[\\/])(?:\.git|\.codex-review|\.latex-build|node_modules|clean_dir)(?:[\\/]|$)/.test(file.fsPath)) return refresh();}), vscode.workspace.onDidChangeWorkspaceFolders(refresh),
         vscode.workspace.onDidChangeConfiguration(refresh), vscode.extensions.onDidChange(refresh),
         vscode.window.onDidChangeWindowState(state => {if (state.focused) refresh();}));
     return {ready: check(false)};

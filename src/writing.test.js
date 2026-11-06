@@ -45,21 +45,23 @@ test('AI setup prompt is portable, complete and reuses one configuration/shortcu
 
 test('configuration status is event-driven, readonly and cannot be acknowledged into success', async () => {
     const handlers = new Map(), notices = [], events = [];
-    let tex = true;
+    let tex = true, scans = 0;
     const context = {subscriptions: [], globalState: {get: () => true}};
     const event = cb => {events.push(cb); return {dispose() {}};};
     const vscode = {commands: {registerCommand: (id, fn) => {handlers.set(id,fn); return {dispose() {}};}, getCommands: async () => []},
         extensions: {getExtension: () => undefined, onDidChange: event},
-        workspace: {isTrusted: true, findFiles: async () => tex ? ['paper.tex'] : [], getConfiguration: () => ({get: key => key === 'pythonPath' ? '/missing-python-for-test' : undefined}),
+        workspace: {isTrusted: true, findFiles: async () => {scans++; return tex ? ['paper.tex'] : []}, getConfiguration: () => ({get: key => key === 'pythonPath' ? '/missing-python-for-test' : undefined}),
             onDidChangeConfiguration: event, onDidChangeWorkspaceFolders: event,
             createFileSystemWatcher: () => ({dispose() {}, onDidCreate: event})},
         window: {onDidChangeWindowState: event, showInformationMessage: async (text,...buttons) => {notices.push({text,buttons});}, showErrorMessage: text => {throw Error(text);}}};
     await aiSetup(context,vscode).ready;
     assert.equal(require('./ai_setup').status().ready,false);
     assert(notices[0].text.includes('配置不完整')); assert(!notices[0].buttons.includes('已配置，不再提示'));
-    const count = notices.length; await events[0](); assert.equal(notices.length,count,'unchanged missing items do not repeat notifications');
+    const scansBefore = scans; await events[0]({scheme: 'file', fsPath: '/paper/.latex-build/review/main.tex'});
+    assert.equal(scans, scansBefore, 'generated TeX never starts configuration scans');
+    const count = notices.length; await events[0]({scheme: 'file', fsPath: '/paper/main.tex'}); assert.equal(notices.length,count,'unchanged missing items do not repeat notifications');
     await handlers.get('localLatex.checkAIConfiguration')(); assert.equal(notices.length,count+1);
-    tex=false; await events[0](); assert.equal(notices.length,count+1,'non-TeX projects do not check');
+    tex=false; await events[0]({scheme: 'file', fsPath: '/paper/main.tex'}); assert.equal(notices.length,count+1,'non-TeX projects do not check');
 });
 
 test('one AI assistant prepares one packet, connects safely, respects cancellation and keeps setup optional', async () => {

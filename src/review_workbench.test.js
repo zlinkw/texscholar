@@ -2,14 +2,14 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html} = require('./review_workbench');
 test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts and next acceptance', async () => {
-    let receive, creations = 0, htmlWrites = 0, confirmation;
+    let receive, creations = 0, htmlWrites = 0, confirmation, disposed;
     const messages = [], events = [], original = 'The model is strong.';
     const make = id => ({c: {repo: '/fixture', owner: 'reply.tex', id, version: 'v1'}, data: {version: 'v1', original,
-        candidate: 'The model is reliable.', edit: {file: 'main.tex', kind: 'manuscript', versions: ['v1'], requests: []},
+        candidate: 'The model is reliable.', source: {text: 'private full source with machine state'}, edit: {file: 'main.tex', kind: 'manuscript', versions: ['v1'], requests: []},
         options: [...'ABC'].map((label, i) => ({label, after: ['The model is reliable.', 'The model is compact.', 'The model is efficient.'][i], reason: label, changes: []}))}});
     const records = new Map(['1', '2', 'a'].map(id => [id, make(id)]));
     const vscode = {Uri: {file: fsPath => ({fsPath})}, ViewColumn: {One: 1}, window: {showWarningMessage: async () => confirmation,
-        createWebviewPanel: () => {creations++; return {reveal() {}, dispose() {}, onDidDispose() {}, webview: {
+        createWebviewPanel: () => {creations++; return {reveal() {}, dispose() {}, onDidDispose(fn) {disposed = fn;}, webview: {
             cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}),
             set html(value) {htmlWrites++; assert(value.includes('Content-Security-Policy'));},
             onDidReceiveMessage: fn => {receive = fn;}, postMessage: async value => messages.push(value)}};}}};
@@ -26,6 +26,9 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
         reopen: async () => events.push({type: 'reopen'}), start: async () => events.push({type: 'start'}), copy: async () => events.push({type: 'copy'}), handoff: async () => events.push({type: 'handoff'}), finish() {}};
     const view = createWorkbench(vscode, {subscriptions: []}, services);
     view.setRecords(records); await view.show(records.get('1').c); await receive({type: 'ready'});
+    const content = messages.find(m => m.type === 'content');
+    assert(!('source' in content.data)); assert(!('options' in content.data));
+    assert.equal(content.options.length, 3);
     const count = messages.length;
     view.status({...view.active, version: 'old'}, 'PDF 最新');
     view.status({...view.active, id: 'a'}, 'PDF 最新');
@@ -70,4 +73,12 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert(header.split('<details class="more">')[0].includes('data-action="handoff"'));
     assert(!header.split('<details class="more">')[1].includes('data-action="handoff"'));
     assert(!page.includes('data-action="connect"')); assert(!page.includes('data-action="copy"'));
+    let translations = 0;
+    services.autoTranslate = () => true; services.provider = () => 'fixture';
+    services.translate = async text => {translations++; return '中文 ' + text;};
+    await send('translate'); await view.whenTranslationIdle(); const once = translations;
+    await send('translate'); await view.whenTranslationIdle(); assert.equal(translations, once, 'reachable translations are reused');
+    disposed(); assert.equal(view.active, undefined);
+    view.setRecords(records); await view.show(records.get('a').c); await receive({type: 'ready'}); await view.whenTranslationIdle();
+    assert.equal(translations, once * 2, 'closing releases translations; reopening reads current content');
 });

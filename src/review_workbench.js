@@ -36,7 +36,9 @@ function createWorkbench(vscode, context, services) {
     const options = data => data.options || [{label: 'A', after: data.candidate, reason: '已有单方案', changes: data.changes}];
     const directory = () => services.directory();
     function packet() {
-        return {type: 'content', c: active, data: loaded, options: options(loaded), directory: directory(), style: services.style(),
+        const {file, kind, location, versions, requests, questions} = loaded.edit;
+        return {type: 'content', c: active, data: {original: loaded.original, edit: {file, kind, location, versions, requests, questions}},
+            options: options(loaded), fewer_options_reason: loaded.fewer_options_reason, directory: directory(), style: services.style(),
             sourceSelection,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }
@@ -55,7 +57,8 @@ function createWorkbench(vscode, context, services) {
             panel = vscode.window.createWebviewPanel('texscholarReview', '论文审核', vscode.ViewColumn.One,
                 {enableScripts: true, localResourceRoots: [vscode.Uri.file(path.join(__dirname, 'vendor', 'katex'))], retainContextWhenHidden: true});
             panel.webview.onDidReceiveMessage(receive);
-            panel.onDidDispose(() => {panel = undefined; active = undefined; translationEpoch++;});
+            panel.onDidDispose(() => {panel = undefined; active = loaded = pending = sourceSelection = undefined;
+                lastRecords = new Map(); hasPending = dirty = noteDirty = false; translationEpoch++; translations.clear();});
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
@@ -91,7 +94,18 @@ function createWorkbench(vscode, context, services) {
             }
         })().catch(error => post({type: 'translationStatus', message: error.message})).finally(() => {translationRun = undefined;});
     }
+    function trimTranslations() {
+        if (!translations.size) return;
+        const texts = new Set();
+        const keep = data => {texts.add(data.original); for (const o of options(data)) texts.add(o.after);
+            for (const q of data.edit.questions || []) texts.add(q.quote);};
+        for (const record of lastRecords.values()) keep(record.data);
+        if (loaded) keep(loaded);
+        const provider = services.provider();
+        for (const key of translations.keys()) {const [source, text] = JSON.parse(key); if (source !== provider || !texts.has(text)) translations.delete(key);}
+    }
     async function translate(retry) {
+        trimTranslations();
         const c = {...active}, data = loaded, epoch = translationEpoch, provider = services.provider();
         const items = [{key: 'original', text: data.original}, ...options(data).map(o => ({key: o.label, text: o.after})),
             ...(data.edit.questions || []).map((q, i) => ({key: 'question' + i, text: q.quote}))];
@@ -202,7 +216,7 @@ function createWorkbench(vscode, context, services) {
         }
     }
     context.subscriptions.push({dispose() {panel?.dispose();}});
-    return {show, sync, setRecords(records) {lastRecords = records;},
+    return {show, sync, setRecords(records) {lastRecords = records; trimTranslations();},
         async annotate(c, selected) {
             await show(c);
             if (!valid(c)) return;

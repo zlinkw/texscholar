@@ -88,7 +88,7 @@ function activate(context, vscode = require('vscode')) {
     }));
     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => queued(false).catch(error => vscode.window.showErrorMessage(error.message))));
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
-    context.subscriptions.push(watcher, watcher.onDidCreate(() => queued(false).catch(error => vscode.window.showErrorMessage(error.message))));
+    context.subscriptions.push(watcher, watcher.onDidCreate(file => {if (file.scheme === 'file' && !/(?:^|[\\/])(?:\.git|\.codex-review|\.latex-build|node_modules|clean_dir)(?:[\\/]|$)/.test(file.fsPath)) return queued(false).catch(error => vscode.window.showErrorMessage(error.message));}));
     return {ready: queued(false).catch(error => vscode.window.showErrorMessage('TeXScholar MCP 登记失败：' + error.message)), register: queued};
 }
 module.exports = {activate, launcher, taskRequest};

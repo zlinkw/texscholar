@@ -7,11 +7,6 @@
       "optional": true
     },
     {
-      "key": "ltex.additionalRules.motherTongue",
-      "value": "zh-CN",
-      "optional": false
-    },
-    {
       "key": "latex-workshop.latex.autoBuild.run",
       "value": "never",
       "optional": false
@@ -172,78 +167,10 @@
       "optional": false
     },
     {
-      "key": "ltex.enabled",
-      "value": [
-        "latex"
-      ],
-      "optional": true
-    },
-    {
-      "key": "ltex.language",
-      "value": "en-US",
-      "optional": true
-    },
-    {
-      "key": "ltex.checkFrequency",
-      "value": "save",
-      "optional": true
-    },
-    {
-      "key": "ltex.languageToolHttpServerUri",
-      "value": "",
-      "optional": true
-    },
-    {
-      "key": "ltex.statusBarItem",
-      "value": true,
-      "optional": true
-    },
-    {
-      "key": "ltex.dictionary",
-      "value": {
-        "en-US": [
-          "LaTeX",
-          "BibTeX",
-          "SyncTeX",
-          "TeX",
-          "DINO",
-          "DINOv3",
-          "Dice",
-          "Hausdorff",
-          "voxel",
-          "voxels",
-          "multimodal",
-          "hypergraph",
-          "hypergraphs"
-        ]
-      },
-      "optional": true
-    },
-    {
-      "key": "ltex.latex.commands",
-      "value": {
-        "\\codexdelete{}{}": "ignore",
-        "\\deleted{}": "ignore",
-        "\\deleted[]{}": "ignore",
-        "\\codexadd{}{}": "default",
-        "\\codexreplace{}{}{}": "default"
-      },
-      "optional": false
-    },
-    {
       "key": "errorLens.enabledDiagnosticLevels",
       "value": [
         "error",
         "warning"
-      ],
-      "optional": true
-    },
-    {
-      "key": "errorLens.excludeBySource",
-      "value": [
-        "LTeX",
-        "ltex",
-        "LTeX+"
       ],
       "optional": true
     },

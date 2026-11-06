@@ -8,7 +8,6 @@ const TARGETS = Object.freeze({
     viewPdf: 'latex-workshop.view',
     forwardSync: 'latex-workshop.synctex',
     wordcount: 'latex-workshop.wordcount',
-    grammar: 'ltex.checkCurrentDocument',
     formattedPaste: 'latex-utilities.formattedPaste',
     selectEnvironment: 'latex-workshop.select-env',
     wrapEnvironment: 'latex-workshop.wrap-env',

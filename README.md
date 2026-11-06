@@ -124,7 +124,7 @@ The accepted source stays unchanged until the author accepts a candidate.
 | 候选审核与审核 PDF | Python 3.12 或更新的 Python 3、latexdiff，以及可用的 TeX / Perl 环境 | 需要 |
 | 整理源码缩进 | tex-fmt | 用到时需要 |
 | 备份到私有 GitHub | Git、GitHub CLI，以及你自己的 GitHub 登录 | 可以稍后配置 |
-| 英语检查、书签等 | 对应的配套扩展 | 可选 |
+| 书签等 | 对应的配套扩展 | 可选 |
 
 首次轻量安装可选 [TinyTeX](https://yihui.org/tinytex/)。已经有可用 TeX Live 或 MacTeX 时，不必重复安装另一套。插件不内置整套 TeX 或 Python，也不会自动替你登录账号。
 
@@ -732,7 +732,6 @@ Google 两个入口默认读取当前 Windows／macOS 系统的静态 HTTP／HTT
 | 用途 | 配套扩展 |
 |---|---|
 | 编译、PDF 与双向定位 | LaTeX Workshop，必需 |
-| 英语拼写与语法 | LTeX+ |
 | 把诊断显示在行内 | Error Lens |
 | 书签与长文导航 | Bookmarks |
 | 按注释标签浏览任务 | Todo Tree |
@@ -743,7 +742,7 @@ Google 两个入口默认读取当前 Windows／macOS 系统的静态 HTTP／HTT
 | 界面中文化 | Chinese (Simplified) Language Pack |
 | 源码悬浮翻译 | Comment Translate，可选；与卡片翻译是两个入口 |
 
-系统工具和账号仍由各自程序管理。比如英语检查器可能还需要下载语言服务器；扩展装好不等于所有依赖已经就绪。
+系统工具和账号仍由各自程序管理；扩展装好不等于所有依赖已经就绪。
 
 #### 章节目录、折叠和书签
 
@@ -813,7 +812,6 @@ Google 两个入口默认读取当前 Windows／macOS 系统的静态 HTTP／HTT
 | 折叠规则与段落计划 | Ctrl+Alt+0 | Cmd+Option+0 |
 | 切换源码／可视化编辑 | Ctrl+Alt+O | Cmd+Option+O |
 | 统计字数 | Ctrl+Alt+W | Cmd+Option+W |
-| 英语检查 | Ctrl+Alt+G | Cmd+Option+G |
 | 检查未引用文献 | Ctrl+Alt+Shift+C | Cmd+Option+Shift+C |
 | 打开章节结构树 | Ctrl+Alt+Shift+T | Cmd+Option+Shift+T |
 | 添加／取消带名称的书签 | Ctrl+Alt+M | Cmd+Option+M |
@@ -829,7 +827,7 @@ Google 两个入口默认读取当前 Windows／macOS 系统的静态 HTTP／HTT
 | 切换公式预览 | Ctrl+Alt+Shift+M | Cmd+Option+Shift+M |
 | 刷新公式预览 | Ctrl+Alt+Shift+P | Cmd+Option+Shift+P |
 
-书签、公式预览、英语检查和可视化编辑需要安装相应配套扩展。编辑器焦点不在 LaTeX 中时，一些键不会生效。审核快捷键作用于当前定位项，不确定时优先点卡片上的按钮。Mac 组合仍需实机核对。
+书签、公式预览和可视化编辑需要安装相应配套扩展。编辑器焦点不在 LaTeX 中时，一些键不会生效。审核快捷键作用于当前定位项，不确定时优先点卡片上的按钮。Mac 组合仍需实机核对。
 
 <a id="faq"></a>
 ### 常见问题
@@ -923,3 +921,5 @@ Google 两个入口默认读取当前 Windows／macOS 系统的静态 HTTP／HTT
 如果只是不想继续自动导入，把 `localLatex.configurationProfile` 设为 `off`。卸载扩展、恢复配置与删除论文数据是不同操作；不要把删除工作目录当作卸载步骤。
 
 返修批注默认只显示列表。点 **新增返修批注**、划词，或点已有批注的 **编辑批注**，共用一个按需展开的输入区；保存或取消后自动收起。已有批注的长选区可点 **查看批注选区** 展开。编辑时点 **保存修改** 或 **取消**。仅当前版本尚未处理的批注可编辑；保存只更新文字，不新增批注或改动其编号、选区、候选和正式正文。并发变化或 AI 已生成新版时停止覆盖，保留未保存输入供核对。
+
+审核页只向网页传递当前原文、备选和必要批注，保留精确源码操作在扩展端。已失效方案的译文会释放，关闭审核标签时释放其缓存。生成目录中的 TeX 不触发重复配置检查。英文语法可按需交给 AI，配套列表不再安装常驻 Java 检查器。
