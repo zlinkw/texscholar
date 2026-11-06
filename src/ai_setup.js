@@ -18,8 +18,8 @@ async function buildPrompt() {
         '',
         '这是一项实际配置请求，不是让我反复手动安装技能的教程。请先读取当前电脑、已安装插件、全局 AGENTS 和相关 SKILL，再执行必要且获准的配置。不得仅口头承诺“已经记住”。',
         '适用于论文撰写、修改、回复信与作者审核。不要修改或安装全局 SKILL，不覆盖现有科学规则、安全规则和其他任务的技能；本次协作规则由插件内置资源维护。每次写作或返修先读取当前 collaboration-guide.md 与 source_review.py collaboration-contract；从插件加入上下文时会再次附带。不得在论文项目新建 Markdown 管理文件。',
-        '实际核对环境和协作接口后再报告结果，作者可选择“已配置，不再提示”。复制不等于配置完成，也不能保证任意新聊天自动获得协议；新会话使用插件“将写作规则与当前源文件加入 Codex”或复制三方案协议。',
-        '插件以 VSIX 安装，MCP 是内置本地通信入口，不是另一个产品。通过“连接 Codex”只添加插件专属 MCP 连接，重启 Codex 后新会话可发现工具及初始化指引。论文任务先调用 read_context，读取 file_roles；首次或结构变化请作者用“识别／确认论文文件角色”确认，随后 propose_options/rework_options；AI 可直接读取 read_feedback 获取完整原文、备选和准确选区，不必依赖请求快照。元数据关联走 link_questions。作者接收和 Git 仍保留原有界面操作。可用“开始 AI 论文任务”准备带协议的首条消息，再由作者发送。不得修改其他 MCP、模型、代理或凭据。',
+        '实际核对环境和协作接口后再报告结果，作者可选择“已配置，不再提示”。复制不等于配置完成，也不能保证任意新聊天自动获得协议；新会话使用插件“AI 论文助手”，将目标、三方案规则及必要配置合为一份说明。',
+        '插件以 VSIX 安装，MCP 是内置本地通信入口，不是另一个产品。通过“AI 论文助手”自动核对插件专属 MCP 连接，重启 Codex 后新会话可发现工具及初始化指引。论文任务先调用 read_context，读取 file_roles；首次或结构变化请作者用“识别／确认论文文件角色”确认，随后 propose_options/rework_options；AI 可直接读取 read_feedback 获取完整原文、备选和准确选区，不必依赖请求快照。元数据关联走 link_questions。作者接收和 Git 仍保留原有界面操作。由同一入口准备带协议的首条消息，作者自行发送，不必另复制规则。不得修改其他 MCP、模型、代理或凭据。',
         '',
         '## 新电脑迁移与配置范围（1～40）',
         '以下为可迁移行为，不含任何旧电脑绝对路径、完整 PATH、代理、凭据、账号、论文路径或 Git 远端。不得凭插件公开仓库地址创建或连接论文备份仓库。',
@@ -107,9 +107,9 @@ function activate(context, vscode) {
         if (!explicit && (announced || context.globalState.get('aiSetupConfigured', false))) return;
         announced = true;
         // Do not wait for the user to dismiss a notification during activation.
-        vscode.window.showInformationMessage('TeXScholar：让 AI 配合三方案审核并配置本地 LaTeX。可复制 1～40 项配置与任务级协议，不修改全局 SKILL，不含个人路径、代理或凭据。',
-            '一键复制提示词', '已配置，不再提示', '查看完整提示词').then(async choice => {
-            if (choice === '一键复制提示词') await copy();
+        vscode.window.showInformationMessage('TeXScholar：AI 论文助手会合并连接、任务规则和首次环境配置，准备一份任务说明，由你检查后发送。不修改全局 SKILL。',
+            'AI 论文助手', '已配置，不再提示', '查看完整提示词').then(async choice => {
+            if (choice === 'AI 论文助手') await vscode.commands.executeCommand('localLatex.startPaperTask');
             else if (choice === '已配置，不再提示') await context.globalState.update('aiSetupConfigured', true);
             else if (choice === '查看完整提示词') {
                 const document = await vscode.workspace.openTextDocument({language: 'markdown', content: await buildPrompt()});

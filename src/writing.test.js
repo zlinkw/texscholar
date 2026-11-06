@@ -56,6 +56,8 @@ test('project onboarding is nonblocking, respects explicit acknowledgement and c
             showErrorMessage: text => {throw new Error(text);}}};
     await aiSetup(context, vscode).ready;
     assert.equal(notices.length, 1);
+    assert(notices[0].buttons.includes('AI 论文助手'));
+    assert(!notices[0].buttons.includes('一键复制提示词'));
     assert.equal(state.size, 0, 'opening a project does not claim AI configuration is complete');
     await handlers.get('localLatex.copyAISetupPrompt')();
     assert.equal(copied.length, 1);
@@ -80,4 +82,67 @@ test('project onboarding is nonblocking, respects explicit acknowledgement and c
     vscode.window.showInformationMessage = () => new Promise(() => {});
     await aiSetup(context, vscode).ready;
     assert(true, 'activation does not await notification dismissal');
+});
+
+test('one AI assistant prepares one packet, connects safely, respects cancellation and keeps setup optional', async () => {
+    const fs = require('node:fs/promises'), path = require('node:path');
+    const root = await fs.mkdtemp(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'assistant-'));
+    const home = path.join(root, 'codex-home'), paper = path.join(root, 'paper'), storage = path.join(root, 'storage');
+    await fs.mkdir(home); await fs.mkdir(paper);
+    const source = '\\documentclass{article}\nOriginal paper stays unchanged.\n';
+    await fs.writeFile(path.join(paper, 'paper.tex'), source, 'utf8');
+    const unrelated = 'model = "keep-author-model"\n[mcp_servers.other]\ncommand = "keep-service"\n';
+    await fs.writeFile(path.join(home, 'config.toml'), unrelated, 'utf8');
+    const previousHome = process.env.CODEX_HOME; process.env.CODEX_HOME = home;
+    const handlers = new Map(), state = new Map(), workspaceState = new Map(), calls = [], notices = [], copied = [];
+    let goal, available = ['chatgpt.newChat', 'chatgpt.addFileToThread'], copyChoice, python = process.env.LOCAL_LATEX_PYTHON;
+    const folder = {uri: {scheme: 'file', fsPath: paper}};
+    const vscode = {Uri: {file: fsPath => ({scheme: 'file', fsPath})}, RelativePattern: class {},
+        workspace: {isTrusted: true, workspaceFolders: [folder], findFiles: async () => [path.join(paper, 'paper.tex')],
+            getConfiguration: () => ({get: (key, fallback) => key === 'pythonPath' ? python : fallback}),
+            createFileSystemWatcher: () => ({dispose() {}, onDidCreate: () => ({dispose() {}})}),
+            onDidChangeWorkspaceFolders: () => ({dispose() {}})},
+        env: {clipboard: {writeText: async text => copied.push(text)}},
+        window: {showInputBox: async () => goal, showInformationMessage: text => notices.push(text),
+            showWarningMessage: async text => {notices.push(text); return copyChoice;},
+            showErrorMessage: text => {throw new Error(text);}},
+        commands: {registerCommand: (id, handler) => {handlers.set(id, handler); return {dispose() {}};},
+            getCommands: async () => available, executeCommand: async (...args) => calls.push(args)}};
+    const context = {subscriptions: [], globalStorageUri: {fsPath: storage},
+        globalState: {get: (key, fallback) => state.get(key) ?? fallback},
+        workspaceState: {get: key => workspaceState.get(key), update: async (key, value) => workspaceState.set(key, value)}};
+    try {
+        await require('./mcp_setup').activate(context, vscode).ready;
+        const start = handlers.get('localLatex.startPaperTask');
+        await start();
+        assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), unrelated, 'cancel before connecting');
+        assert.equal(calls.length, 0);
+        goal = '完善引言，保留证据'; await start();
+        const attachments = calls.filter(c => c[0] === 'chatgpt.addFileToThread');
+        assert.equal(attachments.length, 1, 'task and rules are a single attachment');
+        const initial = await fs.readFile(attachments[0][1].fsPath, 'utf8');
+        assert(initial.includes(goal)); assert(initial.includes('read_context')); assert(initial.includes('\n40. '));
+        assert.equal(initial.split('# TeXScholar 当前任务协作协议：').length, 2, 'protocol appears only once');
+        assert(notices.at(-1).includes('首次连接需重启 Codex'));
+        const configured = await fs.readFile(path.join(home, 'config.toml'), 'utf8');
+        assert(configured.includes(unrelated.trim())); assert(configured.includes('[mcp_servers.texscholar]'));
+        state.set('aiSetupConfigured', true); calls.length = 0; notices.length = 0;
+        goal = '修改回复信'; await start();
+        const everyday = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
+        assert(everyday.includes(goal)); assert(everyday.includes('A/B/C')); assert(!everyday.includes('\n40. '));
+        assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), configured, 'repeat setup is idempotent');
+        assert(!notices.at(-1).includes('首次连接'));
+        available = []; calls.length = 0; copyChoice = '复制完整任务说明'; await start();
+        assert.equal(copied.length, 1); assert(copied[0].includes(goal)); assert(copied[0].includes('A/B/C'));
+        assert.equal(calls.length, 0, 'no unavailable command or automatic sending');
+        available = ['chatgpt.addFileToThread']; python = path.join(root, 'missing-python');
+        await start();
+        const repair = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
+        assert(repair.includes('MCP 尚未连接成功')); assert(repair.includes('\n40. '));
+        assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), configured, 'connection failure preserves configuration');
+        assert.equal(await fs.readFile(path.join(paper, 'paper.tex'), 'utf8'), source);
+        assert(!calls.some(c => /send|submit/i.test(c[0])));
+    } finally {
+        if (previousHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previousHome;
+    }
 });

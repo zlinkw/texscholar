@@ -18,6 +18,12 @@ async function write(file, text) {
     const temporary = file + '.write-' + crypto.randomUUID();
     await fs.writeFile(temporary, text, {encoding: 'utf8', flag: 'wx'}); await fs.rename(temporary, file);
 }
+async function taskRequest(goal, roots, setup, connection) {
+    const rules = setup ? await require('./ai_setup').buildPrompt() : await fs.readFile(path.join(__dirname, 'collaboration-guide.md'), 'utf8');
+    return ['# TeXScholar AI 论文任务', '', '本次任务：', goal.trim(), '', '当前工作区：', ...roots, '',
+        '先使用 texscholar MCP read_context 读取实际项目、file_roles 和最新协议。不修改全局 SKILL，不自动发送或接收候选。',
+        connection || '若当前会话尚未发现 texscholar，请先核对连接与重载状态，不绕过接口直接修改审核数据。', '', rules].join('\n');
+}
 function activate(context, vscode = require('vscode')) {
     let chain = Promise.resolve();
     async function register(connect = false) {
@@ -45,25 +51,38 @@ function activate(context, vscode = require('vscode')) {
         const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
         const result = JSON.parse(await run(python, ['-X', 'utf8', path.join(__dirname, 'mcp_config.py'), '--home', home, '--launcher', script, '--python', python, ...(connect ? ['--connect'] : [])], storage));
         await context.workspaceState.update('texscholarMCPConfigured', result.connected);
-        if (connect) vscode.window.showInformationMessage('TeXScholar MCP 已连接配置。请重启 Codex 扩展或新开会话，并在 MCP 列表核对 texscholar；未修改 SKILL。');
         return result;
     }
     const queued = connect => {const task = chain.then(() => register(connect)); chain = task.catch(() => {}); return task;};
-    context.subscriptions.push(vscode.commands.registerCommand('localLatex.connectCodex', () => queued(true).catch(error => vscode.window.showErrorMessage(error.message))));
+    context.subscriptions.push(vscode.commands.registerCommand('localLatex.connectCodex', () => queued(true).then(() =>
+        vscode.window.showInformationMessage('TeXScholar MCP 连接配置已核对；首次或配置变化后请重启 Codex 并核对 texscholar。日常使用 AI 论文助手即可。')).catch(error => vscode.window.showErrorMessage(error.message))));
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.startPaperTask', async () => {
         try {
-            const connected = await queued(true); if (!connected) return;
-            const goal = await vscode.window.showInputBox({prompt: '本次论文任务是什么？将准备首条消息，不自动发送', placeHolder: '例如：修改引言第二段，保留事实并提供三方案'});
+            if (!vscode.workspace.isTrusted) throw new Error('请先信任本地 LaTeX 工作区。');
+            if (!(await vscode.workspace.findFiles('**/*.tex', EXCLUDE, 1)).length) throw new Error('请先打开含 .tex 的本地论文项目。');
+            const goal = await vscode.window.showInputBox({prompt: 'AI 论文助手：填写目标，自动合并连接、规则与所需配置；不自动发送', placeHolder: '例如：配置本机写作环境，或修改引言第二段并提供三方案'});
             if (!goal?.trim()) return;
             const commands = await vscode.commands.getCommands(true);
-            if (!commands.includes('chatgpt.addFileToThread')) throw new Error('未找到 Codex 上下文入口；请先安装并启用 Codex。');
+            const roots = (vscode.workspace.workspaceFolders || []).filter(f => f.uri.scheme === 'file').map(f => f.uri.fsPath);
+            const setup = !context.globalState.get('aiSetupConfigured', false);
+            if (!commands.includes('chatgpt.addFileToThread')) {
+                if (await vscode.window.showWarningMessage('未找到 Codex 的输入区接口。可复制一份合并后的任务说明到 Codex；未更改连接。', '复制完整任务说明') === '复制完整任务说明')
+                    await vscode.env.clipboard.writeText(await taskRequest(goal, roots, setup));
+                return;
+            }
+            let connected, connectionError;
+            try {connected = await queued(true);}
+            catch (error) {connectionError = error.message;}
+            const connection = connectionError ? 'MCP 尚未连接成功：' + JSON.stringify(connectionError) + '。请先诊断此问题，不覆盖其他服务或绕过安全检查；恢复连接后再执行论文任务。'
+                : connected.restart_required ? 'MCP 配置刚更新；首次连接或配置变化后需重启 Codex，再在新会话核对 texscholar。连接配置不等于当前会话已加载工具。' : undefined;
             const directory = path.join(context.globalStorageUri.fsPath, 'task-requests'); await fs.mkdir(directory, {recursive: true});
             const file = path.join(directory, 'first-message-' + crypto.randomUUID() + '.txt');
-            await write(file, '请先使用 texscholar MCP read_context 读取当前论文项目与最新协议，再执行任务。不修改全局 SKILL。\n本次任务：\n' + goal + '\n工作区：\n' + (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath).join('\n'));
+            await write(file, await taskRequest(goal, roots, setup || !!connectionError, connection));
             if (commands.includes('chatgpt.newChat')) await vscode.commands.executeCommand('chatgpt.newChat');
             await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
-            await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(path.join(__dirname, 'collaboration-guide.md')));
-            vscode.window.showInformationMessage('首条任务与三方案协议已加入新会话。请检查并自行发送；首次连接须先重启 Codex，使 MCP 生效。');
+            const notice = '任务、三方案规则' + (setup || connectionError ? '与环境配置要求' : '') + '已合为一份说明，加入 Codex 输入区；请检查并自行发送。';
+            if (connectionError) vscode.window.showWarningMessage(notice + ' MCP 尚未连接成功：' + connectionError);
+            else vscode.window.showInformationMessage(notice + (connected.restart_required ? ' 首次连接需重启 Codex，之后可再用本入口准备任务；不必分别配置或复制规则。' : ' 未修改全局 SKILL。'));
         } catch (error) {vscode.window.showErrorMessage(error.message);}
     }));
     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => queued(false).catch(error => vscode.window.showErrorMessage(error.message))));
@@ -71,4 +90,4 @@ function activate(context, vscode = require('vscode')) {
     context.subscriptions.push(watcher, watcher.onDidCreate(() => queued(false).catch(error => vscode.window.showErrorMessage(error.message))));
     return {ready: queued(false).catch(error => vscode.window.showErrorMessage('TeXScholar MCP 登记失败：' + error.message)), register: queued};
 }
-module.exports = {activate, launcher};
+module.exports = {activate, launcher, taskRequest};
