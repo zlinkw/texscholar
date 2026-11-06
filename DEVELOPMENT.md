@@ -36,6 +36,8 @@ MCP read_context 返回同一 file_roles；AI 写候选前在共享锁内重新�
 
 本轮 0.9.4 仅修正公式阅读布局：隔离页面复现原容器使箭头基线偏移约 24px；移除源码区并使用自然行内布局后同一探针偏移为 0。规定检查为受影响的 math/workbench/inline/writing 定向套件及 Windows 隔离交互，不重跑未改的 PDF 编译、Git 和翻译协议全量组。实际结果：20 项定向测试通过，Windows 界面验证箭头自然基线偏移为 0、无自动源码块；普通文字／整式／分子选区、切换模式后草稿保留、候选保存及独立多行公式均通过，未写正文或编译 PDF。首轮隔离启动缺少样例目录，补齐该夹具后完成上述检查，保留真实输出；Mac 未实机验证。真实论文、Typst 和全局 SKILL 仍不涉及。
 
+0.9.5 仅在阅读层把普通文字的百分号转义显示为单个 `%`。分段沿用公式扫描器，区分公式、注释与 verbatim；显示锚点仍覆盖源码的 `\%` 两个字符，不改变正文、候选或 PDF。规定检查为 math/workbench/inline/writing 定向套件和 Windows 隔离选区交互；不增加性能测量或重跑未改的编译／Git／翻译组。实际 21 项定向测试通过；Windows 隔离界面验证 `90\%` 显示为 `90%`，选中 `%` 保存的批注仍精确引用源码 `\%`，源码模式完整保留反斜杠；原有公式基线、整式／分子批注和草稿保留继续通过，正文及 PDF 未改。Mac 未实机验证。
+
 ## 开发依赖
 
 Node.js 22 或更新版本、Python 3.12 或更新的 Python 3、Git、tex-fmt、TeX Live/TinyTeX/MacTeX。Python PDF 测试另需 `pypdf`，不是插件后端的运行依赖。ChkTeX 测试需要实际安装的 LaTeX Workshop 的 `out/src/lint/latex-code-actions.js`，通过环境变量指定，不依赖个人扩展目录或固定版本。

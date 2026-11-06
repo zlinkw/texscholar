@@ -22,12 +22,17 @@
     function segments(text) {
         const result = [];
         let at = 0, plain = 0;
+        function literal(stop) {
+            if (plain < at) result.push({start: plain, end: at});
+            result.push({start: at, end: stop, literal: true});
+            at = plain = stop;
+        }
         while (at < text.length) {
-            if (text[at] === '%' && !escaped(text, at)) {const end = text.indexOf('\n', at); at = end < 0 ? text.length : end + 1; continue;}
+            if (text[at] === '%' && !escaped(text, at)) {const end = text.indexOf('\n', at); literal(end < 0 ? text.length : end + 1); continue;}
             const verb = /^\\verb\*?([^A-Za-z\s])/.exec(text.slice(at));
-            if (verb && !escaped(text, at)) {const end = text.indexOf(verb[1], at + verb[0].length); at = end < 0 ? at + verb[0].length : end + 1; continue;}
-            const literal = /^\\begin\{(verbatim\*?|lstlisting|minted)\}/.exec(text.slice(at));
-            if (literal && !escaped(text, at)) {const close = '\\end{' + literal[1] + '}', end = text.indexOf(close, at + literal[0].length); at = end < 0 ? text.length : end + close.length; continue;}
+            if (verb && !escaped(text, at)) {const end = text.indexOf(verb[1], at + verb[0].length); literal(end < 0 ? at + verb[0].length : end + 1); continue;}
+            const environmentText = /^\\begin\{(verbatim\*?|lstlisting|minted)\}/.exec(text.slice(at));
+            if (environmentText && !escaped(text, at)) {const close = '\\end{' + environmentText[1] + '}', end = text.indexOf(close, at + environmentText[0].length); literal(end < 0 ? text.length : end + close.length); continue;}
             let open, close, display = false, environment = false;
             if (!escaped(text, at)) {
                 if (text.startsWith('$$', at)) {open = close = '$$'; display = true;}
@@ -84,21 +89,29 @@
         const doc = node.ownerDocument, model = projection(raw, mode === 'source'), ranges = changedRanges(raw, changes, side);
         model.anchors = [];
         const fragment = doc.createDocumentFragment();
-        function plain(parent, start, end) {
+        function plain(parent, start, end, literal = false) {
             let at = start;
-            while (at < end) {
-                const changed = ranges.some(([a, b]) => model.offsets[at] >= a && model.offsets[at] < b);
-                let stop = at + 1;
-                while (stop < end && ranges.some(([a, b]) => model.offsets[stop] >= a && model.offsets[stop] < b) === changed) stop++;
+            const percentAt = i => mode !== 'source' && !literal && model.text.startsWith('\\%', i) && !escaped(model.text, i);
+            function append(stop, text, changed, atomic = false) {
                 const span = doc.createElement('span');
                 span.className = changed ? side === 'original' ? 'old' : 'new' : 'same';
-                span.textContent = model.text.slice(at, stop);
-                parent.appendChild(span); model.anchors.push({node: span, start: at, end: stop}); at = stop;
+                span.textContent = text;
+                parent.appendChild(span); model.anchors.push({node: span, start: at, end: stop, atomic}); at = stop;
+            }
+            while (at < end) {
+                if (percentAt(at)) {
+                    const changed = ranges.some(([a, b]) => model.offsets[at] < b && model.offsets[at + 1] + 1 > a);
+                    append(at + 2, '%', changed, true); continue;
+                }
+                const changed = ranges.some(([a, b]) => model.offsets[at] >= a && model.offsets[at] < b);
+                let stop = at + 1;
+                while (stop < end && !percentAt(stop) && ranges.some(([a, b]) => model.offsets[stop] >= a && model.offsets[stop] < b) === changed) stop++;
+                append(stop, model.text.slice(at, stop), changed);
             }
         }
         const parts = mode === 'source' ? [{start: 0, end: model.text.length}] : segments(model.text);
         for (const part of parts) {
-            if (!part.math) {plain(fragment, part.start, part.end); continue;}
+            if (!part.math) {plain(fragment, part.start, part.end, part.literal); continue;}
             const formula = doc.createElement('span'); formula.className = 'formula' + (part.display ? ' display-formula' : '');
             const preview = doc.createElement('span'); preview.className = 'math-preview';
             let error;
@@ -114,11 +127,11 @@
                 const notice = doc.createElement('small'); notice.className = 'math-error';
                 notice.textContent = '［公式暂无法预览，请切换 LaTeX 源码］'; notice.title = error;
                 formula.appendChild(notice);
-                model.anchors.push({node: notice, start: part.start, end: part.end, atomic: true});
+                model.anchors.push({node: notice, start: part.start, end: part.end, atomic: true, math: true});
             } else {
                 formula.appendChild(preview);
                 preview.title = '预览中的公式选区按整式绑定；细部请切换 LaTeX 源码。';
-                model.anchors.push({node: preview, start: part.start, end: part.end, atomic: true});
+                model.anchors.push({node: preview, start: part.start, end: part.end, atomic: true, math: true});
             }
             fragment.appendChild(formula);
         }
@@ -144,7 +157,7 @@
         }
         const a = anchors[0], b = anchors.at(-1);
         const raw = rawBounds(model, point(a, range.startContainer, range.startOffset, false), point(b, range.endContainer, range.endOffset, true));
-        return raw ? {...raw, wholeMath: anchors.some(a => a.atomic)} : undefined;
+        return raw ? {...raw, wholeMath: anchors.some(a => a.math)} : undefined;
     }
     return {projection, segments, changedRanges, rawBounds, previewTex, render, selectedRange};
 });
