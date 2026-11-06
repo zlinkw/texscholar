@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.9.16",
+  "version": "0.9.17",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -638,11 +638,11 @@
             "comfortable"
           ],
           "enumDescriptions": [
-            "紧凑：原文和候选紧邻换行",
-            "宽松：原文和候选之间增加段落间距"
+            "紧凑：减少标题、卡片和段落之间的留白",
+            "宽松：增加审核内容之间的留白"
           ],
           "default": "compact",
-          "description": "原生审核卡片内部布局。外框宽度、行号区域和字体由 VS Code 控制，不修改原生界面。"
+          "description": "审核页内容间距：紧凑减少空白，宽松增加留白；不改变文字大小或 PDF。"
         },
         "localLatex.reviewStyle.showLegend": {
           "type": "boolean",
@@ -654,14 +654,14 @@
           "default": 16,
           "minimum": 10,
           "maximum": 32,
-          "description": "候选编辑／精准批注面板的文字大小（像素）。不改变论文字号或原生评论外框。"
+          "description": "审核页原文、候选和关联问题的阅读字号（像素）。不影响按钮、源码文件或 PDF 字号。"
         },
         "localLatex.reviewStyle.candidateLineHeight": {
           "type": "number",
           "default": 1.5,
           "minimum": 1,
           "maximum": 2.5,
-          "description": "候选编辑／精准批注面板的行高倍数。长内容继续自动换行。"
+          "description": "审核页阅读文字行高倍数；长内容自动换行。不改变论文或 PDF。"
         },
         "localLatex.texFmtPath": {
           "type": "string",
@@ -722,6 +722,25 @@
           "type": "boolean",
           "default": true,
           "description": "固定审核页切换预览方案或保存当前预览候选后，后台合并请求更新同一完整审核 PDF；关闭后需手动更新。输入批注、翻译和展开内容不编译。接收后的更新由 autoUpdateAfterAccept 独立控制。"
+        },
+        "localLatex.reviewStyle.fontFamily": {
+          "type": "string",
+          "default": "",
+          "description": "审核页阅读字体，可填写本机字体及回退字体；留空跟随 VS Code。源码编辑保持等宽字体，公式使用数学字体。不修改 PDF 或论文。"
+        },
+        "localLatex.reviewStyle.controlFontSize": {
+          "type": "number",
+          "default": 13,
+          "minimum": 10,
+          "maximum": 24,
+          "description": "审核页按钮字号（像素）。按钮边框、圆角和内边距随按钮字号缩放；不改变论文或 PDF。"
+        },
+        "localLatex.reviewStyle.translationFontSize": {
+          "type": "number",
+          "default": 15,
+          "minimum": 10,
+          "maximum": 32,
+          "description": "审核页中文译文字号（像素）。按钮边框、圆角和内边距随按钮字号缩放；不改变论文或 PDF。"
         }
       }
     },

@@ -81,7 +81,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, ui,
         get value() {return value;}, set value(text) {value = text;},
         rows: () => provider.getChildren(), receive: m => receive(m),
-        config: () => configurationChanged({affectsConfiguration: key => key === 'localLatex.reviewStyle'}),
+        config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
         changed: () => fileChanged(uri(owner)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
 }
 
@@ -217,6 +217,19 @@ test('review style changes only display markup and validates colors before embed
     assert(!markedWords(data, 'candidate', style).includes('>stays.</span>'));
     assert.equal(JSON.stringify(data), saved);
     assert.throws(() => styling.read({get: (key, fallback) => key === 'reviewStyle.removedColor' ? 'red; bad html' : fallback}), /RRGGBB/);
+});
+
+test('screen typography updates the workbench without invalidating PDF; shared colors still invalidate it', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    const c = f.rows()[0].children[0].command.arguments[0];
+    await f.ui.open(c); await f.receive({type: 'ready'});
+    f.packets.length = 0;
+    f.config('localLatex.reviewStyle.controlFontSize');
+    assert(f.packets.some(m => m.type === 'style'));
+    assert(!f.packets.some(m => m.type === 'pdfStatus'));
+    f.config('localLatex.reviewStyle.addedColor');
+    assert(f.packets.some(m => m.type === 'pdfStatus' && m.message.includes('样式已变更')));
+    assert(!f.backendCalls.some(c => c.args.some(a => String(a).endsWith('review_pdf.py'))));
 });
 
 test('hidden full-line plans leave no blank placeholders; complete deletion results and surviving words remain visible', () => {

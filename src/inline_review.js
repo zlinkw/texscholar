@@ -490,7 +490,7 @@ function createInlineReview(vscode, context, execute = run) {
     const workbench = require('./review_workbench').createWorkbench(vscode, context, {
         style, read: readCurrent, selection: selectedOption,
         directory: () => Object.entries(latestReviewState?.edits || {}).map(([id, edit]) => ({id, file: edit.file, kind: edit.kind, status: edit.status,
-            location: edit.location, requests: (edit.requests || []).filter(n => n.status === 'open').length})),
+            location: edit.location, questions: (edit.questions || []).map(q => q.id), requests: (edit.requests || []).filter(n => n.status === 'open').length})),
         pdfStatus: c => {
             const entry = workbenchPDFStatus.get(choiceKey(c));
             return entry?.version === c.version && entry.option === selectedOption(c) ? entry.text : 'PDF 尚未核对／待更新';
@@ -820,12 +820,14 @@ function createInlineReview(vscode, context, execute = run) {
         if (!event.affectsConfiguration('localLatex.reviewStyle')) return;
         try {
             const appearance = style();
-            deleted.dispose();
-            deleted = vscode.window.createTextEditorDecorationType({color: appearance.removedColor, textDecoration: appearance.strikeDeleted ? 'line-through' : 'none'});
-            context.subscriptions.push(deleted);
             workbench.updateStyle();
-            for (const peer of records.values()) pdfStatus(peer.c, 'PDF 样式已变更，待更新');
-            decorate();
+            if (reviewStyle.pdfKeys.some(key => event.affectsConfiguration('localLatex.reviewStyle.' + key))) {
+                deleted.dispose();
+                deleted = vscode.window.createTextEditorDecorationType({color: appearance.removedColor, textDecoration: appearance.strikeDeleted ? 'line-through' : 'none'});
+                context.subscriptions.push(deleted);
+                for (const peer of records.values()) pdfStatus(peer.c, 'PDF 样式已变更，待更新');
+                decorate();
+            }
         } catch (error) {vscode.window.showErrorMessage(error.message);}
     }));
     startup = enableReview().catch(error => {vscode.window.showErrorMessage(error.message);});

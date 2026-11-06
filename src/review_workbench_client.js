@@ -2,12 +2,53 @@
 'use strict';
 const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
 let current, data, options = [], preview = 'A', selected, waiting = false, unavailable = false, conflict = false, focused, chinese = true;
-let editingNote;
-const drafts = new Map(), models = new WeakMap(), translatedText = new Map();
+let editingNote, appearance, appearanceRequest, directoryItems = [];
+const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap();
 let sourceMode = false;
 const math = globalThis.TeXScholarMath;
 const instance = crypto.randomUUID();
-let rendering = false, stateFrame, restoration;
+let rendering = false, stateFrame, restoration, toolbarSize;
+const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate']);
+const actionNames = {save: '保存候选', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
+    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
+    configuration: '检查配置', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', related: '定位关联改动'};
+function fitToolbar() {
+    const header = document.querySelector('header'), home = $('toolbarExtras');
+    const size = JSON.stringify([header.clientWidth, appearance?.controlFontSize, $('mathMode').textContent, $('progress').textContent, $('pdfStatus').textContent]);
+    if (toolbarSize === size) return;
+    toolbarSize = size;
+    const nodes = ['mathMode', 'pdfActions', 'pdfStatus'].map($);
+    for (const node of nodes) home.appendChild(node);
+    for (const id of ['mathMode', 'pdfStatus', 'pdfActions']) {
+        if (header.scrollWidth <= header.clientWidth) break;
+        $('overflowActions').appendChild($(id));
+    }
+}
+new ResizeObserver(fitToolbar).observe(document.documentElement);
+document.fonts.ready.then(fitToolbar);
+function pdfStatus(message) {
+    const node = $('pdfStatus'); node.title = message || '';
+    node.textContent = /失败|错误/.test(message) ? 'PDF 更新失败' : /正在|生成中/.test(message) ? 'PDF 生成中'
+        : /待更新|变更/.test(message) ? 'PDF 待更新' : /最新/.test(message) ? 'PDF 最新' : 'PDF 未核对';
+    node.style.color = /失败|错误/.test(message) ? 'var(--vscode-errorForeground)' : '';
+    $('pdfError').hidden = !/失败|错误/.test(message);
+    $('pdfError').textContent = $('pdfError').hidden ? '' : message;
+    fitToolbar();
+}
+function keepReading(update) {
+    // Only compensate for synchronous layout changes above the visible text.
+    // No timer, deferred scroll or focus changes can fight subsequent user input.
+    const y = document.querySelector('header').getBoundingClientRect().bottom + 10;
+    const range = document.caretRangeFromPoint?.(Math.min(120, innerWidth / 3), y);
+    const anchor = range && range.startContainer.parentElement?.closest('main .text, main .zh') ? range : undefined;
+    const anchorNode = anchor?.startContainer;
+    const before = anchor?.getBoundingClientRect().top;
+    update();
+    if (anchorNode?.isConnected && anchor.startContainer === anchorNode && before !== undefined) {
+        const delta = anchor.getBoundingClientRect().top - before;
+        if (delta) window.scrollBy(0, delta);
+    }
+}
 function snapshot() {
     return {c: {...current}, drafts: Object.fromEntries(drafts), note: $('note').value, selected, editingNote,
         composer: !$('noteComposer').hidden, scope: $('scopeChoice').value, sourceMode, chinese, focused,
@@ -32,6 +73,7 @@ function restoreInputs(state) {
     $('noteScopeControls').hidden = !!editingNote;
     $('noteMode').textContent = editingNote ? '编辑返修批注' : '新增返修批注';
     $('saveNote').textContent = editingNote ? '保存修改' : '保存返修批注';
+    placeComposer();
     if (editingNote) $('scope').textContent = '原批注范围保持不变';
     else if (selected) $('scope').textContent = (selected.option ? '方案 ' + selected.option : '原文') + '选区：' + selected.value.slice(selected.start, selected.end);
     else scope();
@@ -52,7 +94,7 @@ function restoreInputs(state) {
 const esc = text => String(text).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 function send(type, extra = {}, blocks = true) {
     if (!current) return;
-    if (blocks) {waiting = true; status(''); buttons();}
+    if (blocks && !passiveActions.has(type)) {waiting = type; status(''); buttons();}
     api.postMessage({type, id: current.id, version: current.version, ...extra});
 }
 function status(message, error = false) {$('status').textContent = message || ''; $('status').className = error ? 'error' : '';}
@@ -61,20 +103,39 @@ function dirty() {
     send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim() || !!editingNote, state: remember(false)}, false); return changed;
 }
 function buttons() {
-    $('note').readOnly = waiting;
+    $('note').readOnly = !!waiting;
     for (const b of document.querySelectorAll('[data-action="newNote"],[data-action="cancelNote"],[data-action="editNoteOpen"]')) b.disabled = waiting;
     for (const button of document.querySelectorAll('button[data-write]')) button.disabled = waiting || unavailable || conflict;
+    for (const button of document.querySelectorAll('button[data-action]')) {
+        if (actionNames[button.dataset.action] || button.dataset.action === 'directory') button.disabled = !!waiting || !!(button.hasAttribute('data-write') && (unavailable || conflict));
+    }
+    $('operationStatus').textContent = waiting ? (actionNames[waiting] || '审核操作') + '…' : '';
 }
 function style(value) {
+    appearance = value;
     const root = document.documentElement.style;
     root.setProperty('--review-font-size', value.candidateFontSize + 'px');
     root.setProperty('--review-line-height', value.candidateLineHeight);
+    root.setProperty('--control-font-size', value.controlFontSize + 'px');
+    root.setProperty('--translation-font-size', value.translationFontSize + 'px');
+    root.setProperty('--review-font-family', value.fontFamily || 'var(--vscode-font-family)');
+    document.body.classList.toggle('comfortable', value.cardLayout === 'comfortable');
     root.setProperty('--removed', value.removedColor); root.setProperty('--added', value.addedColor);
     root.setProperty('--strike', value.strikeDeleted ? 'line-through' : 'none');
     root.setProperty('--unchanged', value.unchangedColor || 'inherit');
+    for (const input of document.querySelectorAll('[data-style]')) if (document.activeElement !== input) input.value = value[input.dataset.style];
+    fitToolbar();
+}
+function saveAppearance(change) {
+    appearanceRequest = crypto.randomUUID();
+    $('appearanceStatus').textContent = '保存中…'; $('appearanceStatus').className = '';
+    send('appearance', {...change, request: appearanceRequest}, false);
 }
 function renderText(node, raw, changes, side) {
+    const signature = JSON.stringify([raw, changes, side, sourceMode]);
+    if (rendered.get(node) === signature) return;
     models.set(node, math.render(node, raw, changes, side, sourceMode ? 'source' : 'preview', globalThis.katex));
+    rendered.set(node, signature);
 }
 function translationSource(key) {
     return key === 'original' ? data.original : key.startsWith('question') ? data.edit.questions?.[Number(key.slice(8))]?.quote : options.find(o => o.label === key)?.after;
@@ -82,14 +143,20 @@ function translationSource(key) {
 function renderTranslation(key, entry) {
     const node = key === 'original' ? $('originalZh') : $('zh-' + key);
     if (!node || entry.source !== translationSource(key)) return;
-    if (entry.error) node.textContent = '翻译未完成：' + entry.error;
-    else math.render(node, entry.text, [], 'readonly', sourceMode ? 'source' : 'preview', globalThis.katex);
-    node.hidden = !chinese;
+    const signature = JSON.stringify([entry.error, entry.text, sourceMode]);
+    if (rendered.get(node) === signature) {node.hidden = !chinese; return;}
+    keepReading(() => {
+        if (entry.error) node.textContent = '翻译未完成：' + entry.error;
+        else math.render(node, entry.text, [], 'readonly', sourceMode ? 'source' : 'preview', globalThis.katex);
+        node.hidden = !chinese;
+    });
+    rendered.set(node, signature);
 }
 function toggleMathMode() {
     sourceMode = !sourceMode;
     $('mathMode').textContent = sourceMode ? '公式预览' : 'LaTeX 源码';
     $('mathMode').setAttribute('aria-pressed', String(sourceMode));
+    fitToolbar();
     if (!data || unavailable) return;
     renderText($('original'), data.original, options.find(o => o.label === preview)?.changes || options[0].changes, 'original');
     for (const o of options) renderText($('text-' + o.label), o.after, o.changes, 'candidate');
@@ -98,17 +165,38 @@ function toggleMathMode() {
     // Draft editors, note text, selected source coordinates and version stay intact.
 }
 function renderDirectory(items) {
+    directoryItems = items;
     const pending = items.filter(i => ['pending', 'rework'].includes(i.status));
-    $('progress').textContent = '本批 ' + items.length + ' 项 · 待处理 ' + pending.length;
+    $('progress').textContent = current ? current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · v' + data.edit.versions.length : '审核项';
+    $('progress').title = '本批可操作 ' + items.length + ' 项 · 待处理 ' + pending.length + '；点击搜索编号、位置或关联问题';
+    if ($('directoryDialog').open) filterDirectory();
+    fitToolbar();
+}
+function filterDirectory() {
+    const query = $('directoryQuery').value.trim().toLocaleLowerCase(), kind = $('directoryKind').value;
+    const found = directoryItems.filter(i => (!kind || i.kind === kind) && (!$('directoryNotes').checked || i.requests > 0)
+        && [i.id, i.file, i.location, ...(i.questions || [])].join(' ').toLocaleLowerCase().includes(query));
+    $('directoryResults').replaceChildren();
+    for (const item of found) {
+        const node = document.createElement('button'); node.className = 'secondary'; node.dataset.action = 'switch'; node.dataset.target = item.id;
+        node.textContent = item.id + ' · ' + item.file + (item.location ? ' · ' + item.location : '') + (item.requests ? ' · 批注 ' + item.requests : '');
+        node.disabled = !!waiting; $('directoryResults').appendChild(node);
+    }
+    if (!found.length) $('directoryResults').textContent = '没有符合条件的可操作审核项。';
 }
 function renderOption(o) {
     let article = $('option-' + o.label);
     if (!article) {article = document.createElement('article'); article.id = 'option-' + o.label; $('options').appendChild(article);}
     article.className = [preview === o.label ? 'selected' : '', focused === o.label ? 'focused' : focused ? 'folded' : ''].join(' ');
-    article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
-        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary">预览 PDF</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开阅读') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="reason">' + esc(o.reason) + '</small>'
+    if (!article.children.length) article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
+        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><details class="reason"><summary>推荐理由</summary><span></span></details>'
         + '<div class="detail"><div class="text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
         + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><small>仅保存待审版本，其他备选保留。</small></div></div>';
+    article.querySelector('.reason span').textContent = o.reason;
+    article.querySelector('.reason').hidden = !o.reason;
+    if (translatedText.has(o.label) && translatedText.get(o.label).source !== o.after) {
+        translatedText.delete(o.label); $('zh-' + o.label).textContent = ''; rendered.delete($('zh-' + o.label));
+    }
     renderText($('text-' + o.label), o.after, o.changes, 'candidate');
     $('edit-' + o.label).value = drafts.get(o.label) ?? o.after.replace(/\r\n/g, '\n');
 }
@@ -116,27 +204,38 @@ function renderQuestions(questions) {
     const signature = JSON.stringify([sourceMode, questions]);
     if ($('questions').dataset.signature === signature) return;
     $('questions').dataset.signature = signature;
-    $('questions').innerHTML = questions.length ? questions.map((q, index) => '<div class="question"><strong>' + esc(q.id) + '</strong><div class="text" id="question-text-' + index + '">' + esc(q.quote) + '</div><div id="zh-question' + index + '" class="zh" ' + (chinese ? '' : 'hidden') + '></div><button class="secondary" data-action="question" data-index="' + index + '">跳转原始文件</button><button class="secondary" data-action="related" data-index="' + index + '">查看本问题全部改动</button></div>').join('') : '当前未关联审稿问题；新论文撰写可以不关联。';
+    $('questions').innerHTML = questions.length ? questions.map((q, index) => '<div class="question"><div class="questionHeading"><strong>' + esc(q.id) + '</strong><div><button class="secondary" data-action="question" data-index="' + index + '" title="跳转到原始审稿意见文件位置">原始位置</button><button class="secondary" data-action="related" data-index="' + index + '" title="查看本问题关联的全部改动">全部改动</button></div></div><div class="text" id="question-text-' + index + '">' + esc(q.quote) + '</div><div id="zh-question' + index + '" class="zh" ' + (chinese ? '' : 'hidden') + '></div></div>').join('') : '当前未关联审稿问题；新论文撰写可以不关联。';
     for (const [index, q] of questions.entries()) math.render($('question-text-' + index), q.quote, [], 'readonly', sourceMode ? 'source' : 'preview', globalThis.katex);
 }
 function renderNotes(requests) {
     const container = $('notes');
-    for (const node of [...container.children]) if (!requests.some(n => n.id === node.dataset.noteId)) node.remove();
+    for (const node of [...container.children]) if (!requests.some(n => n.id === node.dataset.noteId)) {
+        if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
+        node.remove();
+    }
     for (const n of requests) {
         let node = [...container.children].find(node => node.dataset.noteId === n.id);
         if (!node) {node = document.createElement('div'); node.className = 'note'; node.dataset.noteId = n.id; container.appendChild(node);}
         const signature = JSON.stringify(n);
         if (node.dataset.signature === signature) continue;
         node.dataset.signature = signature;
+        if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
         node.innerHTML = '<strong>' + esc(n.option || '整项') + ' · ' + esc(n.status) + '</strong><div class="text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><div class="text">' + esc(n.quote) + '</div></details>' +
             (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '');
     }
+    placeComposer();
     buttons();
+}
+function placeComposer() {
+    const notes = [...$('notes').children], target = editingNote && notes.find(n => n.dataset.noteId === editingNote.id);
+    for (const note of notes) note.classList.toggle('editing', note === target);
+    if (target) target.appendChild($('noteComposer'));
+    else $('notes').before($('noteComposer'));
 }
 function closeComposer() {
     status('');
     editingNote = undefined; selected = undefined; $('note').value = ''; $('noteComposer').hidden = true; $('noteMode').textContent = '新增返修批注';
-    $('noteScopeControls').hidden = false; $('saveNote').textContent = '保存返修批注'; dirty();
+    $('noteScopeControls').hidden = false; $('saveNote').textContent = '保存返修批注'; placeComposer(); dirty();
 }
 function openComposer() {$('noteComposer').hidden = false;}
 function canChangeNote() {
@@ -179,10 +278,19 @@ document.addEventListener('pointerdown', event => {
 document.addEventListener('keyup', event => {if (event.shiftKey) selectionChanged(event);});
 document.addEventListener('input', event => {
     restoration = undefined;
+    if (event.target.id === 'directoryQuery') filterDirectory();
     if (event.target.classList.contains('edit')) {drafts.set(event.target.dataset.option, event.target.value); selected = undefined;}
     if (event.target.matches('textarea')) dirty();
 });
 $('scopeChoice').addEventListener('change', scope);
+for (const id of ['directoryKind', 'directoryNotes']) $(id).addEventListener('change', filterDirectory);
+document.addEventListener('change', event => {
+    const input = event.target;
+    if (!input.dataset.style || !input.reportValidity()) return;
+    const value = input.type === 'number' ? input.valueAsNumber : input.value;
+    style({...appearance, [input.dataset.style]: value});
+    saveAppearance({values: {[input.dataset.style]: value}});
+});
 document.addEventListener('click', () => queueMicrotask(remember));
 document.addEventListener('change', () => remember());
 document.addEventListener('toggle', queueRemember, true);
@@ -200,6 +308,10 @@ document.addEventListener('click', event => {
     if (!button) return;
     const type = button.dataset.action, option = button.dataset.option;
     const menu = button.closest('.more'); if (menu) menu.open = false;
+    if (type === 'appearance') {style(appearance); $('appearanceDialog').showModal(); return;}
+    if (type === 'resetAppearance') {saveAppearance({reset: true}); return;}
+    if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
+    if (type === 'switch') $('directoryDialog').close();
     if (type === 'newNote') {if (!canChangeNote()) return; scope(); $('noteMode').textContent = '新增返修批注'; openComposer(); $('note').focus(); return;}
     if (type === 'cancelNote') {closeComposer(); return;}
     if (type === 'editNoteOpen') {
@@ -210,14 +322,14 @@ document.addEventListener('click', event => {
         editingNote = {id, previousText: note.text}; selected = undefined;
         $('note').value = note.text; $('noteMode').textContent = '编辑返修批注';
         $('noteScopeControls').hidden = true; $('scope').textContent = '原批注范围保持不变：' + (note.option || '整项');
-        $('saveNote').textContent = '保存修改'; openComposer(); $('note').focus(); dirty(); return;
+        $('saveNote').textContent = '保存修改'; placeComposer(); openComposer(); $('note').focus(); dirty(); return;
     }
     if (type === 'mathMode') {toggleMathMode(); return;}
     if (type === 'toggleChinese') {chinese = !chinese; document.querySelectorAll('.zh').forEach(n => n.hidden = !chinese); return;}
     if (type === 'focus') {
         focused = focused === option ? undefined : option;
         for (const o of options) {const node = $('option-' + o.label); node.classList.toggle('focused', focused === o.label); node.classList.toggle('folded', !!focused && focused !== o.label);}
-        button.textContent = focused ? '返回比较' : '展开阅读'; return;
+        for (const b of document.querySelectorAll('[data-action="focus"]')) b.textContent = focused === b.dataset.option ? '返回比较' : '展开'; return;
     }
     if (type === 'whole') {$('scopeChoice').value = 'group'; scope(); return;}
     if (type === 'optionNote') {if (!canChangeNote()) return; $('scopeChoice').value = option; scope(); openComposer(); $('note').focus(); return;}
@@ -231,6 +343,12 @@ document.addEventListener('click', event => {
         compare: $('compare').checked, ...(type === 'save' ? {value: $('edit-' + option).value} : {})});
 });
 window.addEventListener('message', ({data: message}) => {
+    if (message.type === 'busy') {waiting = message.action; buttons(); return;}
+    if (message.type === 'actionResult') {if (message.error) status(message.message, true); return;}
+    if (message.type === 'appearanceResult') {
+        if (message.request !== appearanceRequest) return;
+        $('appearanceStatus').textContent = message.message; $('appearanceStatus').className = message.error ? 'error' : ''; return;
+    }
     if (message.type === 'sourceSelection') {
         if (!canChangeNote()) return; openComposer();
         selected = message.selection;
@@ -245,7 +363,7 @@ window.addEventListener('message', ({data: message}) => {
         translatedText.set(message.key, entry); renderTranslation(message.key, entry); return;
     }
     if (message.type === 'translationStatus') {$('translateStatus').textContent = message.message; return;}
-    if (message.type === 'pdfStatus') {$('pdfStatus').textContent = message.message; return;}
+    if (message.type === 'pdfStatus') {pdfStatus(message.message); return;}
     if (message.type === 'directory') {renderDirectory(message.directory); return;}
     if (message.type === 'preview') {
         preview = message.option;
@@ -272,9 +390,9 @@ window.addEventListener('message', ({data: message}) => {
         preview = message.preview; unavailable = conflict = false; $('latest')?.remove();
         style(message.style); $('empty').hidden = true; $('review').hidden = false;
         $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length;
-        $('pdfStatus').textContent = message.pdfStatus;
+        pdfStatus(message.pdfStatus);
         renderDirectory(message.directory);
-        if (!saved) {editingNote = undefined; $('noteComposer').hidden = true; $('noteScopeControls').hidden = false; $('saveNote').textContent = '保存返修批注'; translatedText.clear(); drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; $('questions').dataset.signature = '';}
+        if (!saved) {editingNote = undefined; placeComposer(); $('noteComposer').hidden = true; $('noteScopeControls').hidden = false; $('saveNote').textContent = '保存返修批注'; translatedText.clear(); drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; rendered.delete($('originalZh')); $('questions').dataset.signature = '';}
         else drafts.delete(message.option);
         if (resume) {for (const [label, value] of Object.entries(resume.drafts)) drafts.set(label, value); focused = resume.focused;}
         renderText($('original'), data.original, options.find(o => o.label === preview)?.changes || options[0].changes, 'original');
@@ -292,6 +410,7 @@ window.addEventListener('message', ({data: message}) => {
         rendering = false;
         dirty();
     }
-    waiting = message.type === 'content' ? message.busy : false; status(message.message || '', message.error); buttons();
+    if (message.type === 'content') waiting = message.busy;
+    status(message.message || '', message.error); buttons();
 });
 api.postMessage({type: 'ready', instance, state: api.getState()});

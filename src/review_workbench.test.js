@@ -40,7 +40,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert.equal(events.pop().type, 'reopen', 'top button opens an existing PDF without invoking compile/preview');
     await send('start'); assert.equal(events.pop().type, 'start');
     await send('handoff'); assert.equal(events.pop().type, 'handoff');
-    assert(html('test').includes('data-action="reopen">打开 PDF 窗口'));
+    assert(html('test').includes('data-action="reopen"'));
     await send('note', {option: 'B', side: 'candidate', value: 'The model is compact.', start: 13, end: 20, text: '限定这个词'});
     assert.deepEqual(events[0].selection, {side: 'candidate', option: 'B', start: 13, end: 20, quote: 'compact'});
     assert(messages.some(m => m.type === 'notes'));
@@ -60,7 +60,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert.equal(creations, 1); assert.equal(htmlWrites, 1, 'switch/save/note never replace webview HTML');
     const notesBefore = events.length;
     await receive({type: 'note', id: '1', version: 'v1', text: 'Stale request'});
-    assert.equal(events.length, notesBefore); assert(messages.at(-1).error);
+    assert.equal(events.length, notesBefore); assert(messages.findLast(m => m.type === 'result').error);
     assert.equal(records.get('a').data.original, original);
     assert(!html('test').includes('http://'), 'network runs in existing backend, not untrusted webview');
     const page = html('nonce-test', {source: 'vscode-webview:', css: 'vscode-resource:/katex.min.css', script: 'vscode-resource:/katex.min.js'});
@@ -92,6 +92,9 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     services.save = async (...args) => {await new Promise(resolve => {finishSave = resolve;}); return originalSave(...args);};
     const cachedRequests = translations;
     const saving = send('save', {option: 'B', value: 'Saved B'});
+    await send('reopen'); assert.equal(events.at(-1).type, 'reopen', 'PDF window remains usable during a candidate save');
+    await send('accept', {option: 'A'});
+    assert(messages.at(-1).error, 'a second review mutation cannot bypass the writer guard');
     panel.visible = false; changed({webviewPanel: panel}); const hiddenCount = messages.length;
     finishSave(); await saving;
     assert.equal(messages.length, hiddenCount, 'background writes update state without posting to a destroyed page');
@@ -123,4 +126,23 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     restored = messages.filter(m => m.type === 'content').at(-1);
     assert.equal(restored.c.version, 'v2'); assert.equal(restored.resume.drafts.A, '旧版未保存候选');
     assert(messages.some(m => m.type === 'conflict'));
+
+    const stored = new Map(), updatedSettings = [];
+    vscode.ConfigurationTarget = {Global: 1, Workspace: 2, WorkspaceFolder: 3};
+    vscode.workspace = {getConfiguration: () => ({get: (k, fallback) => stored.get(k) ?? fallback,
+        inspect: key => key === 'reviewStyle.controlFontSize' ? {workspaceValue: 13} : {},
+        update: async (key, value, target) => {stored.set(key, value); updatedSettings.push({key, value, target});}})};
+    services.style = () => require('./review_style').read(vscode.workspace.getConfiguration());
+    await send('appearance', {values: {candidateFontSize: 20, controlFontSize: 15, fontFamily: 'Arial, sans-serif'}});
+    assert.equal(stored.get('reviewStyle.candidateFontSize'), 20);
+    assert.equal(updatedSettings.find(s => s.key === 'reviewStyle.controlFontSize').target, 2, 'preserve effective workspace override');
+    const countSettings = updatedSettings.length;
+    await send('appearance', {values: {candidateFontSize: 24, controlFontSize: 99}});
+    assert.equal(updatedSettings.length, countSettings, 'validate the complete appearance change before writing');
+    assert(messages.at(-1).error);
+    await send('appearance', {values: {addedColor: '#ffffff'}});
+    assert.equal(updatedSettings.length, countSettings, 'screen appearance cannot change shared PDF colors');
+    await send('appearance', {reset: true});
+    assert.equal(stored.get('reviewStyle.candidateFontSize'), 16);
+    assert.equal(records.get('a').data.original, original);
 });
