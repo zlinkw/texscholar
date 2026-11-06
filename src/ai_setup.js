@@ -18,7 +18,7 @@ async function buildPrompt() {
         '',
         '这是一项实际配置请求，不是让我反复手动安装技能的教程。请先读取当前电脑、已安装插件、全局 AGENTS 和相关 SKILL，再执行必要且获准的配置。不得仅口头承诺“已经记住”。',
         '适用于论文撰写、修改、回复信与作者审核。不要修改或安装全局 SKILL，不覆盖现有科学规则、安全规则和其他任务的技能；本次协作规则由插件内置资源维护。每次写作或返修先读取当前 collaboration-guide.md 与 source_review.py collaboration-contract；从插件加入上下文时会再次附带。不得在论文项目新建 Markdown 管理文件。',
-        '实际核对环境和协作接口后再报告结果，作者可选择“已配置，不再提示”。复制不等于配置完成，也不能保证任意新聊天自动获得协议；新会话使用插件“AI 论文助手”，将目标、三方案规则及必要配置合为一份说明。',
+        '配置由插件按实际检测结果显示“已配置”或缺项，不使用人工确认标记。也不能保证任意新聊天自动获得协议；新会话使用插件“AI 论文助手”，将目标、三方案规则及必要配置合为一份说明。',
         '插件以 VSIX 安装，MCP 是内置本地通信入口，不是另一个产品。通过“AI 论文助手”自动核对插件专属 MCP 连接，重启 Codex 后新会话可发现工具及初始化指引。论文任务先调用 read_context，读取 file_roles；首次或结构变化请作者用“识别／确认论文文件角色”确认，随后 propose_options/rework_options；AI 可直接读取 read_feedback 获取完整原文、备选和准确选区，不必依赖请求快照。元数据关联走 link_questions。作者接收和 Git 仍保留原有界面操作。由同一入口准备带协议的首条消息，作者自行发送，不必另复制规则。不得修改其他 MCP、模型、代理或凭据。',
         '',
         '## 新电脑迁移与配置范围（1～40）',
@@ -95,41 +95,73 @@ async function buildPrompt() {
     ].join('\n');
 }
 
-function activate(context, vscode) {
-    let announced = false;
-    const copy = async () => {
-        await vscode.env.clipboard.writeText(await buildPrompt());
-        vscode.window.showInformationMessage('已复制本地配置与任务级三方案协议，不要求改全局 SKILL。实际完成后再标记“已配置，不再提示”。');
-    };
-    const show = async explicit => {
-        if (!explicit && (announced || context.globalState.get('aiSetupConfigured', false) || !vscode.workspace.isTrusted)) return;
-        if (!explicit && !(await vscode.workspace.findFiles('**/*.tex', EXCLUDE, 1)).length) return;
-        if (!explicit && (announced || context.globalState.get('aiSetupConfigured', false))) return;
-        announced = true;
-        // Do not wait for the user to dismiss a notification during activation.
-        vscode.window.showInformationMessage('TeXScholar：AI 论文助手会合并连接、任务规则和首次环境配置，准备一份任务说明，由你检查后发送。不修改全局 SKILL。',
-            'AI 论文助手', '已配置，不再提示', '查看完整提示词').then(async choice => {
-            if (choice === 'AI 论文助手') await vscode.commands.executeCommand('localLatex.startPaperTask');
-            else if (choice === '已配置，不再提示') await context.globalState.update('aiSetupConfigured', true);
-            else if (choice === '查看完整提示词') {
-                const document = await vscode.workspace.openTextDocument({language: 'markdown', content: await buildPrompt()});
-                await vscode.window.showTextDocument(document, {preview: true});
+const listeners = new Set();
+let current = {ready: false, issues: ['正在检查配置']};
+function subscribe(listener) {listeners.add(listener); return {dispose: () => listeners.delete(listener)};}
+function status() {return current;}
+async function inspectConfiguration(context, vscode) {
+    const issues = [], tools = require('./tools');
+    const cfg = vscode.workspace.getConfiguration('localLatex');
+    const found = tools.discover(key => cfg.get(key)).found;
+    for (const [key, label] of [['pythonPath','Python 3.12+'],['latexmkPath','latexmk'],['latexdiffPath','latexdiff'],['synctexPath','SyncTeX']])
+        if (!found[key]) issues.push('未找到 ' + label);
+    const dirs = [...new Set([...Object.values(found).filter(Boolean).map(file => path.dirname(file)), ...tools.searchDirectories()])];
+    for (const name of ['pdflatex', 'bibtex']) if (!tools.findExecutable([name], dirs)) issues.push('未找到 ' + name);
+    if (!vscode.extensions.getExtension('james-yu.latex-workshop')) issues.push('未安装 LaTeX Workshop');
+    if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread')) issues.push('Codex 输入区接口不可用');
+    if (found.pythonPath) {
+        try {
+            const version = await tools.version(found.pythonPath);
+            const match = /Python (\d+)\.(\d+)/.exec(version);
+            if (!match || +match[1] !== 3 || +match[2] < 12) issues.push('Python 版本需要 3.12+');
+            else {
+                const home = process.env.CODEX_HOME || path.join(require('node:os').homedir(), '.codex');
+                const launcher = path.join(context.globalStorageUri.fsPath, 'texscholar-mcp.py');
+                const result = JSON.parse(await require('./backup').run(found.pythonPath, ['-X','utf8',path.join(__dirname,'mcp_config.py'),'--home',home,'--launcher',launcher,'--python',found.pythonPath,'--check'], context.globalStorageUri.fsPath));
+                if (!result.connected) issues.push(result.reason);
+                const id = context.workspaceState.get('mcpWorkspaceId');
+                if (!id) issues.push('当前项目尚未登记 MCP');
+                else {
+                    const registration = JSON.parse(await fs.readFile(path.join(context.globalStorageUri.fsPath,'mcp-workspaces',id+'.json'),'utf8'));
+                    const roots = [];
+                    for (const folder of vscode.workspace.workspaceFolders || []) if (folder.uri.scheme === 'file' && (await vscode.workspace.findFiles(new vscode.RelativePattern(folder, '**/*.tex'), EXCLUDE, 1)).length) roots.push(folder.uri.fsPath);
+                    if (!roots.every(root => registration.roots.some(saved => tools.samePath(saved, root)))) issues.push('MCP 项目登记未更新');
+                    await fs.access(launcher);
+                }
             }
-        }).catch(error => vscode.window.showErrorMessage(error.message));
-    };
-    context.subscriptions.push(vscode.commands.registerCommand('localLatex.copyAISetupPrompt', () => copy().catch(error => vscode.window.showErrorMessage(error.message))));
-    context.subscriptions.push(vscode.commands.registerCommand('localLatex.aiSetupGuide', async () => {
-        if (context.globalState.get('aiSetupConfigured', false)) {
-            const choice = await vscode.window.showInformationMessage('AI 协作已标记为配置完成。', '复制提示词', '重新启用项目提示');
-            if (choice === '复制提示词') return copy();
-            if (choice !== '重新启用项目提示') return;
-            await context.globalState.update('aiSetupConfigured', false);
-        }
-        return show(true);
-    }));
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
-    context.subscriptions.push(watcher, watcher.onDidCreate(() => show(false).catch(error => vscode.window.showErrorMessage(error.message))),
-        vscode.workspace.onDidChangeWorkspaceFolders(() => {announced = false; show(false).catch(error => vscode.window.showErrorMessage(error.message));}));
-    return {ready: show(false).catch(error => vscode.window.showErrorMessage(error.message))};
+        } catch (error) {issues.push('MCP／Python 检查失败：' + error.message);}
+    }
+    return {ready: !issues.length, issues};
 }
-module.exports = {activate, buildPrompt};
+function activate(context, vscode) {
+    let chain = Promise.resolve(), previous;
+    const check = explicit => {
+        const task = chain.then(async () => {
+            if (!vscode.workspace.isTrusted || !(await vscode.workspace.findFiles('**/*.tex', EXCLUDE, 1)).length) return;
+            const result = await inspectConfiguration(context, vscode);
+            current = result;
+            for (const listener of listeners) listener(result);
+            const signature = JSON.stringify(result);
+            if (explicit || !result.ready && signature !== previous) {
+                const message = result.ready ? '已配置：本地编译工具、Workshop、Codex 接口和 MCP 文件配置检查通过。尚未验证当前 AI 会话已加载 MCP、GitHub 登录或实际论文编译。'
+                    : '配置不完整：' + result.issues.join('；');
+                // Activation never waits for a notification decision.
+                vscode.window.showInformationMessage(message, ...(result.ready ? [] : ['补齐配置'])).then(choice => {
+                    if (choice === '补齐配置') return vscode.commands.executeCommand('localLatex.startPaperTask');
+                }).catch(error => vscode.window.showErrorMessage(error.message));
+            }
+            previous = signature; return result;
+        });
+        chain = task.catch(error => vscode.window.showErrorMessage('配置检查失败：' + error.message)); return task;
+    };
+    context.subscriptions.push(vscode.commands.registerCommand('localLatex.checkAIConfiguration', () => check(true)),
+        vscode.commands.registerCommand('localLatex.aiSetupGuide', () => check(true)),
+        vscode.commands.registerCommand('localLatex.copyAISetupPrompt', async () => vscode.env.clipboard.writeText(await buildPrompt())));
+    const watcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
+    const refresh = () => check(false);
+    context.subscriptions.push(watcher, watcher.onDidCreate(refresh), vscode.workspace.onDidChangeWorkspaceFolders(refresh),
+        vscode.workspace.onDidChangeConfiguration(refresh), vscode.extensions.onDidChange(refresh),
+        vscode.window.onDidChangeWindowState(state => {if (state.focused) refresh();}));
+    return {ready: check(false)};
+}
+module.exports = {activate, buildPrompt, inspectConfiguration, subscribe, status};

@@ -8,7 +8,7 @@ import tempfile
 import tomllib
 import unittest
 from mcp_server import Server, TOOLS
-from mcp_config import configure
+from mcp_config import configure, check
 import native_review_test as fixtures
 from source_review import digest
 from document_roles import scan as scan_roles, save as save_roles
@@ -95,6 +95,11 @@ class MCP(unittest.TestCase):
         self.assertEqual(parsed['skills'], {'custom': True})
         self.assertEqual(parsed['mcp_servers']['other']['command'], 'keep-me')
         self.assertFalse(configure(home, launcher, sys.executable)['changed'])
+        before_check = path.read_bytes()
+        self.assertTrue(check(home, launcher, sys.executable)['connected'])
+        self.assertEqual(path.read_bytes(), before_check)
+        self.assertFalse(check(home / 'absent', launcher, sys.executable)['connected'])
+        self.assertFalse((home / 'absent').exists())
         path.write_text(path.read_text(encoding='utf-8').replace('enabled = true', 'enabled = false\ntool_timeout_sec = 90'), encoding='utf-8')
         self.assertFalse(configure(home, launcher, sys.executable)['connected'])
         configure(home, launcher, sys.executable, True)

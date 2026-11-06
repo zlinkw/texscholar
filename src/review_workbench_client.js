@@ -144,6 +144,7 @@ window.addEventListener('message', ({data: message}) => {
         else {$('scopeChoice').value = 'group'; scope();}
         $('note').focus(); return;
     }
+    if (message.type === 'configuration') {$('configuration').textContent = message.ready ? '已配置' : '配置待完善'; $('configuration').title = message.ready ? '可检测配置已通过，点击重新检查；不代表 AI 会话已加载或论文已编译' : message.issues.join('；'); return;}
     if (message.type === 'style') {style(message.style); return;}
     if (message.type === 'translation') {
         const entry = {...message, source: translationSource(message.key)};

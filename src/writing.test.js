@@ -6,9 +6,9 @@ const {activate: aiSetup, buildPrompt} = require('./ai_setup');
 test('writing context uses installed guide and current source, adds both to Codex without sending or creating files', async () => {
     const handlers = new Map(), calls = [], messages = [];
     const source = {scheme: 'file', fsPath: '/paper/new-paper.tex'};
-    const vscode = {Uri: {file: file => ({scheme: 'file', fsPath: file})}, workspace: {isTrusted: true, findFiles: async () => [],
+    const vscode = {Uri: {file: file => ({scheme: 'file', fsPath: file})}, extensions: {onDidChange: () => ({dispose() {}})}, workspace: {onDidChangeConfiguration: () => ({dispose() {}}), isTrusted: true, findFiles: async () => [],
         createFileSystemWatcher: () => ({dispose() {}, onDidCreate: () => ({dispose() {}})}), onDidChangeWorkspaceFolders: () => ({dispose() {}})},
-        window: {activeTextEditor: {document: {uri: source, languageId: 'latex'}},
+        window: {onDidChangeWindowState: () => ({dispose() {}}), activeTextEditor: {document: {uri: source, languageId: 'latex'}},
             showInformationMessage: text => messages.push(text), showErrorMessage: text => {throw new Error(text);}},
         commands: {registerCommand: (id, handler) => {handlers.set(id, handler); return {dispose() {}};},
             getCommands: async () => ['chatgpt.addFileToThread'], executeCommand: async (...args) => calls.push(args)}};
@@ -43,45 +43,23 @@ test('AI setup prompt is portable, complete and reuses one configuration/shortcu
     assert.equal(new Set(keys).size, keys.length, 'one definition per setting and language');
 });
 
-test('project onboarding is nonblocking, respects explicit acknowledgement and can be restored', async () => {
-    const state = new Map(), handlers = new Map(), notices = [], copied = [];
-    let tex = true, choice, changed;
-    const context = {subscriptions: [], globalState: {get: (key, fallback) => state.get(key) ?? fallback, update: async (key, value) => state.set(key, value)}};
-    const vscode = {env: {clipboard: {writeText: async text => copied.push(text)}}, commands: {
-        registerCommand: (id, handler) => {handlers.set(id, handler); return {dispose() {}};}},
-        workspace: {isTrusted: true, findFiles: async () => tex ? ['paper.tex'] : [],
-            createFileSystemWatcher: () => ({dispose() {}, onDidCreate: () => ({dispose() {}})}),
-            onDidChangeWorkspaceFolders: callback => {changed = callback; return {dispose() {}};}},
-        window: {showInformationMessage: async (text, ...buttons) => {notices.push({text, buttons}); return buttons.length ? choice : undefined;},
-            showErrorMessage: text => {throw new Error(text);}}};
-    await aiSetup(context, vscode).ready;
-    assert.equal(notices.length, 1);
-    assert(notices[0].buttons.includes('AI 论文助手'));
-    assert(!notices[0].buttons.includes('一键复制提示词'));
-    assert.equal(state.size, 0, 'opening a project does not claim AI configuration is complete');
-    await handlers.get('localLatex.copyAISetupPrompt')();
-    assert.equal(copied.length, 1);
-    assert.equal(state.size, 0, 'copying is not acknowledgement');
-    choice = '已配置，不再提示';
-    await aiSetup(context, vscode).ready;
-    assert.equal(state.get('aiSetupConfigured'), true);
-    const before = notices.length;
-    await aiSetup(context, vscode).ready;
-    assert.equal(notices.length, before, 'acknowledgement persists across projects/restarts in the same profile');
-    choice = '重新启用项目提示';
-    await handlers.get('localLatex.aiSetupGuide')();
-    assert.equal(state.get('aiSetupConfigured'), false);
-    tex = false;
-    const noTex = notices.length;
-    await aiSetup(context, vscode).ready;
-    assert.equal(notices.length, noTex, 'code-only and Typst workspaces do not prompt');
-    tex = true; vscode.workspace.isTrusted = false;
-    changed(); await Promise.resolve();
-    assert.equal(notices.length, noTex, 'untrusted projects do not trigger onboarding');
-    vscode.workspace.isTrusted = true;
-    vscode.window.showInformationMessage = () => new Promise(() => {});
-    await aiSetup(context, vscode).ready;
-    assert(true, 'activation does not await notification dismissal');
+test('configuration status is event-driven, readonly and cannot be acknowledged into success', async () => {
+    const handlers = new Map(), notices = [], events = [];
+    let tex = true;
+    const context = {subscriptions: [], globalState: {get: () => true}};
+    const event = cb => {events.push(cb); return {dispose() {}};};
+    const vscode = {commands: {registerCommand: (id, fn) => {handlers.set(id,fn); return {dispose() {}};}, getCommands: async () => []},
+        extensions: {getExtension: () => undefined, onDidChange: event},
+        workspace: {isTrusted: true, findFiles: async () => tex ? ['paper.tex'] : [], getConfiguration: () => ({get: key => key === 'pythonPath' ? '/missing-python-for-test' : undefined}),
+            onDidChangeConfiguration: event, onDidChangeWorkspaceFolders: event,
+            createFileSystemWatcher: () => ({dispose() {}, onDidCreate: event})},
+        window: {onDidChangeWindowState: event, showInformationMessage: async (text,...buttons) => {notices.push({text,buttons});}, showErrorMessage: text => {throw Error(text);}}};
+    await aiSetup(context,vscode).ready;
+    assert.equal(require('./ai_setup').status().ready,false);
+    assert(notices[0].text.includes('配置不完整')); assert(!notices[0].buttons.includes('已配置，不再提示'));
+    const count = notices.length; await events[0](); assert.equal(notices.length,count,'unchanged missing items do not repeat notifications');
+    await handlers.get('localLatex.checkAIConfiguration')(); assert.equal(notices.length,count+1);
+    tex=false; await events[0](); assert.equal(notices.length,count+1,'non-TeX projects do not check');
 });
 
 test('one AI assistant prepares one packet, connects safely, respects cancellation and keeps setup optional', async () => {
@@ -97,7 +75,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
     const handlers = new Map(), state = new Map(), workspaceState = new Map(), calls = [], notices = [], copied = [];
     let goal, available = ['chatgpt.newChat', 'chatgpt.addFileToThread'], copyChoice, python = process.env.LOCAL_LATEX_PYTHON;
     const folder = {uri: {scheme: 'file', fsPath: paper}};
-    const vscode = {Uri: {file: fsPath => ({scheme: 'file', fsPath})}, RelativePattern: class {},
+    const vscode = {extensions: {getExtension: () => ({}), onDidChange: () => ({dispose() {}})}, Uri: {file: fsPath => ({scheme: 'file', fsPath})}, RelativePattern: class {},
         workspace: {isTrusted: true, workspaceFolders: [folder], findFiles: async () => [path.join(paper, 'paper.tex')],
             getConfiguration: () => ({get: (key, fallback) => key === 'pythonPath' ? python : fallback}),
             createFileSystemWatcher: () => ({dispose() {}, onDidCreate: () => ({dispose() {}})}),

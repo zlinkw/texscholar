@@ -9,6 +9,19 @@ import uuid
 
 MARKER = '# TeXScholar managed MCP connection\n'
 
+def check(home, launcher, python):
+    path = Path(home) / 'config.toml'
+    if not path.exists():
+        return {'connected': False, 'reason': '尚未配置 TeXScholar MCP'}
+    if path.is_symlink() or path.is_junction() or not path.is_file():
+        raise ValueError('MCP configuration target is not a regular file')
+    text = path.read_text(encoding='utf-8-sig').replace('\r\n', '\n')
+    entry = tomllib.loads(text).get('mcp_servers', {}).get('texscholar', {})
+    match = re.search(r'(?m)^\[mcp_servers\.texscholar\][ \t]*\n', text)
+    owned = match is not None and text[:match.start()].endswith(MARKER)
+    ok = owned and entry.get('enabled', True) and entry.get('command') == python and entry.get('args') == ['-X', 'utf8', str(launcher)]
+    return {'connected': bool(ok), 'reason': '' if ok else 'MCP 未启用或连接配置与当前工具不一致'}
+
 def atomic(path, raw, previous):
     if path.is_symlink() or path.is_junction() or (path.exists() and not path.is_file()):
         raise ValueError('MCP configuration target is not a regular file')
@@ -83,9 +96,10 @@ if __name__ == '__main__':
     parser.add_argument('--launcher', required=True)
     parser.add_argument('--python', required=True)
     parser.add_argument('--connect', action='store_true')
+    parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
     try:
-        print(json.dumps(configure(args.home, args.launcher, args.python, args.connect), ensure_ascii=False))
+        print(json.dumps(check(args.home, args.launcher, args.python) if args.check else configure(args.home, args.launcher, args.python, args.connect), ensure_ascii=False))
     except (OSError, ValueError) as error:
         print(str(error), file=__import__('sys').stderr)
         raise SystemExit(2)

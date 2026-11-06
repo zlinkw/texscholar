@@ -64,7 +64,7 @@ function activate(context, vscode = require('vscode')) {
             if (!goal?.trim()) return;
             const commands = await vscode.commands.getCommands(true);
             const roots = (vscode.workspace.workspaceFolders || []).filter(f => f.uri.scheme === 'file').map(f => f.uri.fsPath);
-            const setup = !context.globalState.get('aiSetupConfigured', false);
+            const setup = !(await require('./ai_setup').inspectConfiguration(context, vscode)).ready;
             if (!commands.includes('chatgpt.addFileToThread')) {
                 if (await vscode.window.showWarningMessage('未找到 Codex 的输入区接口。可复制一份合并后的任务说明到 Codex；未更改连接。', '复制完整任务说明') === '复制完整任务说明')
                     await vscode.env.clipboard.writeText(await taskRequest(goal, roots, setup));
@@ -80,6 +80,7 @@ function activate(context, vscode = require('vscode')) {
             await write(file, await taskRequest(goal, roots, setup || !!connectionError, connection));
             if (commands.includes('chatgpt.newChat')) await vscode.commands.executeCommand('chatgpt.newChat');
             await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
+            await vscode.commands.executeCommand('localLatex.checkAIConfiguration');
             const notice = '任务、三方案规则' + (setup || connectionError ? '与环境配置要求' : '') + '已合为一份说明，加入 Codex 输入区；请检查并自行发送。';
             if (connectionError) vscode.window.showWarningMessage(notice + ' MCP 尚未连接成功：' + connectionError);
             else vscode.window.showInformationMessage(notice + (connected.restart_required ? ' 首次连接需重启 Codex，之后可再用本入口准备任务；不必分别配置或复制规则。' : ' 未修改全局 SKILL。'));

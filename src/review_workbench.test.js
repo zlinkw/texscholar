@@ -58,5 +58,6 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert(page.includes('id="mathMode"'));
     assert(!page.includes('id="originalSource"'), 'full source is available through the mode button, not a second source block');
     assert(page.includes('data-action="start">AI 论文助手'));
+    assert(page.includes('id="configuration"'));
     assert(!page.includes('data-action="connect"')); assert(!page.includes('data-action="copy"'));
 });
