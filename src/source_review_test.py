@@ -18,6 +18,28 @@ ROOT.mkdir(parents=True)
 
 
 class Flow(unittest.TestCase):
+    def test_edit_feedback(self):
+        id_ = self.edit('main.tex', 'The model improves performance.', 'The model reliably improves performance.', deferred=True)
+        data = self.review().inspect(id_)
+        spec = {'id': id_, 'version': data['version'], 'side': 'candidate', 'start': 10, 'end': 18,
+                'quote': data['candidate'][10:18], 'text': '错误输入'}
+        request = self.runop('feedback', spec)['request']
+        source = self.read('main.tex')
+        versions = list(self.review().state['edits'][id_]['versions'])
+        update = {**spec, 'request_id': request['id'], 'previous_text': request['text'], 'text': '正确的返修要求'}
+        self.runop('feedback', update)
+        current = self.review().state['edits'][id_]
+        self.assertEqual(current['requests'], [{**request, 'text': update['text']}])
+        self.assertEqual(current['versions'], versions)
+        self.assertEqual(self.read('main.tex'), source)
+        before = self.review().raw
+        for bad in [update, {**update, 'previous_text': update['text'], 'quote': 'wrong'},
+                    {**update, 'previous_text': update['text'], 'text': ' '},
+                    {**update, 'previous_text': update['text'], 'version': 'stale'}]:
+            with self.assertRaises(m.Conflict): self.runop('feedback', bad)
+            self.assertEqual(self.review().raw, before)
+        self.check_index()
+
     def setUp(self):
         self.root = ROOT / self._testMethodName
         self.root.mkdir()

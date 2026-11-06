@@ -447,7 +447,8 @@ function createInlineReview(vscode, context, execute = run) {
     async function saveNote(c, note, text) {
         const data = await current(c);
         const saved = await backend(c, ['feedback'], {id: c.id, version: c.version, side: note.side,
-            start: note.start, end: note.end, quote: note.quote, text, ...(note.option ? {option: note.option} : {})}, data.sha256);
+            start: note.start, end: note.end, quote: note.quote, text, ...(note.option ? {option: note.option} : {}),
+            ...(note.request_id ? {request_id: note.request_id, previous_text: note.previous_text} : {})}, data.sha256);
         updateSaved(c, saved);
         vscode.window.showInformationMessage(`${c.id} 批注已保存，原文和编号保留；尚未发送给 Codex。`);
         if (!saved.card.source_match) vscode.window.showWarningMessage('批注已保存，但原文随后发生变化；请核对并刷新，不会猜测重新定位。');
@@ -541,6 +542,7 @@ function createInlineReview(vscode, context, execute = run) {
         },
         changeProvider: () => vscode.commands.executeCommand('localLatex.inlineTranslationSource', workbench.active),
         reopen: reopenPreview,
+        editNote: (c, note, text, previous) => saveNote(c, {...note, request_id: note.id, previous_text: previous}, text),
         copy: () => vscode.commands.executeCommand('localLatex.copyReviewContract'),
         handoff: addRequests,
         finish: () => vscode.commands.executeCommand('localLatex.finishReview'),

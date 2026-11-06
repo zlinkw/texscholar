@@ -17,7 +17,9 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
         style: () => require('./review_style').defaults, selection: () => 'A', pdfStatus: () => '待更新', autoTranslate: () => false,
         directory: () => [...records.values()].map(r => ({id: r.c.id, ...r.data.edit})),
         note: async (c, selection, text) => {events.push({type: 'note', c, selection, text}); const record = records.get(c.id);
-            record.data.edit.requests.push({quote: selection.quote, text}); view.sync(records, c);},
+            record.data.edit.requests.push({id: 'note-1', version: c.version, status: 'open', ...selection, text}); view.sync(records, c);},
+        editNote: async (c, note, text, previous) => {assert.equal(note.text, previous); const record = records.get(c.id);
+            record.data.edit.requests[0].text = text; view.sync(records, c);},
         save: async (c, label, after) => {const r = records.get(c.id); r.data.options.find(o => o.label === label).after = after;
             r.c.version = r.data.version = 'v2'; r.data.edit.versions.push('v2'); view.sync(records, c); return structuredClone(r.data);},
         saved() {}, accept: async c => {events.push({type: 'accept', c}); records.delete(c.id); view.sync(records, c);},
@@ -37,6 +39,10 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     await send('note', {option: 'B', side: 'candidate', value: 'The model is compact.', start: 13, end: 20, text: '限定这个词'});
     assert.deepEqual(events[0].selection, {side: 'candidate', option: 'B', start: 13, end: 20, quote: 'compact'});
     assert(messages.some(m => m.type === 'notes'));
+    await send('editNote', {request: 'note-1', text: '修正后的要求', previousText: '限定这个词'});
+    assert.equal(records.get('1').data.edit.requests.length, 1);
+    assert.equal(records.get('1').data.edit.requests[0].text, '修正后的要求');
+    assert(messages.some(m => m.type === 'noteEdited'));
     await send('dirty', {dirty: true, noteDirty: true});
     await send('switch', {target: 'a'}); assert.equal(view.active.id, '1', 'unconfirmed draft cannot disappear');
     await send('dirty', {dirty: false, noteDirty: false});

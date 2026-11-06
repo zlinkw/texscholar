@@ -772,6 +772,19 @@ class Review:
         # Validate live source too: notes must not silently target a manually changed proposal.
         obj = self.payload(edit)
         locate(self.read(edit["file"]), self.live_excerpt(edit, obj), obj["left"], obj["right"])
+        if spec.get('request_id'):
+            matches = [r for r in edit.get('requests', []) if r['id'] == spec['request_id']]
+            if len(matches) != 1:
+                raise Conflict('Feedback request no longer exists')
+            request = matches[0]
+            if request['status'] != 'open' or request['version'] != spec['version']:
+                raise Conflict('Only open feedback on the current candidate can be edited')
+            if request['text'] != spec.get('previous_text'):
+                raise Conflict('Feedback changed concurrently; reread before editing')
+            if any(request.get(key) != spec.get(key) for key in ('side', 'start', 'end', 'quote', 'option')):
+                raise Conflict('Editing feedback must preserve its exact selection')
+            request['text'] = text.strip()
+            return {}, {'id': id_, 'request': request, 'rewritten': False}
         request = {"id": uuid.uuid4().hex[:12], "text": text.strip(), "status": "open", "side": side,
                    "version": spec["version"], "start": start, "end": end, "quote": spec["quote"]}
         if option:

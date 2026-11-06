@@ -112,7 +112,7 @@ async function backupProject(plan, entries, note) {
     if ((await git(['rev-parse','HEAD'])).trim() !== plan.head || (await git(['status','--porcelain=v1','-z','--untracked-files=all'])) !== plan.status) throw new Error('备份选择后文件或 Git 状态发生变化，请重新点备份；没有覆盖内容。');
     const files = [...new Set(entries.flatMap(row => row.files))];
     if (files.some(name => !plan.bytes.has(name))) throw new Error('备份文件不属于刚才核对的范围。');
-    if (files.some(name => /\.tex$/i.test(name) && plan.bytes.get(name)?.includes(Buffer.from('% CODEX-REVIEW-DATA ')))) throw new Error('审核状态不能随整份源码提交；请使用“本轮审完：备份已接收成果”。');
+    if (files.some(name => /\.tex$/i.test(name) && plan.bytes.get(name)?.includes(Buffer.from('% CODEX-REVIEW-DATA ')))) throw new Error('审核状态不能随整份源码提交；请使用“Git 备份已接收修改”。');
     for (const name of files) {
         const file = path.join(root,name), before = plan.bytes.get(name);
         if (before === null ? fs.existsSync(file) : !fs.existsSync(file) || !fs.readFileSync(file).equals(before)) throw new Error('备份期间内容发生变化：' + name);
@@ -227,7 +227,7 @@ function activate(context) {
         const files = await vscode.workspace.findFiles(new vscode.RelativePattern(folder.uri.fsPath,'**/*.tex'),'**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**');
         const owners = files.filter(file => /^% CODEX-REVIEW-DATA /m.test(fs.readFileSync(file.fsPath,'utf8')));
         if (owners.length !== 1) throw new Error('需先核对唯一的本地审核状态，不能猜测提交范围。');
-        const note = await vscode.window.showInputBox({title:'本轮审完：备份已接收成果',prompt:'本批已接收修改的实际目的；未接收候选和批注继续保留本地',validateInput:value => value.trim() ? undefined : '请填写成果说明。'});
+        const note = await vscode.window.showInputBox({title:'Git 备份已接收修改',prompt:'本批已接收修改的实际目的；未接收候选和批注继续保留本地',validateInput:value => value.trim() ? undefined : '请填写成果说明。'});
         if (note === undefined) return;
         const cfg = vscode.workspace.getConfiguration('localLatex');
         const result = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'只提交已接收成果，推送成功后精简已完结记录'},() => finishReview(folder.uri.fsPath,path.relative(folder.uri.fsPath,owners[0].fsPath).split(path.sep).join('/'),

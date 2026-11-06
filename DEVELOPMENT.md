@@ -46,6 +46,8 @@ MCP read_context 返回同一 file_roles；AI 写候选前在共享锁内重新�
 
 0.9.9 仅将“全部批注加入 Codex”从更多菜单移到顶部，复用同一 handoff 操作，不改变批注收集、输入区交接或发送边界。规定检查为 review_workbench 与 inline_review 定向回归；布局和 handler 验证复用现有套件，不增加全量组或独立包后检查。实际 12 项定向检查通过，验证顶部唯一按钮与同一批注交接 handler；没有单独原生 UI 复验，Mac 未实机验证。首次项目 AI 引导仅讨论，未在此版本改动。
 
+0.9.10 将成果检查点按钮命名为“Git 备份已接收修改”；持久化与提交条件不变。返修批注在原页逐条编辑／保存／取消，仅更新当前版本 open 请求的 text，保留 ID、选区、状态、版本、依赖与正文。复用 feedback 的 writer_lock、expected SHA256 和原子 persist；额外比较旧文字，阻止同候选版本内的并发覆盖。未保存批注编辑计入草稿保护，只更新受影响批注节点。规定检查为 workbench/inline/writing 定向、反馈编辑隔离后端及 Windows 页面；不操作真实论文，不改全局 SKILL／Typst，不编译 PDF。实际前端 16 项、后端反馈编辑与既有批注生命周期 2 项通过；Windows 隔离页验证编辑保存、取消、原编号不变、单条批注未重复、顶部交接与新 Git 名称，真实退出码 0。首次后端夹具路径超过 Windows 长度限制，缩短测试目录和方法名后重跑通过，失败日志保留。Mac 未实机验证。
+
 ## 开发依赖
 
 Node.js 22 或更新版本、Python 3.12 或更新的 Python 3、Git、tex-fmt、TeX Live/TinyTeX/MacTeX。Python PDF 测试另需 `pypdf`，不是插件后端的运行依赖。ChkTeX 测试需要实际安装的 LaTeX Workshop 的 `out/src/lint/latex-code-actions.js`，通过环境变量指定，不依赖个人扩展目录或固定版本。

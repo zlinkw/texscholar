@@ -2,6 +2,7 @@
 'use strict';
 const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
 let current, data, options = [], preview = 'A', selected, waiting = false, unavailable = false, conflict = false, focused, chinese = true;
+const noteDrafts = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map();
 let sourceMode = false;
 const math = globalThis.TeXScholarMath;
@@ -14,7 +15,7 @@ function send(type, extra = {}, blocks = true) {
 function status(message, error = false) {$('status').textContent = message || ''; $('status').className = error ? 'error' : '';}
 function dirty() {
     const changed = options.some(o => drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n'));
-    send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim()}, false); return changed;
+    send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim() || noteDrafts.size > 0}, false); return changed;
 }
 function buttons() {
     for (const button of document.querySelectorAll('button[data-write]')) button.disabled = waiting || unavailable || conflict;
@@ -74,10 +75,18 @@ function renderQuestions(questions) {
     for (const [index, q] of questions.entries()) math.render($('question-text-' + index), q.quote, [], 'readonly', sourceMode ? 'source' : 'preview', globalThis.katex);
 }
 function renderNotes(requests) {
-    const signature = JSON.stringify(requests);
-    if ($('notes').dataset.signature === signature) return;
-    $('notes').dataset.signature = signature;
-    $('notes').innerHTML = requests.map(n => '<div class="note"><strong>' + esc(n.option || '整项') + ' · ' + esc(n.status) + '</strong><div class="text">' + esc(n.quote) + '</div><div class="text">' + esc(n.text) + '</div></div>').join('');
+    const container = $('notes');
+    for (const node of [...container.children]) if (!requests.some(n => n.id === node.dataset.noteId)) node.remove();
+    for (const n of requests) {
+        let node = [...container.children].find(node => node.dataset.noteId === n.id);
+        if (!node) {node = document.createElement('div'); node.className = 'note'; node.dataset.noteId = n.id; container.appendChild(node);}
+        const signature = JSON.stringify(n);
+        if (node.dataset.signature === signature || noteDrafts.has(n.id)) continue;
+        node.dataset.signature = signature;
+        node.innerHTML = '<strong>' + esc(n.option || '整项') + ' · ' + esc(n.status) + '</strong><div class="text">' + esc(n.quote) + '</div><div class="text">' + esc(n.text) + '</div>' +
+            (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button><div class="note-editor" hidden><textarea aria-label="修改返修批注"></textarea><button data-action="editNoteSave" data-write>保存修改</button><button data-action="editNoteCancel" class="secondary">取消</button></div>' : '');
+    }
+    buttons();
 }
 function scope() {
     selected = undefined;
@@ -111,6 +120,7 @@ document.addEventListener('pointerdown', event => {
 document.addEventListener('keyup', event => {if (event.shiftKey) selectionChanged(event);});
 document.addEventListener('input', event => {
     if (event.target.classList.contains('edit')) {drafts.set(event.target.dataset.option, event.target.value); selected = undefined;}
+    if (event.target.closest('.note-editor')) noteDrafts.get(event.target.closest('.note').dataset.noteId).text = event.target.value;
     if (event.target.matches('textarea')) dirty();
 });
 $('scopeChoice').addEventListener('change', scope);
@@ -120,6 +130,16 @@ document.addEventListener('click', event => {
     if (!button) return;
     const type = button.dataset.action, option = button.dataset.option;
     const menu = button.closest('.more'); if (menu) menu.open = false;
+    if (type.startsWith('editNote')) {
+        const node = button.closest('.note'), id = node.dataset.noteId, editor = node.querySelector('.note-editor'), textarea = editor.querySelector('textarea');
+        if (type === 'editNoteOpen') {
+            if (noteDrafts.has(id)) {textarea.focus(); return;}
+            const note = data.edit.requests.find(n => n.id === id);
+            noteDrafts.set(id, {text: note.text, previousText: note.text}); textarea.value = note.text; editor.hidden = false; textarea.focus(); dirty();
+        } else if (type === 'editNoteCancel') {noteDrafts.delete(id); editor.hidden = true; renderNotes(data.edit.requests || []); dirty();}
+        else {const draft = noteDrafts.get(id); send('editNote', {request: id, text: draft.text, previousText: draft.previousText});}
+        return;
+    }
     if (type === 'mathMode') {toggleMathMode(); return;}
     if (type === 'toggleChinese') {chinese = !chinese; document.querySelectorAll('.zh').forEach(n => n.hidden = !chinese); return;}
     if (type === 'focus') {
@@ -159,7 +179,8 @@ window.addEventListener('message', ({data: message}) => {
         const chosen = options.find(o => o.label === preview);
         renderText($('original'), data.original, chosen.changes, 'original'); return;
     }
-    if (message.type === 'notes') {renderNotes(message.requests); renderQuestions(message.questions); return;}
+    if (message.type === 'noteEdited') {noteDrafts.delete(message.request); data.edit.requests = message.requests; const n = [...$('notes').children].find(n => n.dataset.noteId === message.request); if (n) n.dataset.signature = ''; renderNotes(message.requests); dirty();}
+    if (message.type === 'notes') {data.edit.requests = message.requests; renderNotes(message.requests); renderQuestions(message.questions); return;}
     if (message.type === 'noteSaved') {$('note').value = ''; selected = undefined; dirty();}
     if (message.type === 'conflict') {
         conflict = true;
@@ -173,7 +194,7 @@ window.addEventListener('message', ({data: message}) => {
         $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length;
         $('pdfStatus').textContent = message.pdfStatus;
         renderDirectory(message.directory);
-        if (!saved) {translatedText.clear(); drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; $('questions').dataset.signature = '';}
+        if (!saved) {noteDrafts.clear(); translatedText.clear(); drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; $('questions').dataset.signature = '';}
         else drafts.delete(message.option);
         renderText($('original'), data.original, options.find(o => o.label === preview)?.changes || options[0].changes, 'original');
         for (const o of options) if (!saved || o.label === message.option) renderOption(o);

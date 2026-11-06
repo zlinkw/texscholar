@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -273,7 +273,7 @@
       },
       {
         "command": "localLatex.finishReview",
-        "title": "本轮审完：提交已接收成果并推送私有 GitHub",
+        "title": "Git 备份已接收修改（提交并推送私有 GitHub）",
         "category": "LaTeX 审核",
         "icon": "$(cloud-upload)"
       },
