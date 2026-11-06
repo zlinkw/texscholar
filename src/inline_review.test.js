@@ -170,6 +170,12 @@ test('same-line items have separate IDs and event-driven versions switch one pag
 });
 
 test('review positions exclude the mechanical ledger and follow unsaved header edits without changing source', () => {
+    const {nativeOffset, codePointOffset} = require('./review_positions');
+    const unicode = '中文\r\nA😀B\ud800X\udc00';
+    for (let i = 0; i <= Array.from(unicode).length + 1; i++)
+        assert.equal(nativeOffset(unicode, i), Array.from(unicode).slice(0, i).join('').length);
+    for (let i = 0; i <= unicode.length; i++)
+        assert.equal(codePointOffset(unicode, i), Array.from(unicode.slice(0, i)).length);
     for (const eol of ['\n', '\r\n']) {
         const state = value => ['% CODEX-REVIEW-STATE-BEGIN', '% 交接状态', '% CODEX-REVIEW-DATA ' + JSON.stringify({quote: 'Actual original sentence.', value}), '% CODEX-REVIEW-STATE-END', ''].join(eol);
         const prefix = '% 中文科研规则 😀' + eol, tail = '\\begin{document}' + eol + 'Actual original sentence.' + eol + '\\end{document}';

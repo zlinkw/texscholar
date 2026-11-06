@@ -5,7 +5,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     let receive, creations = 0, htmlWrites = 0, confirmation, disposed;
     const messages = [], events = [], original = 'The model is strong.';
     const make = id => ({c: {repo: '/fixture', owner: 'reply.tex', id, version: 'v1'}, data: {version: 'v1', original,
-        candidate: 'The model is reliable.', source: {text: 'private full source with machine state'}, edit: {file: 'main.tex', kind: 'manuscript', versions: ['v1'], requests: []},
+        candidate: 'The model is reliable.', fewer_options_reason: 'fixture explanation', source: {text: 'private full source with machine state'}, edit: {file: 'main.tex', kind: 'manuscript', versions: ['v1'], requests: []},
         options: [...'ABC'].map((label, i) => ({label, after: ['The model is reliable.', 'The model is compact.', 'The model is efficient.'][i], reason: label, changes: []}))}});
     const records = new Map(['1', '2', 'a'].map(id => [id, make(id)]));
     const vscode = {Uri: {file: fsPath => ({fsPath})}, ViewColumn: {One: 1}, window: {showWarningMessage: async () => confirmation,
@@ -29,6 +29,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     const content = messages.find(m => m.type === 'content');
     assert(!('source' in content.data)); assert(!('options' in content.data));
     assert.equal(content.options.length, 3);
+    assert.equal(content.data.fewer_options_reason, 'fixture explanation', 'the existing reader receives the explanation in data');
     const count = messages.length;
     view.status({...view.active, version: 'old'}, 'PDF 最新');
     view.status({...view.active, id: 'a'}, 'PDF 最新');

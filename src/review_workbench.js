@@ -37,8 +37,8 @@ function createWorkbench(vscode, context, services) {
     const directory = () => services.directory();
     function packet() {
         const {file, kind, location, versions, requests, questions} = loaded.edit;
-        return {type: 'content', c: active, data: {original: loaded.original, edit: {file, kind, location, versions, requests, questions}},
-            options: options(loaded), fewer_options_reason: loaded.fewer_options_reason, directory: directory(), style: services.style(),
+        return {type: 'content', c: active, data: {original: loaded.original, edit: {file, kind, location, versions, requests, questions}, fewer_options_reason: loaded.fewer_options_reason},
+            options: options(loaded), directory: directory(), style: services.style(),
             sourceSelection,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }

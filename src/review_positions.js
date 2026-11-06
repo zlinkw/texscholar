@@ -8,7 +8,18 @@ function view(text) {
     const start = starts[0].index, end = ends[0].index + ends[0][0].length;
     return {text, start, end, body: text.slice(0, start) + text.slice(end)};
 }
-const nativeOffset = (text, codepoints) => Array.from(text).slice(0, codepoints).join('').length;
+// Backend offsets count Unicode code points. Scan without allocating a copy of
+// the entire manuscript for every card and decoration.
+function nativeOffset(text, codepoints) {
+    let at = 0;
+    for (let count = 0; count < codepoints && at < text.length; count++) at += text.codePointAt(at) > 0xffff ? 2 : 1;
+    return at;
+}
+function codePointOffset(text, offset) {
+    let count = 0;
+    for (let at = 0; at < offset; count++) at += text.codePointAt(at) > 0xffff ? 2 : 1;
+    return count;
+}
 function locateDisplay(data, current, previous = view(data.source.text)) {
     if (!current || !previous) return;
     const a = nativeOffset(previous.text, data.source.start), b = nativeOffset(previous.text, data.source.end);
@@ -34,4 +45,4 @@ function locateDisplay(data, current, previous = view(data.source.text)) {
     if (current.start !== undefined && (result.start === result.end ? result.start >= current.start && result.start < current.end : result.start < current.end && result.end > current.start)) return;
     return result;
 }
-module.exports = {view, locateDisplay};
+module.exports = {view, locateDisplay, nativeOffset, codePointOffset};

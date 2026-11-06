@@ -24,7 +24,7 @@ function run(command, args, cwd, input, extraEnv) {
     });
 }
 const escapeHtml = text => text.replace(/[&<>"']/g, char => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char]));
-const utf16 = (text, offset) => Array.from(text).slice(0, offset).join('').length;
+const utf16 = positions.nativeOffset;
 // Display-only break opportunities for long TeX tokens; never alter stored text
 // or the exact source-selection offsets used for acceptance and annotations.
 const wrapHtml = text => escapeHtml(text.replace(/\S{32,}/gu, word => Array.from(word).join('\u200b'))).replace(/\r?\n/g, '<br>');
@@ -363,7 +363,7 @@ function createInlineReview(vscode, context, execute = run) {
             if (!oldViews.has(record.data.source.text)) oldViews.set(record.data.source.text, positions.view(record.data.source.text));
             const span = positions.locateDisplay(record.data, currentView, oldViews.get(record.data.source.text));
             if (!span) {records.set(id, {...record, displayConflict: true}); continue;}
-            const source = {...record.data.source, text, start: Array.from(text.slice(0, span.start)).length, end: Array.from(text.slice(0, span.end)).length};
+            const source = {...record.data.source, text, start: positions.codePointOffset(text, span.start), end: positions.codePointOffset(text, span.end)};
             records.set(id, {...record, displayConflict: false, data: {...record.data, source}, range: new vscode.Range(document.positionAt(span.start), document.positionAt(span.end))});
         }
         if (!affected) return;
@@ -463,14 +463,14 @@ function createInlineReview(vscode, context, execute = run) {
         updateList();
         // Feedback changes only the embedded state. Rebase cached owner offsets
         // across that header's size change, without rereading/repainting its peers.
-        const offsets = new Map(), newLength = Array.from(saved.owner_text).length;
+        const offsets = new Map(), newLength = positions.codePointOffset(saved.owner_text, saved.owner_text.length);
         for (const [id, peer] of records) {
             const source = peer.data.source;
             if (peer.data.edit.file !== c.owner || source.text === saved.owner_text) continue;
             if (!offsets.has(source.text)) {
                 const end = /^% CODEX-REVIEW-STATE-END\r?$/m.exec(source.text);
-                offsets.set(source.text, {delta: newLength - Array.from(source.text).length,
-                    boundary: Array.from(source.text.slice(0, end.index + end[0].length)).length});
+                offsets.set(source.text, {delta: newLength - positions.codePointOffset(source.text, source.text.length),
+                    boundary: positions.codePointOffset(source.text, end.index + end[0].length)});
             }
             const {delta, boundary} = offsets.get(source.text), shift = source.start >= boundary ? delta : 0;
             records.set(id, {...peer, data: {...peer.data, source: {...source, text: saved.owner_text, start: source.start + shift, end: source.end + shift}}});
