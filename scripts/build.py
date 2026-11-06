@@ -12,7 +12,7 @@ RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', '
            'chktex_actions.js', 'chktex_messages.js', 'chktex_filter.py', 'inline_review.js', 'review_positions.js', 'candidate_panel.js', 'review_pdf.py', 'review_translate.py', 'tools.js',
            'setup.js', 'questions.js', 'writing.js', 'ai_setup.js', 'review_style.js', 'pdf_navigation.js', 'writing-guide.md', 'question-linking-guide.md', 'writing-presets.json',
            'paper.code-snippets', 'source_review.py', 'review_checkpoint.py',
-           'review_workbench.js', 'review_workbench_client.js', 'collaboration-guide.md', 'mcp_server.py', 'mcp_config.py', 'mcp_setup.js')
+           'review.svg', 'review_workbench.js', 'review_workbench_client.js', 'collaboration-guide.md', 'mcp_server.py', 'mcp_config.py', 'mcp_setup.js')
 
 
 def archive_bytes(files):
@@ -57,6 +57,7 @@ def build(output):
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="json" ContentType="application/json"/><Default Extension="js" ContentType="application/javascript"/>
 <Default Extension="png" ContentType="image/png"/>
+<Default Extension="svg" ContentType="image/svg+xml"/>
 <Default Extension="py" ContentType="text/x-python"/><Default Extension="md" ContentType="text/markdown"/>
 <Default Extension="code-snippets" ContentType="application/json"/><Default Extension="vsixmanifest" ContentType="text/xml"/>
 </Types>'''

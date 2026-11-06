@@ -27,13 +27,14 @@ function createWorkbench(vscode, context, services) {
     let panel, active, loaded, dirty = false, noteDirty = false, handling = false, pending, hasPending = false;
     const translations = new Map();
     let translationRun, translationRequested = false, retryTranslation = false, translationEpoch = 0;
-    let lastRecords = new Map();
+    let lastRecords = new Map(), sourceSelection;
     const post = message => panel?.webview.postMessage(message);
     const key = c => JSON.stringify([c.repo, c.owner, c.id, c.version]);
     const options = data => data.options || [{label: 'A', after: data.candidate, reason: '已有单方案', changes: data.changes}];
     const directory = () => services.directory();
     function packet() {
         return {type: 'content', c: active, data: loaded, options: options(loaded), directory: directory(), style: services.style(),
+            sourceSelection,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }
     const valid = c => active && key(active) === key(c);
@@ -46,7 +47,7 @@ function createWorkbench(vscode, context, services) {
         if (active && key(active) === key(c) && panel) {panel.reveal(); return;}
         if (!await allowSwitch()) return;
         const data = await services.read(c);
-        active = {...c}; loaded = data; dirty = noteDirty = false; hasPending = false;
+        active = {...c}; loaded = data; dirty = noteDirty = false; hasPending = false; sourceSelection = undefined;
         if (!panel) {
             panel = vscode.window.createWebviewPanel('texscholarReview', '论文审核', vscode.ViewColumn.One,
                 {enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true});
@@ -154,7 +155,7 @@ function createWorkbench(vscode, context, services) {
                     if (message.side === 'original' && message.start !== undefined) selected = {...selection(excerpt, message.value, message.start, message.end), side: 'original'};
                     if (option) selected.option = option.label;
                 }
-                await services.note(c, selected, message.text); noteDirty = false;
+                await services.note(c, selected, message.text); noteDirty = false; sourceSelection = undefined;
                 post({type: 'noteSaved', message: '返修要求已保存，可继续添加；未发送 AI。'});
             } else if (message.type === 'accept' || message.type === 'reject') {
                 if (dirty || noteDirty) throw new Error('请先保存候选和返修要求，再接收或拒绝。');
@@ -190,6 +191,12 @@ function createWorkbench(vscode, context, services) {
     }
     context.subscriptions.push({dispose() {panel?.dispose();}});
     return {show, sync, setRecords(records) {lastRecords = records;},
+        async annotate(c, selected) {
+            await show(c);
+            if (!valid(c)) return;
+            sourceSelection = selected;
+            post({type: 'sourceSelection', selection: selected});
+        },
         status(c, message) {if (active && key(active) === key(c)) post({type: 'pdfStatus', message});},
         updateStyle() {if (active) post({type: 'style', style: services.style()});},
         settingsChanged() {if (active) {translationEpoch++; autoTranslate();}},

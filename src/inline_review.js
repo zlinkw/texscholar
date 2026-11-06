@@ -1,5 +1,5 @@
 'use strict';
-// Original-file comment cards. Durable proposals/decisions stay in source_review.py.
+// One fixed review page and a bottom ID list. Durable decisions stay in source_review.py.
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const cp = require('node:child_process');
@@ -120,21 +120,18 @@ function markedWords(data, side, style = reviewStyle.defaults) {
 }
 
 function createInlineReview(vscode, context, execute = run) {
-    const cards = new Map(), records = new Map(), drafts = new WeakMap(), threadContexts = new WeakMap(), threadMembers = new WeakMap(), expandedSources = new Set();
-    const controller = vscode.comments.createCommentController('localLatexInlineReview', '原文内修订审核');
+    const records = new Map();
     const style = () => reviewStyle.read(vscode.workspace.getConfiguration('localLatex'));
     let deleted = vscode.window.createTextEditorDecorationType({color: style().removedColor, textDecoration: style().strikeDeleted ? 'line-through' : 'none'});
     let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
     let watchedScope, watcher, autoRefresh, renderedOwnerHash, refreshChain = Promise.resolve();
     const changedFiles = new Set(), reviewFiles = new Set(), deferredFiles = new Set();
-    const shownPanels = new Set(), openedPDFs = new Set(), collapsedQuestions = new Set(), pdfMetadata = new Map(), translations = new Map();
-    let autoTranslationRun, autoTranslationRequested = false;
+    const shownPanels = new Set(), openedPDFs = new Set(), pdfMetadata = new Map();
     const pendingPDFUpdates = new Map();
     let pdfChain = Promise.resolve(), automaticPDFRun;
     const previewChoices = new Map(), workbenchPDFRequests = new Map(), workbenchPDFStatus = new Map(), pdfIntents = new Map();
     let workbenchPDFRun, latestReviewState;
-    context.subscriptions.push(controller, deleted);
-    controller.options = {prompt: '填写返修要求（默认针对整项原文，也可选中文字）', placeHolder: '保存后可一键把全部批注加入 Codex；不会自动发送。'};
+    context.subscriptions.push(deleted);
     const config = () => vscode.workspace.getConfiguration('localLatex');
     const uri = (c, file) => vscode.Uri.file(path.join(c.repo, file));
     const sameFile = require('./tools').samePath;
@@ -177,12 +174,10 @@ function createInlineReview(vscode, context, execute = run) {
         return new vscode.Range(doc.positionAt(utf16(data.source.text, data.source.start)), doc.positionAt(utf16(data.source.text, data.source.end)));
     }
     function contextFor(arg) {
-        const card = arg?.thread || arg;
-        const attached = card && threadContexts.get(card);
-        if (attached) return attached;
         if (arg?.repo && arg.id) return arg;
         const editor = vscode.window.activeTextEditor;
-        if (!editor) throw new Error('请先打开原文审核卡片。');
+        if (!editor && workbench.active) return workbench.active;
+        if (!editor) throw new Error('请先选择论文审核编号。');
         const selected = sourceRecord(editor);
         if (!selected) throw new Error('请点击要审核的原文位置，或使用该处的“接收并替换正文”按钮。');
         return selected.c;
@@ -213,15 +208,39 @@ function createInlineReview(vscode, context, execute = run) {
         if (owners.length !== 1) throw new Error('需先建立或核对唯一的 CODEX-REVIEW-STATE。');
         return {repo, owner: path.relative(repo, owners[0]).split(path.sep).join('/')};
     }
+    const listEvents = new vscode.EventEmitter();
+    let fileRows = [];
+    const listProvider = {
+        onDidChangeTreeData: listEvents.event,
+        getTreeItem: item => item,
+        getChildren: item => item ? item.children || [] : fileRows
+    };
+    const reviewList = vscode.window.createTreeView('texscholar.reviewList', {treeDataProvider: listProvider, showCollapseAll: true});
+    context.subscriptions.push(listEvents, reviewList);
+    function updateList() {
+        const files = new Map();
+        for (const record of orderedRecords()) {
+            const {c, data} = record, file = data.edit.file;
+            if (!files.has(file)) {
+                const group = new vscode.TreeItem(file, vscode.TreeItemCollapsibleState.Expanded);
+                group.children = []; files.set(file, group);
+            }
+            const item = new vscode.TreeItem(`${c.id} · ${data.edit.location || file}`, vscode.TreeItemCollapsibleState.None);
+            item.id = JSON.stringify([c.repo, c.owner, batch, c.id]);
+            item.description = record.displayConflict ? '原文位置待核对' : data.edit.status === 'rework' ? '返修' : '待审';
+            item.tooltip = `${c.id} · ${file} · 候选 v${data.edit.versions.length}`;
+            item.command = {command: 'localLatex.reviewWorkbench', title: '打开论文审核页', arguments: [c]};
+            files.get(file).children.push(item);
+        }
+        fileRows = [...files.values()];
+        reviewList.message = records.size ? `${records.size} 项待审 · 点击编号在同一审核页切换` : '暂无待审候选；请先让 AI 按插件规则生成。';
+        listEvents.fire();
+    }
     async function showPanel(repo, explicit = false) {
+        await vscode.commands.executeCommand('setContext', 'localLatex.hasTeXProject', true);
         if (!explicit && shownPanels.has(repo)) return;
-        // VS Code registers this view/command only after real comment threads
-        // or commenting ranges reach its main thread. Do not focus it earlier.
-        if (!(await vscode.commands.getCommands(true)).includes('workbench.action.focusCommentsPanel')) return;
-        const editor = vscode.window.activeTextEditor;
-        await vscode.commands.executeCommand('workbench.action.focusCommentsPanel');
+        await vscode.commands.executeCommand('texscholar.reviewList.focus');
         shownPanels.add(repo);
-        if (editor) await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
     }
     async function enableReview(explicit = false) {
         if (!vscode.workspace.isTrusted || !vscode.workspace.workspaceFolders?.length && !vscode.window.activeTextEditor) return;
@@ -233,204 +252,6 @@ function createInlineReview(vscode, context, execute = run) {
             // Track external state-file changes without showing/moving its editor.
             await vscode.workspace.openTextDocument(uri(scope, scope.owner));
         } else await showPanel(scope.repo, explicit);
-    }
-    const sourceKey = c => JSON.stringify([c.repo, c.owner, c.id]);
-    // Native gutter clicks toggle every thread ending on the clicked source line.
-    // Share the view, not the underlying candidates or their decisions/notes.
-    const lineKey = record => JSON.stringify([record.c.repo, record.c.owner, record.data.edit.file,
-        record.data.source.text.slice(0, utf16(record.data.source.text, record.data.source.end)).split('\n').length]);
-    const cardTitle = (data, id) => {
-        const members = threadMembers.get(cards.get(id)) || [];
-        return label(data, id) + (members.length > 1 ? ' · 本行：' + members.join('、') : '');
-    };
-    function translationInput(c, data) {
-        const provider = config().get('translation.provider', 'bing');
-        if (!TRANSLATORS[provider]) throw new Error('请在设置中选择可用的翻译来源。');
-        const items = [{key: 'original', text: displayText(data.original)},
-            {key: 'candidate', text: displayText(data.candidate) || deletionPreview(data)},
-            ...(data.edit.questions || []).map((q, i) => ({key: 'question' + i, text: displayText(q.quote)}))].filter(item => item.text);
-        return {provider, items, signature: JSON.stringify([c.version, provider, items])};
-    }
-    function translationState(c, data) {
-        const entry = translations.get(sourceKey(c));
-        return entry?.signature === translationInput(c, data).signature ? entry : undefined;
-    }
-    function redrawCard(c) {
-        const thread = cards.get(c.id), record = records.get(c.id);
-        if (thread && record && threadContexts.get(thread)?.id === c.id)
-            thread.comments = [{...thread.comments[0], body: cardBody(record.data, c.id, record.c)}, ...thread.comments.slice(1)];
-    }
-    async function translateCard(arg) {
-        const c = contextFor(arg), record = records.get(c.id);
-        if (!record) throw new Error('该项已更新或处理，请查看当前卡片。');
-        trusted(c);
-        if (!sameFile(c.repo, record.c.repo) || c.owner !== record.c.owner || c.version !== record.c.version)
-            throw new Error('该翻译入口来自旧版本或其他项目，请核对当前卡片。');
-        const input = translationInput(c, record.data), key = sourceKey(c);
-        let entry = translationState(c, record.data);
-        if (entry?.loading) return entry.promise;
-        if (entry && !Object.keys(entry.errors).length) {
-            entry.expanded = !entry.expanded; redrawCard(c); return;
-        }
-        if (arg?.hideTranslation && entry) {entry.expanded = false; redrawCard(c); return;}
-        entry ||= {c, signature: input.signature, provider: input.provider, items: input.items,
-            results: {}, errors: {}, warnings: {}, expanded: true};
-        // Reuse successful identical text from other live cards, like Zotero's
-        // task cache. Original/candidate/question keys are presentation slots.
-        for (const item of input.items) {
-            if (item.key in entry.results) continue;
-            for (const cached of translations.values()) {
-                if (cached.provider !== input.provider) continue;
-                const previous = cached.items.find(other => other.text === item.text && other.key in cached.results);
-                if (!previous) continue;
-                entry.results[item.key] = cached.results[previous.key];
-                if (cached.warnings[previous.key]) entry.warnings[item.key] = cached.warnings[previous.key];
-                break;
-            }
-        }
-        entry.expanded = true; entry.loading = true; entry.errors = {};
-        translations.set(key, entry); redrawCard(c);
-        const items = input.items.filter(item => !(item.key in entry.results));
-        const http = vscode.workspace.getConfiguration('http');
-        const proxy = ['google', 'googleapi'].includes(input.provider) ? null
-            : http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;
-        entry.promise = (async () => {
-            try {
-                if (!items.length) return;
-                const result = JSON.parse(await execute(config().get('pythonPath', 'python'), ['-X', 'utf8', path.join(__dirname, 'review_translate.py')], c.repo,
-                    {provider: input.provider, proxy, items}));
-                Object.assign(entry.results, result.results); Object.assign(entry.warnings, result.warnings); entry.errors = result.errors;
-            } catch (error) {entry.errors = Object.fromEntries(items.map(item => [item.key, error.message]));}
-            finally {
-                entry.loading = false;
-                if (translations.get(key) === entry && records.has(c.id)
-                    && translationInput(c, records.get(c.id).data).signature === entry.signature) redrawCard(c);
-            }
-        })();
-        return entry.promise;
-    }
-    function autoTranslateVisible() {
-        if (!config().get('translation.autoTranslate', true) || !vscode.workspace.isTrusted) return Promise.resolve();
-        autoTranslationRequested = true;
-        if (autoTranslationRun) return autoTranslationRun;
-        // Native gutter expansion has no public event. Prepare only cards whose
-        // source positions are actually visible, driven by editor/file events.
-        autoTranslationRun = (async () => {
-            while (autoTranslationRequested) {
-                autoTranslationRequested = false;
-                for (const id of records.keys()) {
-                    if (!config().get('translation.autoTranslate', true)) return;
-                    const editor = vscode.window.activeTextEditor, record = records.get(id);
-                    if (!editor || editor.document.languageId !== 'latex' || record.displayConflict
-                        || !sameFile(editor.document.uri.fsPath, path.join(record.c.repo, record.data.edit.file))
-                        || !editor.visibleRanges.some(visible => !!visible.intersection(record.range))
-                        || translationState(record.c, record.data)) continue;
-                    await translateCard(record.c);
-                }
-            }
-        })().catch(error => vscode.window.showErrorMessage(error.message))
-            .finally(() => {autoTranslationRun = undefined;});
-        return autoTranslationRun;
-    }
-    function cardBody(data, id, c) {
-        const appearance = style();
-        const translation = translationState(c, data), provider = translationInput(c, data).provider;
-        const markdown = new vscode.MarkdownString();
-        markdown.supportHtml = true;
-        markdown.isTrusted = false;
-        const enabledCommands = [];
-        enabledCommands.push('localLatex.reviewWorkbench');
-        markdown.appendMarkdown(`[打开审核页](command:localLatex.reviewWorkbench?${encodeURIComponent(JSON.stringify([c]))})\n\n`);
-        enabledCommands.push('localLatex.inlineTranslate', 'localLatex.inlineTranslationSource');
-        const translationAction = translation?.loading ? '正在翻译…' : translation && Object.keys(translation.errors).length ? '重试未完成翻译'
-            : translation ? translation.expanded ? '收起中文' : '展开中文' : '翻译本条为中文';
-        let translationLinks = `[${translationAction}（${TRANSLATORS[provider]}）](command:localLatex.inlineTranslate?${encodeURIComponent(JSON.stringify([c]))})`;
-        if (translation?.expanded && Object.keys(translation.errors).length)
-            translationLinks += ` · [收起中文](command:localLatex.inlineTranslate?${encodeURIComponent(JSON.stringify([{...c, hideTranslation: true}]))})`;
-        translationLinks += ` · [切换翻译源](command:localLatex.inlineTranslationSource?${encodeURIComponent(JSON.stringify([c]))})`;
-        const chinese = key => {
-            if (!translation?.expanded) return '';
-            const value = translation.results[key], error = translation.errors[key];
-            // Remote text is literal display data, never Markdown commands.
-            const literal = text => wrapHtml(text).replace(/[\[\]()*_`]/g, char => '&#' + char.charCodeAt(0) + ';');
-            if (value !== undefined) return '<br><strong>中文：</strong>' + literal(value)
-                + (translation.warnings[key] ? '<br><em>阅读提示：</em>' + literal(translation.warnings[key]) : '');
-            if (error) return '<br><strong>翻译未完成：</strong>' + literal(error);
-            return translation.loading ? '<br>中文：正在翻译…' : '';
-        };
-        const members = threadMembers.get(cards.get(id)) || [];
-        if (members.length > 1) {
-            enabledCommands.push('localLatex.inlineSelectCard');
-            markdown.appendMarkdown('选择本行编号：' + members.map(member => member === id ? `**${member}**`
-                : `[${member}](command:localLatex.inlineSelectCard?${encodeURIComponent(JSON.stringify([records.get(member).c]))})`).join(' · ') + '\n\n');
-        }
-        if (!data.edit.deferred) markdown.appendMarkdown('旧式记录：候选此前已在源码中；本工具不会静默撤回。\n\n');
-        const old = displayText(data.original) ? markedWords(data, 'original', appearance).trim() : '仅补充，无对应原句。';
-        const proposed = displayText(data.candidate) ? markedWords(data, 'candidate', appearance).trim()
-            : `本句／本项已删除。删除后衔接（仅预览）：<br>${wrapHtml(deletionPreview(data))}`;
-        const between = appearance.cardLayout === 'compact' ? '<br>' : '</div>\n\n<div>';
-        markdown.appendMarkdown(`<div><strong>原文：</strong> ${old}${chinese('original')}${between}<strong>候选：</strong> ${proposed}${chinese('candidate')}</div>\n`);
-        markdown.appendMarkdown('\n\n' + translationLinks);
-        if (data.edit.questions?.length) {
-            enabledCommands.push('localLatex.inlineQuestions', 'localLatex.jumpQuestion', 'localLatex.inlineRelatedChanges');
-            const toggle = encodeURIComponent(JSON.stringify([c]));
-            markdown.appendMarkdown(`\n\n[关联问题 ${data.edit.questions.map(q => escapeHtml(q.id)).join('、')}（${collapsedQuestions.has(sourceKey(c)) ? '展开' : '收起'}原始意见）](command:localLatex.inlineQuestions?${toggle})`);
-            markdown.appendMarkdown(` · [查看这些问题的全部改动](command:localLatex.inlineRelatedChanges?${toggle})`);
-            if (!collapsedQuestions.has(sourceKey(c))) for (const [index, q] of data.edit.questions.entries()) {
-                const target = encodeURIComponent(JSON.stringify([{repo: c.repo, question: q}]));
-                markdown.appendMarkdown(`\n\n<div><strong>${escapeHtml(q.id)}：</strong>${wrapHtml(q.quote)}${chinese('question' + index)}</div>\n\n`
-                    + `[跳转原始文件](command:localLatex.jumpQuestion?${target})`);
-            }
-        }
-        if (commentSpans(data.original).length || commentSpans(data.candidate).length) {
-            const expanded = expandedSources.has(sourceKey(c));
-            const target = 'command:localLatex.inlineToggleSource?' + encodeURIComponent(JSON.stringify([c]));
-            enabledCommands.push('localLatex.inlineToggleSource');
-            markdown.appendMarkdown(`\n\n[${expanded ? '收起完整源码' : '展开完整源码（含注释）'}](${target})`);
-            if (expanded) markdown.appendMarkdown(`\n\n<div><strong>原文完整源码：</strong><br>${wrapHtml(data.original)}<br><strong>候选完整源码：</strong><br>${wrapHtml(data.candidate)}</div>`);
-        }
-        if (enabledCommands.length) markdown.isTrusted = {enabledCommands};
-        return markdown;
-    }
-    function renderCard(thread, record, previous, preserveDraft = false, previousMembers = []) {
-        const {c, data} = record;
-        const sameBody = previous && previous.c.id === c.id && previous.c.version === c.version
-            && previous.data.edit.deferred === data.edit.deferred
-            && previous.data.edit.location === data.edit.location
-            && JSON.stringify(previous.data.edit.questions) === JSON.stringify(data.edit.questions)
-            && JSON.stringify(previousMembers) === JSON.stringify(threadMembers.get(thread))
-            && (displayText(data.candidate) || deletionPreview(previous.data) === deletionPreview(data));
-        const comments = [sameBody ? thread.comments[0]
-            : {body: cardBody(data, c.id, c), mode: vscode.CommentMode.Preview,
-                author: {name: `${c.id} · ${data.edit.location || data.edit.file}`}}];
-        const oldNotes = new Map((previous?.data.edit.requests || []).map((note, index) => [note.id, {note, comment: thread.comments[index + 1]}]));
-        for (const note of data.edit.requests || []) {
-            const old = oldNotes.get(note.id);
-            if (old && JSON.stringify(old.note) === JSON.stringify(note)) comments.push(old.comment);
-            else {
-                const body = new vscode.MarkdownString();
-                body.appendText(`${note.side === 'original' ? '原文' : '候选'}选区：${note.quote}\n返修要求：${note.text}\n状态：${note.status}`);
-                comments.push({body, mode: vscode.CommentMode.Preview, author: {name: '作者'}});
-            }
-        }
-        if (comments.length !== thread.comments.length || comments.some((comment, i) => comment !== thread.comments[i])) thread.comments = comments;
-        thread.range = record.range;
-        if (!preserveDraft) {
-            const title = cardTitle(data, c.id);
-            if (thread.label !== title) thread.label = title;
-            if (thread.contextValue !== 'localLatexInlineCard') thread.contextValue = 'localLatexInlineCard';
-            if (thread.canReply !== false) thread.canReply = false;
-        }
-        threadContexts.set(thread, c);
-    }
-    function showCard(c) {
-        const record = records.get(c.id), thread = cards.get(c.id);
-        if (!record || !thread) throw new Error('该卡片已更新，请重新打开。');
-        if (drafts.has(thread)) {
-            if (drafts.get(thread).c.id !== c.id) throw new Error('请先保存或取消当前批注草稿，再切换同行候选；草稿仍保留。');
-        } else renderCard(thread, record, records.get(threadContexts.get(thread).id), false, threadMembers.get(thread));
-        thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
-        activeScope = record.c;
     }
     function relevantFile(file) {
         return watchedScope && (sameFile(file, path.join(watchedScope.repo, watchedScope.owner))
@@ -477,52 +298,33 @@ function createInlineReview(vscode, context, execute = run) {
         const changed = resource => requestRefresh(resource.fsPath);
         context.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed));
     }
-    function refresh(c, explicitPanel = false, focus = false) {
-        const task = refreshChain.then(() => renderRefresh(c, explicitPanel, focus));
+    function refresh(c, explicitPanel = false) {
+        const task = refreshChain.then(() => renderRefresh(c, explicitPanel));
         // Recover the sequencing tail only; the caller still receives failures.
         refreshChain = task.catch(() => {});
         return task;
     }
-    async function renderRefresh(c, explicitPanel = false, focus = false) {
+    async function renderRefresh(c, explicitPanel = false) {
         watchScope(c);
         const state = await backend(c, ['cards']);
         latestReviewState = state;
         reviewFiles.clear(); deferredFiles.clear();
         for (const edit of Object.values(state.edits)) if (OPEN.has(edit.status)) reviewFiles.add(path.join(c.repo, edit.file));
         if (batch && batch !== state.session) {
-            expandedSources.clear(); collapsedQuestions.clear(); pdfMetadata.clear(); translations.clear();
+            pdfMetadata.clear();
             previewChoices.clear(); workbenchPDFStatus.clear();
-            for (const thread of new Set(cards.values())) {drafts.delete(thread); thread.dispose();}
-            cards.clear(); records.clear();
+            records.clear();
         }
         batch = state.session;
         const documents = new Map();
-        const previous = new Map(), writing = new Map(), available = new Map();
-        const oldCards = new Map(cards), oldRecords = new Map(records), oldThreads = new Set(cards.values());
+        const oldRecords = new Map(records);
         const blocked = new Set();
         for (const [file, text] of Object.entries(state.sources)) {
             const doc = await vscode.workspace.openTextDocument(uri(c, file));
             documents.set(file, doc);
             if (doc.isDirty || doc.getText() !== text) {blocked.add(file); deferredFiles.add(path.join(c.repo, file));}
         }
-        for (const thread of new Set(cards.values())) {
-            const selected = threadContexts.get(thread); let record = records.get(selected.id);
-            previous.set(lineKey(record), selected.id);
-            const replacement = state.cards[selected.id];
-            if (drafts.has(thread) && state.edits[selected.id] && OPEN.has(state.edits[selected.id].status) && (!replacement || replacement.version === selected.version)) {
-                if (replacement) record = {...record, data: {...record.data, edit: {...record.data.edit, questions: replacement.edit.questions}}};
-                writing.set(lineKey(record), {thread, record});
-            } else if (drafts.has(thread)) {
-                drafts.delete(thread);
-                thread.dispose();
-                oldThreads.delete(thread);
-            }
-            if (oldThreads.has(thread)) available.set(lineKey(record), thread);
-        }
-        cards.clear(); records.clear();
-        // Ordinary refresh/metadata updates keep the draft. A genuine new
-        // candidate generation replaces its old disposable review interaction.
-        for (const {record} of writing.values()) records.set(record.c.id, record);
+        records.clear();
         for (const [id, record] of oldRecords) if (blocked.has(record.data.edit.file) && state.cards[id]) records.set(id, record);
         for (const [id, data] of Object.entries(state.cards)) {
             if (records.has(id)) continue;
@@ -536,7 +338,7 @@ function createInlineReview(vscode, context, execute = run) {
             const at = range(doc, data);
             records.set(id, {c: selected, data, range: at});
         }
-        reconcileThreads(c, {oldCards, oldRecords, oldThreads, previous, available, writing}, focus);
+        updateList();
         const compared = new Set();
         const presentationChanged = oldRecords.size !== records.size || [...records].some(([id, record]) => {
             const previous = oldRecords.get(id);
@@ -546,62 +348,14 @@ function createInlineReview(vscode, context, execute = run) {
             return positions.view(previous.data.source.text)?.body !== positions.view(record.data.source.text)?.body;
         });
         if (presentationChanged) for (const record of records.values()) workbenchPDFStatus.delete(choiceKey(record.c));
-        for (const [key, entry] of translations) {
-            const record = records.get(entry.c.id);
-            if (!record || translationInput(record.c, record.data).signature !== entry.signature) translations.delete(key);
-        }
         renderedOwnerHash = state.sha256;
-        candidatePanel.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), c);
         workbench.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), c);
         decorate();
         await setContext();
         await showPanel(c.repo, explicitPanel);
-        autoTranslateVisible();
-    }
-    function reconcileThreads(c, prior, focus = false, resetFile) {
-        const {oldCards, oldRecords, oldThreads, previous, available, writing} = prior;
-        const groups = new Map();
-        for (const record of records.values()) {
-            if (record.displayConflict) continue;
-            const key = lineKey(record);
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push(record);
-        }
-        const used = new Set();
-        for (const [key, members] of groups) {
-            const draft = writing.get(key);
-            const record = draft?.record || (focus && members.find(r => r.c.id === c.id))
-                || members.find(r => r.c.id === previous.get(key))
-                || members.find(r => threadContexts.get(oldCards.get(r.c.id))?.id === r.c.id) || members[0];
-            let thread = draft?.thread || available.get(key);
-            if (!thread || used.has(thread)) thread = members.map(r => oldCards.get(r.c.id)).find(t => t && oldThreads.has(t) && !used.has(t));
-            const old = thread && oldRecords.get(threadContexts.get(thread).id);
-            const oldMembers = thread ? threadMembers.get(thread) : [];
-            if (!thread) thread = controller.createCommentThread(uri(record.c, record.data.edit.file), record.range, []);
-            used.add(thread);
-            threadMembers.set(thread, members.map(r => r.c.id));
-            for (const member of members) cards.set(member.c.id, thread);
-            // Whole-buffer edits can move native tracked decorations even when
-            // the extension's cached Range compares equal. Rebind via the public
-            // file-comment position, preserving the thread and its draft/body.
-            if (resetFile && sameFile(resetFile, thread.uri.fsPath)) thread.range = undefined;
-            renderCard(thread, record, old, !!draft, oldMembers);
-            if (!draft && !old) {
-                thread.collapsibleState = record.c.id === c.id ? vscode.CommentThreadCollapsibleState.Expanded : vscode.CommentThreadCollapsibleState.Collapsed;
-            } else if (focus && record.c.id === c.id) thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
-        }
-        for (const thread of oldThreads) if (!used.has(thread)) {
-            const selected = threadContexts.get(thread), record = records.get(selected.id);
-            if (drafts.has(thread) && record?.displayConflict) {
-                thread.range = undefined;
-                thread.label = `${selected.id} · 原文位置待核对，批注草稿仍保留`;
-                cards.set(selected.id, thread);
-            } else thread.dispose();
-        }
     }
     function relocateDocument(document) {
         const text = document.getText(), currentView = positions.view(text), oldViews = new Map();
-        const prior = {oldCards: new Map(cards), oldRecords: new Map(records), oldThreads: new Set(cards.values()), previous: new Map(), available: new Map(), writing: new Map()};
         let affected = false;
         for (const [id, record] of records) {
             if (!sameFile(document.uri.fsPath, path.join(record.c.repo, record.data.edit.file))) continue;
@@ -614,16 +368,8 @@ function createInlineReview(vscode, context, execute = run) {
         }
         if (!affected) return;
         if (document.isDirty) deferredFiles.add(document.uri.fsPath);
-        for (const thread of prior.oldThreads) {
-            const selected = threadContexts.get(thread), record = records.get(selected.id);
-            if (!record || record.displayConflict) continue;
-            prior.previous.set(lineKey(record), selected.id);
-            prior.available.set(lineKey(record), thread);
-            if (drafts.has(thread)) prior.writing.set(lineKey(record), {thread, record});
-        }
-        cards.clear();
-        reconcileThreads(watchedScope, prior, false, document.uri.fsPath);
-        candidatePanel.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), watchedScope);
+        updateList();
+        workbench.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), watchedScope);
     }
     function decorate() {
         for (const editor of vscode.window.visibleTextEditors) {
@@ -649,57 +395,15 @@ function createInlineReview(vscode, context, execute = run) {
         const enabled = !!doc && [...records.values()].some(r => sameFile(doc.uri.fsPath, path.join(r.c.repo, r.data.edit.file)));
         await vscode.commands.executeCommand('setContext', 'localLatex.inlineReviewActive', enabled);
     }
-    async function open(c) {
-        const draft = drafts.get(cards.get(c.id));
-        if (draft && draft.c.id !== c.id) throw new Error('请先保存或取消当前批注草稿，再切换同行候选；草稿仍保留。');
-        // Opening is read-only. Reuse the watcher packet when its exact disk
-        // inputs still match; mutations keep their independent current() checks.
-        await refreshChain;
-        let record = records.get(c.id);
-        if (record && sameFile(record.c.repo, c.repo) && record.c.owner === c.owner && record.data.edit.deferred) {
-            trusted(c);
-            if (await changedSinceRender([path.join(c.repo, c.owner), path.join(c.repo, record.data.edit.file)])) {
-                await refresh(c);
-                record = records.get(c.id);
-            }
-            if (!record || record.displayConflict) throw new Error('该项已处理或原文发生冲突，请核对最新审核内容。');
-            showCard(record.c);
-            const editor = await vscode.window.showTextDocument(uri(record.c, record.data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
-            editor.selection = new vscode.Selection(record.range.start, record.range.start);
-            editor.revealRange(record.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-            return;
-        }
-        const state = await prepareProject(c);
-        c = {...c, version: state.edits[c.id].versions.at(-1)};
-        activeScope = c;
-        const data = await current(c);
-        const editor = await vscode.window.showTextDocument(uri(c, data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
-        const at = range(editor.document, data);
-        editor.selection = new vscode.Selection(at.start, at.start);
-        editor.revealRange(at, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-        await refresh(c, false, true);
-    }
-    async function prepareProject(c) {
-        let state = await backend(c, ['status']);
-        if (state.schema === 1 || Object.values(state.edits || {}).some(edit => OPEN.has(edit.status) && !edit.deferred)) {
-            for (const edit of Object.values(state.edits || {})) if (OPEN.has(edit.status)) cleanBuffers(c, edit.file);
-            await backend(c, ['migrate', '--defer-pending'], undefined, state.sha256);
-            state = await backend(c, ['status']);
-        }
-        return state;
-    }
+    async function open(c) { return openWorkbench(c); }
     async function select(next = false, arg) {
         if (!next) return enableReview(true);
-        if (!activeScope) await enableReview();
-        const choices = orderedRecords();
+        await enableReview();
+        const choices = orderedRecords().filter(r => !r.displayConflict);
         if (!choices.length) return vscode.window.showInformationMessage('没有待审修改。');
-        const from = arg ? contextFor(arg) : activeScope;
+        const from = arg ? contextFor(arg) : workbench.active;
         const index = choices.findIndex(r => r.c.id === from?.id);
-        const picked = choices[(index + 1) % choices.length];
-        showCard(picked.c);
-        const editor = await vscode.window.showTextDocument(uri(picked.c, picked.data.edit.file), {preview: false});
-        editor.selection = new vscode.Selection(picked.range.start, picked.range.start);
-        editor.revealRange(picked.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        return openWorkbench(choices[(index + 1) % choices.length].c);
     }
     function orderedRecords() {
         return [...records.values()].sort((a, b) => {
@@ -708,7 +412,6 @@ function createInlineReview(vscode, context, execute = run) {
         });
     }
     async function accept(arg) {
-        if (drafts.has(cards.get(contextFor(arg).id))) throw new Error('请先保存或取消当前批注草稿，再接收候选；草稿仍保留。');
         const c = contextFor(arg), data = await current(c);
         if (data.options?.length > 1 && !c.option) {await openWorkbench(c); return;}
         const navigation = pdfMetadata.get(c.repo + '|' + c.id) || context.workspaceState?.get('reviewPDFMeta', {})[c.repo + '|' + c.id];
@@ -717,60 +420,29 @@ function createInlineReview(vscode, context, execute = run) {
         await backend(c, ['decide', '--accept', c.id, '--version', c.version, ...(data.options?.length && data.options.length > 1 ? ['--option', c.option || 'A'] : data.options?.length && c.option ? ['--option', c.option] : [])], undefined, data.sha256);
         await refresh(c);
         const next = following.map(id => records.get(id)).find(Boolean);
-        if (next && !c.workbench) {
-            const editor = await vscode.window.showTextDocument(uri(next.c, next.data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
-            editor.selection = new vscode.Selection(next.range.start, next.range.start);
-            editor.revealRange(next.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-            showCard(next.c);
-        }
+        if (next && !c.workbench) await openWorkbench(next.c);
         if (navigation && config().get('reviewPDF.autoUpdateAfterAccept', true)) await queueAcceptedPDF(c, navigation);
         vscode.window.showInformationMessage(`${c.id} 已接收并替换正文；未提交 Git 或推送。`);
     }
     async function reject(arg) {
-        if (drafts.has(cards.get(contextFor(arg).id))) throw new Error('请先保存或取消当前批注草稿，再拒绝候选；草稿仍保留。');
         const c = contextFor(arg), data = await current(c);
         await backend(c, ['decide', '--reject', c.id, '--version', c.version], undefined, data.sha256);
         await refresh(c);
         vscode.window.showInformationMessage(`${c.id} 候选已拒绝，原文保留；不代表科学问题已解决，未提交 Git 或推送。`);
     }
     async function annotate(arg) {
-        const c = contextFor(arg), existing = cards.get(c.id);
-        if (drafts.has(existing)) {showCard(c); return existing;}
-        const data = await current(c), editor = vscode.window.activeTextEditor;
-        const side = data.original.trim() ? 'original' : 'candidate', excerpt = data[side];
-        let note = {c, side, start: 0, end: Array.from(excerpt).length, quote: excerpt};
-        const selected = editor && sameFile(editor.document.uri.fsPath, path.join(c.repo, data.edit.file)) && !editor.selection.isEmpty;
-        if (selected) {
-            const at = editor.selection;
-            const start = Array.from(editor.document.getText().slice(0, editor.document.offsetAt(at.start))).length - data.source.start;
-            const end = Array.from(editor.document.getText().slice(0, editor.document.offsetAt(at.end))).length - data.source.start;
-            if (start >= 0 && start < end && end <= Array.from(data[data.source.side]).length) note = {c, side: data.source.side, start, end, quote: editor.document.getText(at)};
-            else if (!threadContexts.has(arg?.thread || arg) && !arg?.repo) throw new Error('请选择该编号原文范围内的文字，或在该卡片内添加整项批注。');
+        const c = contextFor(arg), data = await current(c), editor = vscode.window.activeTextEditor;
+        let selected;
+        if (editor && sameFile(editor.document.uri.fsPath, path.join(c.repo, data.edit.file)) && !editor.selection.isEmpty) {
+            const start = editor.document.offsetAt(editor.selection.start) - utf16(data.source.text, data.source.start);
+            const end = editor.document.offsetAt(editor.selection.end) - utf16(data.source.text, data.source.start);
+            if (start < 0 || end > data.original.length || start >= end) throw new Error('请选择该编号原文范围内的文字。');
+            const value = data.original.replace(/\r\n/g, '\n');
+            selected = {side: 'original', value, start: data.original.slice(0, start).replace(/\r\n/g, '\n').length,
+                end: data.original.slice(0, end).replace(/\r\n/g, '\n').length};
         }
-        showCard(c);
-        const thread = cards.get(c.id);
-        thread.contextValue = 'localLatexInlineDraft'; thread.canReply = true;
-        thread.label = `${c.id} · 保存返修批注`;
-        thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
-        drafts.set(thread, note);
-        return thread;
-    }
-    function cancelComment(arg) {
-        const thread = arg?.thread || arg, note = drafts.get(thread);
-        if (!note) throw new Error('没有可取消的批注草稿。');
-        drafts.delete(thread);
-        if (threadContexts.has(thread)) {
-            thread.canReply = false;
-            thread.contextValue = 'localLatexInlineCard';
-            thread.label = cardTitle(records.get(note.c.id).data, note.c.id);
-        } else thread.dispose();
-    }
-    async function post(reply) {
-        if (!reply?.text?.trim()) throw new Error('请填写返修要求。');
-        const note = drafts.get(reply.thread);
-        if (!note) throw new Error('请用原文右键的“批注选中文字”入口创建批注。');
-        await saveNote(note.c, note, reply.text);
-        drafts.delete(reply.thread);
+        workbench.setRecords(new Map(orderedRecords().filter(r => !r.displayConflict).map(r => [r.c.id, r])));
+        await workbench.annotate(c, selected);
     }
     async function saveNote(c, note, text) {
         const data = await current(c);
@@ -782,13 +454,12 @@ function createInlineReview(vscode, context, execute = run) {
     }
     function updateSaved(c, saved) {
         ownerAfterWrite = saved.owner_text;
-        const previous = records.get(c.id), thread = cards.get(c.id);
+        const previous = records.get(c.id);
         if (previous.c.version !== saved.card.version) for (const peer of records.values()) workbenchPDFStatus.delete(choiceKey(peer.c));
         const record = {...previous, c: {...c, version: saved.card.version}, data: {...saved.card, source: saved.card.source || previous.data.source}};
         records.set(c.id, record);
         if (latestReviewState) latestReviewState.edits[c.id] = saved.card.edit;
-        drafts.delete(thread);
-        renderCard(thread, record, previous, false, threadMembers.get(thread));
+        updateList();
         // Feedback changes only the embedded state. Rebase cached owner offsets
         // across that header's size change, without rereading/repainting its peers.
         const offsets = new Map(), newLength = Array.from(saved.owner_text).length;
@@ -810,24 +481,6 @@ function createInlineReview(vscode, context, execute = run) {
         busy = true;
         try {return await action();} finally {busy = false; await flushRefresh();}
     }
-    const candidatePanel = require('./candidate_panel').createCandidatePanel(vscode, context, {
-        style,
-        read: current,
-        save: (c, after) => exclusive(async () => {
-            const data = await current(c);
-            const saved = await backend(c, ['edit-option', '--id', c.id, '--version', c.version, '--option', 'A'], {after}, data.sha256);
-            updateSaved(c, saved);
-            return saved.card;
-        }),
-        note: (c, selected, text) => exclusive(() => saveNote(c, selected, text)),
-        back: async c => {
-            await current(c);
-            const record = records.get(c.id);
-            const editor = await vscode.window.showTextDocument(uri(c, record.data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
-            editor.revealRange(record.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-            showCard(c);
-        }
-    });
     const choiceKey = c => JSON.stringify([c.repo, c.owner, c.id]);
     function selectedOption(c) {
         const saved = previewChoices.get(choiceKey(c));
@@ -1056,7 +709,7 @@ function createInlineReview(vscode, context, execute = run) {
     command('localLatex.reviewWorkbench', openWorkbench, true);
     command('localLatex.inlineReviewAt', c => open(c));
     command('localLatex.inlineNext', arg => select(true, arg), true);
-    command('localLatex.inlineSelectCard', showCard, true);
+    command('localLatex.inlineSelectCard', openWorkbench, true);
     command('localLatex.inlineAccept', accept);
     command('localLatex.inlineReject', reject);
     command('localLatex.inlineAnnotate', annotate);
@@ -1087,8 +740,6 @@ function createInlineReview(vscode, context, execute = run) {
         editor.selection = new vscode.Selection(at.start, at.end);
         editor.revealRange(at, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     }, true);
-    command('localLatex.inlinePostComment', post);
-    command('localLatex.inlineCancelComment', cancelComment);
     command('localLatex.inlinePreview', preview);
     command('localLatex.inlineLocatePDF', async arg => {
         const c = contextFor(arg);
@@ -1111,7 +762,7 @@ function createInlineReview(vscode, context, execute = run) {
         await require('./pdf_navigation').openFloating(vscode, selected, true);
     }, true);
     command('localLatex.inlineAddRequests', addRequests);
-    command('localLatex.inlineTranslate', translateCard, true);
+    command('localLatex.inlineTranslate', arg => openWorkbench(contextFor(arg)), true);
     command('localLatex.inlineTranslationSource', async arg => {
         const c = contextFor(arg); trusted(c);
         const currentProvider = config().get('translation.provider', 'bing');
@@ -1125,28 +776,8 @@ function createInlineReview(vscode, context, execute = run) {
             await cfg.update('translation.provider', chosen.provider, target);
         }
     }, true);
-    command('localLatex.inlineToggleSource', async c => {
-        const selected = contextFor(c);
-        const record = records.get(selected.id), thread = cards.get(selected.id);
-        if (!record || !thread) throw new Error('该卡片已更新，请重新打开。');
-        const key = sourceKey(selected);
-        if (expandedSources.has(key)) expandedSources.delete(key); else expandedSources.add(key);
-        thread.comments = [{...thread.comments[0], body: cardBody(record.data, selected.id, record.c)}, ...thread.comments.slice(1)];
-    }, true);
-    command('localLatex.inlineQuestions', async c => {
-        const selected = contextFor(c), record = records.get(selected.id), thread = cards.get(selected.id);
-        if (!record || !thread) throw new Error('请先打开对应的原文审核卡片。');
-        if (!record.data.edit.questions?.length) {
-            require('./questions').notifyProblem(vscode, '该候选尚未关联原始问题；请由论文会话读取原始意见后明确补充。')
-                .catch(error => vscode.window.showErrorMessage(error.message));
-            return;
-        }
-        const key = sourceKey(selected);
-        if (collapsedQuestions.has(key)) collapsedQuestions.delete(key); else collapsedQuestions.add(key);
-        thread.comments = [{...thread.comments[0], body: cardBody(record.data, selected.id, record.c)}, ...thread.comments.slice(1)];
-    }, true);
-    // Retired compatibility alias; use localLatex.inlineReview.
-    // command('localLatex.reviewChanges', () => select());
+    command('localLatex.inlineToggleSource', arg => openWorkbench(contextFor(arg)), true);
+    command('localLatex.inlineQuestions', arg => openWorkbench(contextFor(arg)), true);
     context.subscriptions.push(vscode.window.registerUriHandler({async handleUri(resource) {
         try {
             if (resource.path === '/review-pdf') return await require('./pdf_navigation').handleUri(vscode, resource);
@@ -1162,27 +793,8 @@ function createInlineReview(vscode, context, execute = run) {
     }}));
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
         decorate(); setContext().catch(error => vscode.window.showErrorMessage(error.message));
-        autoTranslateVisible();
         if (!activeScope && editor?.document.languageId === 'latex')
             startup = startup.then(() => enableReview()).catch(error => vscode.window.showErrorMessage(error.message));
-    }));
-    context.subscriptions.push(vscode.window.onDidChangeTextEditorVisibleRanges(() => autoTranslateVisible()));
-    context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(event => {
-        // The native Comments list reveals the exact registered source range.
-        // Follow that public editor-selection event only while the workbench is
-        // open; do not invent a native comment-click/selection-capture API.
-        if (workbench.active && event.textEditor === vscode.window.activeTextEditor
-            && (event.kind === vscode.TextEditorSelectionChangeKind.Command || event.kind === undefined)) {
-            const selection = event.textEditor.selection;
-            const matches = [...records.values()].filter(record => !record.displayConflict
-                && sameFile(event.textEditor.document.uri.fsPath, path.join(record.c.repo, record.data.edit.file))
-                && selection.start.line === record.range.start.line && selection.start.character === record.range.start.character
-                && selection.end.line === record.range.end.line && selection.end.character === record.range.end.character);
-            if (matches.length === 1) openWorkbench(matches[0].c).catch(error => vscode.window.showErrorMessage(error.message));
-        }
-        if (event.kind !== vscode.TextEditorSelectionChangeKind.Mouse || event.textEditor !== vscode.window.activeTextEditor) return;
-        const record = sourceRecord(event.textEditor), thread = record && cards.get(record.c.id);
-        if (thread && threadMembers.get(thread).length > 1 && !drafts.has(thread) && threadContexts.get(thread).id !== record.c.id) showCard(record.c);
     }));
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
         if (event.document.uri.scheme !== 'file') return;
@@ -1204,9 +816,6 @@ function createInlineReview(vscode, context, execute = run) {
     }));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('localLatex.translation')) {
-            translations.clear();
-            for (const thread of new Set(cards.values())) redrawCard(threadContexts.get(thread));
-            autoTranslateVisible();
             workbench.settingsChanged();
         }
         if (!event.affectsConfiguration('localLatex.reviewStyle')) return;
@@ -1215,20 +824,14 @@ function createInlineReview(vscode, context, execute = run) {
             deleted.dispose();
             deleted = vscode.window.createTextEditorDecorationType({color: appearance.removedColor, textDecoration: appearance.strikeDeleted ? 'line-through' : 'none'});
             context.subscriptions.push(deleted);
-            for (const thread of new Set(cards.values())) {
-                const c = threadContexts.get(thread), record = records.get(c.id);
-                thread.comments = [{...thread.comments[0], body: cardBody(record.data, c.id, c)}, ...thread.comments.slice(1)];
-                thread.label = cardTitle(record.data, c.id);
-            }
-            candidatePanel.updateStyle();
             workbench.updateStyle();
             for (const peer of records.values()) pdfStatus(peer.c, 'PDF 样式已变更，待更新');
             decorate();
         } catch (error) {vscode.window.showErrorMessage(error.message);}
     }));
     startup = enableReview().catch(error => {vscode.window.showErrorMessage(error.message);});
-    return {open, refresh, accept, reject, annotate, post, preview, addRequests, controller, records,
-        whenTranslationIdle: () => autoTranslationRun || Promise.resolve(),
+    return {open, refresh, accept, reject, annotate, preview, addRequests, reviewList, listProvider, records,
+        whenTranslationIdle: () => workbench.whenTranslationIdle(),
         workbench, whenPDFIdle: () => workbenchPDFRun || automaticPDFRun || pdfChain, ready: startup};
 }
 function activate(context) { return createInlineReview(require('vscode'), context); }

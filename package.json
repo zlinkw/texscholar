@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -209,13 +209,13 @@
       },
       {
         "command": "localLatex.inlineReview",
-        "title": "显示或刷新原文审核与评论",
+        "title": "显示或刷新底部论文评论列表",
         "category": "LaTeX 审核",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "localLatex.inlineReviewAt",
-        "title": "打开指定原文审核卡片",
+        "title": "在固定论文审核页打开指定编号",
         "category": "LaTeX 审核",
         "icon": "$(comment-discussion)"
       },
@@ -252,18 +252,6 @@
         "command": "localLatex.inlineRelatedChanges",
         "title": "查看关联审稿问题的全部改动",
         "category": "LaTeX 审核"
-      },
-      {
-        "command": "localLatex.inlinePostComment",
-        "title": "保存返修批注",
-        "category": "LaTeX 审核",
-        "icon": "$(check)"
-      },
-      {
-        "command": "localLatex.inlineCancelComment",
-        "title": "取消本次批注草稿",
-        "category": "LaTeX 审核",
-        "icon": "$(close)"
       },
       {
         "command": "localLatex.inlineNext",
@@ -525,65 +513,6 @@
           "group": "navigation@87"
         }
       ],
-      "comments/commentThread/title": [
-        {
-          "command": "localLatex.inlineEditCandidate",
-          "when": "commentController == localLatexInlineReview && (commentThread == localLatexInlineCard || commentThread == localLatexInlineDraft)",
-          "group": "navigation@2.5"
-        },
-        {
-          "command": "localLatex.inlineAccept",
-          "when": "commentController == localLatexInlineReview && (commentThread == localLatexInlineCard || commentThread == localLatexInlineDraft) && isWorkspaceTrusted",
-          "group": "navigation@1"
-        },
-        {
-          "command": "localLatex.inlineReject",
-          "when": "commentController == localLatexInlineReview && (commentThread == localLatexInlineCard || commentThread == localLatexInlineDraft) && isWorkspaceTrusted",
-          "group": "navigation@2"
-        },
-        {
-          "command": "localLatex.inlineAnnotate",
-          "when": "commentController == localLatexInlineReview && (commentThread == localLatexInlineCard || commentThread == localLatexInlineDraft) && isWorkspaceTrusted",
-          "group": "navigation@3"
-        },
-        {
-          "command": "localLatex.inlinePreview",
-          "when": "commentController == localLatexInlineReview && (commentThread == localLatexInlineCard || commentThread == localLatexInlineDraft) && isWorkspaceTrusted",
-          "group": "navigation@4"
-        },
-        {
-          "command": "localLatex.inlineNext",
-          "when": "commentController == localLatexInlineReview && (commentThread == localLatexInlineCard || commentThread == localLatexInlineDraft) && isWorkspaceTrusted",
-          "group": "navigation@5"
-        },
-        {
-          "command": "localLatex.inlineAddRequests",
-          "when": "commentController == localLatexInlineReview && (commentThread == localLatexInlineCard || commentThread == localLatexInlineDraft) && isWorkspaceTrusted",
-          "group": "navigation@6"
-        },
-        {
-          "command": "localLatex.inlineQuestions",
-          "when": "commentController == localLatexInlineReview && (commentThread == localLatexInlineCard || commentThread == localLatexInlineDraft)",
-          "group": "navigation@7"
-        },
-        {
-          "command": "localLatex.inlineLocatePDF",
-          "when": "commentController == localLatexInlineReview && (commentThread == localLatexInlineCard || commentThread == localLatexInlineDraft)",
-          "group": "navigation@8"
-        }
-      ],
-      "comments/commentThread/context": [
-        {
-          "command": "localLatex.inlinePostComment",
-          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineDraft",
-          "group": "inline@1"
-        },
-        {
-          "command": "localLatex.inlineCancelComment",
-          "when": "commentController == localLatexInlineReview && commentThread == localLatexInlineDraft",
-          "group": "inline@2"
-        }
-      ],
       "commandPalette": [
         {
           "command": "localLatex.menu.labeledBookmark",
@@ -591,14 +520,6 @@
         },
         {
           "command": "localLatex.menu.openVisual",
-          "when": "false"
-        },
-        {
-          "command": "localLatex.inlinePostComment",
-          "when": "false"
-        },
-        {
-          "command": "localLatex.inlineCancelComment",
           "when": "false"
         },
         {
@@ -1175,6 +1096,24 @@
           "strings": "off"
         }
       }
+    },
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "texscholarReviews",
+          "title": "论文评论",
+          "icon": "src/review.svg"
+        }
+      ]
+    },
+    "views": {
+      "texscholarReviews": [
+        {
+          "id": "texscholar.reviewList",
+          "name": "论文审核编号",
+          "when": "localLatex.hasTeXProject"
+        }
+      ]
     }
   },
   "extensionKind": [

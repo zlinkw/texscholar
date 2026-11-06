@@ -133,6 +133,12 @@ document.addEventListener('click', event => {
         compare: $('compare').checked, ...(type === 'save' ? {value: $('edit-' + option).value} : {})});
 });
 window.addEventListener('message', ({data: message}) => {
+    if (message.type === 'sourceSelection') {
+        selected = message.selection;
+        if (selected) $('scope').textContent = '原文选区：' + selected.value.slice(selected.start, selected.end);
+        else {$('scopeChoice').value = 'group'; scope();}
+        $('note').focus(); return;
+    }
     if (message.type === 'style') {style(message.style); return;}
     if (message.type === 'translation') {
         const node = message.key === 'original' ? $('originalZh') : $('zh-' + message.key);
@@ -169,6 +175,11 @@ window.addEventListener('message', ({data: message}) => {
         for (const o of options) if (!saved || o.label === message.option) renderOption(o);
         $('scopeChoice').innerHTML = '<option value="group">本项全部方案（默认）</option><option value="original">完整原文</option>' + options.map(o => '<option value="' + o.label + '">方案 ' + o.label + ' 整体</option>').join('');
         scope(); renderNotes(data.edit.requests || []); renderQuestions(data.edit.questions || []);
+        if (message.sourceSelection) {
+            selected = message.sourceSelection;
+            $('scope').textContent = '原文选区：' + selected.value.slice(selected.start, selected.end);
+            $('note').focus();
+        }
         $('fewer').textContent = data.fewer_options_reason || '';
         dirty();
     }
