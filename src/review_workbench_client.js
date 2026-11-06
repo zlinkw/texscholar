@@ -2,7 +2,9 @@
 'use strict';
 const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
 let current, data, options = [], preview = 'A', selected, waiting = false, unavailable = false, conflict = false, focused, chinese = true;
-const drafts = new Map(), models = new WeakMap();
+const drafts = new Map(), models = new WeakMap(), translatedText = new Map();
+let sourceMode = false;
+const math = globalThis.TeXScholarMath;
 const esc = text => String(text).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 function send(type, extra = {}, blocks = true) {
     if (!current) return;
@@ -25,31 +27,29 @@ function style(value) {
     root.setProperty('--strike', value.strikeDeleted ? 'line-through' : 'none');
     root.setProperty('--unchanged', value.unchangedColor || 'inherit');
 }
-function projection(raw) {
-    let text = '', offsets = [], at = 0;
-    // Keep exact coordinates in TeX even while hiding machine/author comments.
-    for (const line of raw.split(/(?<=\n)/)) {
-        const comment = /^[ \t]*%/.test(line);
-        if (!comment) for (let i = 0; i < line.length; i++) {offsets.push(at + i); text += line[i];}
-        at += line.length;
-    }
-    offsets.push(raw.length); return {text, offsets, raw};
-}
 function renderText(node, raw, changes, side) {
-    const model = projection(raw), points = Array.from(raw), starts = [0];
-    for (const char of points) starts.push(starts.at(-1) + char.length);
-    const prefix = side === 'original' ? 'old' : 'new';
-    const ranges = (changes || []).map(c => [starts[c[prefix + '_start']], starts[c[prefix + '_end']]]);
-    let html = '', buffer = '', previous;
-    function flush() {if (buffer) html += '<span class="' + (previous ? side === 'original' ? 'old' : 'new' : 'same') + '">' + esc(buffer) + '</span>'; buffer = '';}
-    for (let i = 0; i < model.text.length; i++) {
-        const changed = ranges.some(([a, b]) => model.offsets[i] >= a && model.offsets[i] < b);
-        if (changed !== previous) {flush(); previous = changed;}
-        buffer += model.text[i];
-    }
-    flush(); node.innerHTML = html;
-    if (!model.text.trim()) node.textContent = side === 'original' ? '仅补充，无对应原句。' : '本项已删除，正式结果为不再保留这段内容。';
-    models.set(node, model);
+    models.set(node, math.render(node, raw, changes, side, sourceMode ? 'source' : 'preview', globalThis.katex));
+}
+function translationSource(key) {
+    return key === 'original' ? data.original : key.startsWith('question') ? data.edit.questions?.[Number(key.slice(8))]?.quote : options.find(o => o.label === key)?.after;
+}
+function renderTranslation(key, entry) {
+    const node = key === 'original' ? $('originalZh') : $('zh-' + key);
+    if (!node || entry.source !== translationSource(key)) return;
+    if (entry.error) node.textContent = '翻译未完成：' + entry.error;
+    else math.render(node, entry.text, [], 'readonly', sourceMode ? 'source' : 'preview', globalThis.katex);
+    node.hidden = !chinese;
+}
+function toggleMathMode() {
+    sourceMode = !sourceMode;
+    $('mathMode').textContent = sourceMode ? '公式预览' : 'LaTeX 源码';
+    $('mathMode').setAttribute('aria-pressed', String(sourceMode));
+    if (!data || unavailable) return;
+    renderText($('original'), data.original, options.find(o => o.label === preview)?.changes || options[0].changes, 'original');
+    for (const o of options) renderText($('text-' + o.label), o.after, o.changes, 'candidate');
+    renderQuestions(data.edit.questions || []);
+    for (const [key, entry] of translatedText) renderTranslation(key, entry);
+    // Draft editors, note text, selected source coordinates and version stay intact.
 }
 function renderDirectory(items) {
     const pending = items.filter(i => ['pending', 'rework'].includes(i.status));
@@ -67,10 +67,11 @@ function renderOption(o) {
     $('edit-' + o.label).value = drafts.get(o.label) ?? o.after.replace(/\r\n/g, '\n');
 }
 function renderQuestions(questions) {
-    const signature = JSON.stringify(questions);
+    const signature = JSON.stringify([sourceMode, questions]);
     if ($('questions').dataset.signature === signature) return;
     $('questions').dataset.signature = signature;
-    $('questions').innerHTML = questions.length ? questions.map((q, index) => '<div class="question"><strong>' + esc(q.id) + '</strong><div class="text">' + esc(q.quote) + '</div><div id="zh-question' + index + '" class="zh" ' + (chinese ? '' : 'hidden') + '></div><button class="secondary" data-action="question" data-index="' + index + '">跳转原始文件</button><button class="secondary" data-action="related" data-index="' + index + '">查看本问题全部改动</button></div>').join('') : '当前未关联审稿问题；新论文撰写可以不关联。';
+    $('questions').innerHTML = questions.length ? questions.map((q, index) => '<div class="question"><strong>' + esc(q.id) + '</strong><div class="text" id="question-text-' + index + '">' + esc(q.quote) + '</div><div id="zh-question' + index + '" class="zh" ' + (chinese ? '' : 'hidden') + '></div><button class="secondary" data-action="question" data-index="' + index + '">跳转原始文件</button><button class="secondary" data-action="related" data-index="' + index + '">查看本问题全部改动</button></div>').join('') : '当前未关联审稿问题；新论文撰写可以不关联。';
+    for (const [index, q] of questions.entries()) math.render($('question-text-' + index), q.quote, [], 'readonly', sourceMode ? 'source' : 'preview', globalThis.katex);
 }
 function renderNotes(requests) {
     const signature = JSON.stringify(requests);
@@ -95,13 +96,13 @@ function selectionChanged(event) {
         if (!node || !node.contains(range.startContainer) || !node.contains(range.endContainer)) return;
         const model = models.get(node);
         if (!model || !model.text) return;
-        const prefix = range.cloneRange(); prefix.selectNodeContents(node); prefix.setEnd(range.startContainer, range.startOffset);
-        const start = prefix.toString().length, end = start + range.toString().length;
-        const rawStart = model.offsets[start], rawEnd = end === model.text.length ? model.offsets[end] : model.offsets[end - 1] + 1;
+        const bounds = math.selectedRange(node, range, model);
+        if (!bounds) {selected = undefined; $('scope').textContent = '该选区不能准确绑定源码；请切换 LaTeX 源码后划词。'; return;}
         selected = {side: node.dataset.side, option: node.dataset.option, value: model.raw.replace(/\r\n/g, '\n'),
-            start: model.raw.slice(0, rawStart).replace(/\r\n/g, '\n').length, end: model.raw.slice(0, rawEnd).replace(/\r\n/g, '\n').length};
+            start: model.raw.slice(0, bounds.start).replace(/\r\n/g, '\n').length,
+            end: model.raw.slice(0, bounds.end).replace(/\r\n/g, '\n').length, wholeMath: bounds.wholeMath};
     }
-    $('scope').textContent = (selected.option ? '方案 ' + selected.option : '原文') + '选区：' + selected.value.slice(selected.start, selected.end);
+    $('scope').textContent = (selected.option ? '方案 ' + selected.option : '原文') + '选区：' + selected.value.slice(selected.start, selected.end) + (selected.wholeMath ? '（整式；细部请切换源码）' : '');
 }
 document.addEventListener('mouseup', selectionChanged);
 document.addEventListener('pointerdown', event => {
@@ -119,6 +120,7 @@ document.addEventListener('click', event => {
     if (!button) return;
     const type = button.dataset.action, option = button.dataset.option;
     const menu = button.closest('.more'); if (menu) menu.open = false;
+    if (type === 'mathMode') {toggleMathMode(); return;}
     if (type === 'toggleChinese') {chinese = !chinese; document.querySelectorAll('.zh').forEach(n => n.hidden = !chinese); return;}
     if (type === 'focus') {
         focused = focused === option ? undefined : option;
@@ -144,9 +146,8 @@ window.addEventListener('message', ({data: message}) => {
     }
     if (message.type === 'style') {style(message.style); return;}
     if (message.type === 'translation') {
-        const node = message.key === 'original' ? $('originalZh') : $('zh-' + message.key);
-        if (node) {node.textContent = message.error ? '翻译未完成：' + message.error : message.text; node.hidden = !chinese;}
-        return;
+        const entry = {...message, source: translationSource(message.key)};
+        translatedText.set(message.key, entry); renderTranslation(message.key, entry); return;
     }
     if (message.type === 'translationStatus') {$('translateStatus').textContent = message.message; return;}
     if (message.type === 'pdfStatus') {$('pdfStatus').textContent = message.message; return;}
@@ -171,7 +172,7 @@ window.addEventListener('message', ({data: message}) => {
         $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length;
         $('pdfStatus').textContent = message.pdfStatus;
         renderDirectory(message.directory);
-        if (!saved) {drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; $('questions').dataset.signature = '';}
+        if (!saved) {translatedText.clear(); drafts.clear(); selected = undefined; focused = undefined; $('compare').checked = false; $('options').replaceChildren(); $('note').value = ''; $('originalZh').textContent = ''; $('questions').dataset.signature = '';}
         else drafts.delete(message.option);
         renderText($('original'), data.original, options.find(o => o.label === preview)?.changes || options[0].changes, 'original');
         $('originalSource').textContent = data.original;

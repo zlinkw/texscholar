@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import re
 import zipfile
 from xml.sax.saxutils import escape
 
@@ -12,7 +13,7 @@ RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', '
            'chktex_actions.js', 'chktex_messages.js', 'chktex_filter.py', 'inline_review.js', 'review_positions.js', 'candidate_panel.js', 'review_pdf.py', 'review_translate.py', 'tools.js',
            'setup.js', 'questions.js', 'writing.js', 'ai_setup.js', 'review_style.js', 'pdf_navigation.js', 'writing-guide.md', 'question-linking-guide.md', 'writing-presets.json',
            'paper.code-snippets', 'document_roles.py', 'document_roles.js', 'source_review.py', 'review_checkpoint.py',
-           'review.svg', 'review_workbench.js', 'review_workbench_client.js', 'collaboration-guide.md', 'mcp_server.py', 'mcp_config.py', 'mcp_setup.js')
+           'review.svg', 'review_math.js', 'review_workbench.js', 'review_workbench_client.js', 'collaboration-guide.md', 'mcp_server.py', 'mcp_config.py', 'mcp_setup.js')
 
 
 def archive_bytes(files):
@@ -21,9 +22,9 @@ def archive_bytes(files):
     # between local Python runtimes.
     with zipfile.ZipFile(stream, 'w', zipfile.ZIP_STORED) as archive:
         for name, raw in sorted(files.items()):
-            # Normalize text to Git's canonical line endings, but preserve PNG
-            # tutorial screenshots byte for byte (including their signature).
-            if not name.endswith('.png'):
+            # Normalize text to Git's canonical line endings; preserve binary
+            # tutorial screenshots and bundled font resources byte for byte.
+            if not name.endswith(('.png', '.woff2')):
                 raw = raw.replace(b'\r\n', b'\n')
             entry = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_STORED
@@ -57,7 +58,7 @@ def build(output):
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="json" ContentType="application/json"/><Default Extension="js" ContentType="application/javascript"/>
 <Default Extension="png" ContentType="image/png"/>
-<Default Extension="svg" ContentType="image/svg+xml"/>
+<Default Extension="svg" ContentType="image/svg+xml"/><Default Extension="css" ContentType="text/css"/><Default Extension="woff2" ContentType="font/woff2"/>
 <Default Extension="py" ContentType="text/x-python"/><Default Extension="md" ContentType="text/markdown"/>
 <Default Extension="code-snippets" ContentType="application/json"/><Default Extension="vsixmanifest" ContentType="text/xml"/>
 </Types>'''
@@ -67,15 +68,23 @@ def build(output):
              '[Content_Types].xml': content_types.encode('utf-8'),
              'extension.vsixmanifest': manifest.encode('utf-8')}
     files.update({'extension/src/' + name: (ROOT / 'src' / name).read_bytes() for name in RUNTIME})
+    vendor_root = ROOT / 'src' / 'vendor' / 'katex'
+    vendor_names = ['katex.min.js', 'katex.min.css', 'LICENSE', 'README.md']
+    font_names = re.findall(r'url\((fonts/[^)]+\.woff2)\)', (vendor_root / 'katex.min.css').read_text(encoding='utf-8'))
+    if not font_names or any('..' in Path(name).parts or Path(name).is_absolute() for name in font_names):
+        raise ValueError('Invalid KaTeX font references')
+    vendor = {'src/vendor/katex/' + name: (vendor_root / name).read_bytes() for name in [*vendor_names, *sorted(set(font_names))]}
+    files.update({'extension/' + name: raw for name, raw in vendor.items()})
     images = {'docs/images/' + image.name: image.read_bytes() for image in (ROOT / 'docs' / 'images').glob('*.png')}
     files.update({'extension/' + name: raw for name, raw in images.items()})
     output.mkdir(parents=True, exist_ok=True)
     write_product(output / ('texscholar-' + metadata['version'] + '.vsix'), archive_bytes(files))
     sources = {name: (ROOT / name).read_bytes() for name in ('package.json', 'README.md', 'LICENSE', 'DEVELOPMENT.md', '.gitignore', '.gitattributes')}
     sources.update(images)
+    sources.update(vendor)
     sources.update({'src/' + name: (ROOT / 'src' / name).read_bytes() for name in RUNTIME})
     for name in ('review_archive.py', 'native_review_test.py', 'source_review_test.py', 'mcp_test.py', 'review_pdf_test.py', 'review_translate_test.py',
-                 'document_roles_test.py', 'document_roles.test.js', 'inline_review.test.js', 'candidate_panel.test.js', 'review_workbench.test.js', 'setup.test.js', 'questions.test.js', 'extension.test.js',
+                 'document_roles_test.py', 'document_roles.test.js', 'inline_review.test.js', 'candidate_panel.test.js', 'review_workbench.test.js', 'review_math.test.js', 'setup.test.js', 'questions.test.js', 'extension.test.js',
                  'core.test.js', 'backup.test.js', 'menu_commands.test.js', 'navigation.test.js', 'chktex_actions.test.js', 'writing.test.js', 'pdf_navigation.test.js'):
         sources['src/' + name] = (ROOT / 'src' / name).read_bytes()
     sources['scripts/build.py'] = Path(__file__).read_bytes()

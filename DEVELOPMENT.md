@@ -20,6 +20,20 @@ MCP read_context 返回同一 file_roles；AI 写候选前在共享锁内重新�
 
 实际结果：editor 70 项、backend 48 项和 backup 15 项通过；之后新增角色备份边界、MCP 类型保护与紧凑注释格式，定向 Python 13 项及 editor 22 项通过。普通保存、精确原文批注、单方案接收、自动下一项、源码保护和 Typst 隔离保留覆盖。隔离原生 UI 首次在 extensionTestsPath 下因 VS Code 禁止模态对话而无法验证；后改为不带测试模式的独立开发宿主，Windows 原生系统对话不在 CDP 表面内，改用该隔离 profile 支持的 custom dialog；未修改产品或真实用户设置。Windows custom dialog 已实际确认，新增顶部注释之外的论文正文及 reply 审核状态字节不变；审核页顶部重开按钮存在、无 PDF 时明确报错且不编译；菜单外点击自动收起、菜单内点击不误收起。截图检查首次只匹配 LF，遇到 Windows CRLF 断言失败，修正该夹具后通过。所有首次结果及完整日志保留，Mac 未实机验证。
 
+## 审核页公式阅读层
+
+`review_math.js` 只负责分辨公式边界、原始 UTF-16 映射和 DOM 显示。KaTeX 0.19.1 的实际解析／排版引擎复用 npm 官方 MIT 发行件，不重写排版，也不调用 Ultra Math Preview、Workshop 或 Visual Editor 的未公开对象。KaTeX JavaScript 和 WOFF2 字体原样保存，CSS 仅去除不用的 WOFF/TTF 回退 URL；LICENSE 和来源说明随源码、VSIX 一起提供。下载缓存保留，首次取件按 npm 公布的 SHA512 核对实际归档，不在构建阶段联网或重新下载。
+
+网页仅允许 KaTeX 目录的本地资源；脚本用 nonce，connect-src=none，trust 回调始终返回 false；被拒绝的外链／HTML 命令明确转为源码说明。KaTeX 的排版尺寸需要行内 style 属性，因此仅 style-src-attr 允许它们；不开放作者 HTML、远端脚本或任意工作区资源。`label` 仅在阅读副本中去除，源码、位置和差异完全不变。发生 ParseError 时显示完整源码与原因；不静默遗漏公式。
+
+显示文字由 textContent 创建，保留 CRLF／Unicode；DOM 锚点映射到原始片段，而不是把 MathML/HTML 的重复字符串长度当源码偏移。渲染数学为原子选区，细部在源码或精确差异区批注。普通字词仍精确映射。模式切换只重画本项阅读节点，保留 textarea、未保存候选／批注、选区坐标及版本，不发送写入／编译请求。公式渲染本身保持中性颜色，下方源差异只标变化 token，避免为结构完整性将整式误涂红。
+
+本轮规定检查为 editor 组与隔离 Windows 网页交互；后端持久化、Git、PDF 编译和算法未修改，不重跑这些独立全量组，不增加性能门槛。原生检查覆盖本地字体加载、关联问题公式、CRLF／emoji／隐藏注释后的准确词选区、整式批注、分子源码批注、草稿保留、候选保存和独立多行公式。未使用真实论文、真实审核状态或全局 SKILL。Mac 资源及 API 路径兼容，未实机验证。
+
+实际结果：editor 75 项通过；最后的引擎拒绝命令边界修改由 20 项定向检查补验，通过。Windows 隔离界面实际验证公式、源码切换、原文及 B 方案精确批注、草稿保留、独立公式与 label、本地字体和不写正文／不编译 PDF。截图发现行内公式的字形外溢会出现小滚动条，补齐排版留白；第一次显示复查受上一轮临时样式覆盖而失败，保留完整失败日志，重启隔离宿主后相同功能和无裁切断言均通过，真实退出码 0。Mac 未实机验证。
+
+打包直接消费已验证纯 JS/Python 和固定厂商资源，无转译或 npm install；WOFF2 按二进制保存，不做换行转换。组装显式收集 CSS 实际引用的本地字体，安装／发行复用同一包，不做额外包后验收。
+
 ## 开发依赖
 
 Node.js 22 或更新版本、Python 3.12 或更新的 Python 3、Git、tex-fmt、TeX Live/TinyTeX/MacTeX。Python PDF 测试另需 `pypdf`，不是插件后端的运行依赖。ChkTeX 测试需要实际安装的 LaTeX Workshop 的 `out/src/lint/latex-code-actions.js`，通过环境变量指定，不依赖个人扩展目录或固定版本。

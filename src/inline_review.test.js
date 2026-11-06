@@ -40,7 +40,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         TextEditorRevealType: {InCenterIfOutsideViewport: 1}, ProgressLocation: {Notification: 15},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], tabGroups: {all: [pdfGroup], activeTabGroup: pdfGroup},
             createTreeView(id, options) {provider = options.treeDataProvider; trees.push(id); return {dispose() {}, message: ''};},
-            createWebviewPanel() {panels++; return {webview: {html: '', postMessage: m => packets.push(m), onDidReceiveMessage: f => {receive = f;}}, reveal() {}, onDidDispose() {}, dispose() {}};},
+            createWebviewPanel() {panels++; return {webview: {html: '', cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}), postMessage: m => packets.push(m), onDidReceiveMessage: f => {receive = f;}}, reveal() {}, onDidDispose() {}, dispose() {}};},
             createTextEditorDecorationType: disposable, registerUriHandler: disposable, onDidChangeActiveTextEditor: disposable,
             onDidChangeTextEditorSelection: f => {selectionHandler = f; return disposable();},
             async showTextDocument(target, options) {calls.push(['showTextDocument', target, options]); return editor;},

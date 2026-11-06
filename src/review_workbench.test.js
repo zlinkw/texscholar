@@ -8,8 +8,9 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
         candidate: 'The model is reliable.', edit: {file: 'main.tex', kind: 'manuscript', versions: ['v1'], requests: []},
         options: [...'ABC'].map((label, i) => ({label, after: ['The model is reliable.', 'The model is compact.', 'The model is efficient.'][i], reason: label, changes: []}))}});
     const records = new Map(['1', '2', 'a'].map(id => [id, make(id)]));
-    const vscode = {ViewColumn: {One: 1}, window: {showWarningMessage: async () => confirmation,
+    const vscode = {Uri: {file: fsPath => ({fsPath})}, ViewColumn: {One: 1}, window: {showWarningMessage: async () => confirmation,
         createWebviewPanel: () => {creations++; return {reveal() {}, dispose() {}, onDidDispose() {}, webview: {
+            cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}),
             set html(value) {htmlWrites++; assert(value.includes('Content-Security-Policy'));},
             onDidReceiveMessage: fn => {receive = fn;}, postMessage: async value => messages.push(value)}};}}};
     const services = {read: async c => {const record = records.get(c.id); assert.equal(c.version, record.c.version); return structuredClone(record.data);},
@@ -49,4 +50,9 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert.equal(events.length, notesBefore); assert(messages.at(-1).error);
     assert.equal(records.get('a').data.original, original);
     assert(!html('test').includes('http://'), 'network runs in existing backend, not untrusted webview');
+    const page = html('nonce-test', {source: 'vscode-webview:', css: 'vscode-resource:/katex.min.css', script: 'vscode-resource:/katex.min.js'});
+    assert(page.includes("connect-src 'none'"));
+    assert(page.includes('nonce="nonce-test" src="vscode-resource:/katex.min.js"'));
+    assert(page.includes('href="vscode-resource:/katex.min.css"'));
+    assert(page.includes('id="mathMode"'));
 });
