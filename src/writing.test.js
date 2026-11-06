@@ -41,6 +41,8 @@ test('AI setup prompt is portable, complete and reuses one configuration/shortcu
     const rows = [...require('./writing-presets.json').settings, ...require('./setup').bindings({})];
     const keys = rows.map(row => (row.language || '') + ':' + row.key);
     assert.equal(new Set(keys).size, keys.length, 'one definition per setting and language');
+    assert(!rows.some(row => row.key.startsWith('bookmarks.')));
+    assert(rows.some(row => row.key.startsWith('todo-tree.')));
 });
 
 test('configuration status is event-driven, readonly and cannot be acknowledged into success', async () => {

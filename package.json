@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.9.13",
+  "version": "0.9.14",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -107,11 +107,6 @@
         "category": "LaTeX"
       },
       {
-        "command": "localLatex.menu.labeledBookmark",
-        "title": "添加或取消带名称的书签",
-        "category": "LaTeX"
-      },
-      {
         "command": "localLatex.menu.openVisual",
         "title": "打开 LaTeX 可视化编辑器",
         "category": "LaTeX"
@@ -144,56 +139,6 @@
       {
         "command": "localLatex.menu.viewPdf",
         "title": "打开编译后的 PDF（右侧预览）",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkList",
-        "title": "列出当前文件的全部书签",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkListAll",
-        "title": "列出所有文件的全部书签",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkSelectLines",
-        "title": "选中当前文件的所有书签行",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkExpandNext",
-        "title": "把选区扩展到下一个书签",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkExpandPrevious",
-        "title": "把选区扩展到上一个书签",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkShrinkSelection",
-        "title": "把选区收缩到最后一个书签",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkClearFile",
-        "title": "清空当前文件的全部书签",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkClearAll",
-        "title": "清空所有文件的全部书签",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkExport",
-        "title": "导出书签（另存文件）",
-        "category": "LaTeX"
-      },
-      {
-        "command": "localLatex.menu.bookmarkSettings",
-        "title": "打开书签插件设置",
         "category": "LaTeX"
       },
       {
@@ -515,10 +460,6 @@
       ],
       "commandPalette": [
         {
-          "command": "localLatex.menu.labeledBookmark",
-          "when": "false"
-        },
-        {
           "command": "localLatex.menu.openVisual",
           "when": "false"
         },
@@ -630,58 +571,6 @@
         {
           "command": "localLatex.startPaperTask",
           "group": "3_codex@1"
-        }
-      ],
-      "bookmarks.editor.context": [
-        {
-          "command": "localLatex.menu.bookmarkList",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "2_lists@10"
-        },
-        {
-          "command": "localLatex.menu.bookmarkListAll",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "2_lists@20"
-        },
-        {
-          "command": "localLatex.menu.bookmarkSelectLines",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "3_selection@30"
-        },
-        {
-          "command": "localLatex.menu.bookmarkExpandNext",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "3_selection@40"
-        },
-        {
-          "command": "localLatex.menu.bookmarkExpandPrevious",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "3_selection@50"
-        },
-        {
-          "command": "localLatex.menu.bookmarkShrinkSelection",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "3_selection@60"
-        },
-        {
-          "command": "localLatex.menu.bookmarkClearFile",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "4_clear@70"
-        },
-        {
-          "command": "localLatex.menu.bookmarkClearAll",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "4_clear@80"
-        },
-        {
-          "command": "localLatex.menu.bookmarkExport",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "5_manage@90"
-        },
-        {
-          "command": "localLatex.menu.bookmarkSettings",
-          "when": "resourceScheme == file && editorLangId == latex",
-          "group": "5_manage@100"
         }
       ]
     },
@@ -916,12 +805,6 @@
         "mac": "cmd+alt+]"
       },
       {
-        "key": "ctrl+alt+shift+b",
-        "command": "localLatex.menu.bookmarkListAll",
-        "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
-        "mac": "cmd+alt+shift+b"
-      },
-      {
         "key": "ctrl+alt+shift+p",
         "command": "umath.preview.reloadPreview",
         "when": "editorTextFocus && resourceScheme == file && editorLangId == latex",
@@ -1010,30 +893,6 @@
         "command": "umath.preview.toggleMathPreview",
         "when": "editorTextFocus && editorLangId == latex",
         "mac": "cmd+alt+shift+m"
-      },
-      {
-        "key": "ctrl+alt+m",
-        "command": "bookmarks.toggleLabeled",
-        "when": "editorTextFocus && editorLangId == latex",
-        "mac": "cmd+alt+m"
-      },
-      {
-        "key": "ctrl+alt+n",
-        "command": "bookmarks.jumpToNext",
-        "when": "editorTextFocus && editorLangId == latex",
-        "mac": "cmd+alt+n"
-      },
-      {
-        "key": "ctrl+alt+p",
-        "command": "bookmarks.jumpToPrevious",
-        "when": "editorTextFocus && editorLangId == latex",
-        "mac": "cmd+alt+p"
-      },
-      {
-        "key": "ctrl+alt+k",
-        "command": "bookmarks.toggle",
-        "when": "editorTextFocus && editorLangId == latex",
-        "mac": "cmd+alt+k"
       },
       {
         "key": "ctrl+s",

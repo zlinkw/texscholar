@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {apply, restore, overlay, activate, configureChktex} = require('./setup');
+const {apply, restore, overlay, activate, configureChktex, RECOMMENDED} = require('./setup');
 const path = require('node:path');
 const tools = require('./tools');
 function fixture(initial = {}) {
@@ -94,6 +94,8 @@ test('ChkTeX adapter preserves the configured checker/flags, upgrades without ne
 test('activating in a code-only or untrusted project applies no user settings', async () => {
     for (const trusted of [true, false]) {
         const f = fixture();
+        const todo = {key: 'todo-tree.highlights.enabled', applied: true};
+        await f.context.globalState.update('writingSettings', {retired: {key: 'bookmarks.saveBookmarksInProject', applied: false}, todo});
         f.context.subscriptions = [];
         f.vscode.window = {createOutputChannel: () => ({appendLine() {}, dispose() {}})};
         f.vscode.commands = {registerCommand: () => ({dispose() {}})};
@@ -101,5 +103,8 @@ test('activating in a code-only or untrusted project applies no user settings', 
         Object.assign(f.vscode.workspace, {isTrusted: trusted, workspaceFolders: [{}], findFiles: async () => []});
         await activate(f.context, f.vscode);
         assert.deepEqual(f.writes, []);
+        assert.deepEqual(f.context.globalState.get('writingSettings'), {todo}, 'retired bookmark settings cannot be restored; Todo Tree ownership survives');
+        assert(!RECOMMENDED.some(([id]) => id.toLowerCase() === 'alefragnani.bookmarks'));
+        assert(RECOMMENDED.some(([id]) => id.toLowerCase() === 'gruntfuggly.todo-tree'));
     }
 });

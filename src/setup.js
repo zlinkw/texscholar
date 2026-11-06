@@ -6,7 +6,7 @@ const RECOMMENDED = [
     ['james-yu.latex-workshop', 'LaTeX 编译、PDF 与双向跳转'],
     ['tecosaur.latex-utilities', '表格／图片转换粘贴'],
     ['usernamehw.errorlens', '行内诊断'],
-    ['alefragnani.Bookmarks', '书签'], ['Gruntfuggly.todo-tree', '注释导航'],
+    ['Gruntfuggly.todo-tree', '注释导航'],
     ['qmvis.latex-suite-vscode', '数学输入与矩阵快捷操作'], ['yfzhao.ultra-math-preview', '连续公式预览'],
     ['intellsmi.comment-translate', '可选悬浮翻译（服务可能发送所选文字到外部供应商）'],
     ['cyndigan.latex-visual-editor', '可选可视化编辑'], ['MS-CEINTL.vscode-language-pack-zh-hans', '可选界面汉化']
@@ -123,7 +123,7 @@ async function activate(context, vscode = require('vscode')) {
     let discovered, running = Promise.resolve();
     const savedSettings = {...context.globalState.get('writingSettings', {})};
     const savedCount = Object.keys(savedSettings).length;
-    for (const [id, row] of Object.entries(savedSettings)) if (row.key.startsWith('ltex.') || row.key === 'errorLens.excludeBySource' && Array.isArray(row.applied) && row.applied.every(x => ['LTeX','ltex','LTeX+'].includes(x))) delete savedSettings[id];
+    for (const [id, row] of Object.entries(savedSettings)) if (row.key.startsWith('ltex.') || row.key.startsWith('bookmarks.') || row.key === 'errorLens.excludeBySource' && Array.isArray(row.applied) && row.applied.every(x => ['LTeX','ltex','LTeX+'].includes(x))) delete savedSettings[id];
     if (Object.keys(savedSettings).length !== savedCount) await context.globalState.update('writingSettings', savedSettings);
     async function setup(full = false, force = false) {
         if (!vscode.workspace.isTrusted) return;
@@ -148,7 +148,7 @@ async function activate(context, vscode = require('vscode')) {
             {label: '完整导入（合并并保留已有选择）', full: true},
             {label: '仅补齐 LaTeX 专用设置', full: false},
             {label: '使用论文预设替换冲突项', full: true, force: true}
-        ], {placeHolder: '只处理插件内置白名单，不复制其他个人配置；完整导入含 PDF 关联、书签、诊断与注释导航'});
+        ], {placeHolder: '只处理插件内置白名单，不复制其他个人配置；完整导入含 PDF 关联、诊断与注释导航'});
         if (!choice) return;
         if (choice.force && await vscode.window.showWarningMessage('将替换白名单内的现有配置，原值可由本插件恢复；不会改论文、Typst 或登录信息。', {modal: true}, '应用预设') !== '应用预设') return;
         const result = await setup(choice.full, choice.force);

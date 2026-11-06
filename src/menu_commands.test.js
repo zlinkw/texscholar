@@ -19,6 +19,9 @@ test('Chinese menu aliases retain original targets, URI arguments, results and f
     activate({subscriptions: disposables});
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
     const definitions = new Map(pkg.contributes.commands.map(x => [x.command, x]));
+    assert(![...definitions.keys()].some(id => /bookmark/i.test(id)));
+    assert(!pkg.contributes.keybindings.some(item => /bookmark/i.test(item.command)));
+    assert.equal(pkg.contributes.menus['bookmarks.editor.context'], undefined);
     const uri = {scheme: 'file', fsPath: 'C:/fixture/含空格的稿件.tex'};
     const extra = {position: 12};
     for (const [name, target] of Object.entries(TARGETS)) {

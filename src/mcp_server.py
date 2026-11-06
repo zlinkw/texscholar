@@ -140,7 +140,7 @@ class Server:
         if method == 'initialize':
             requested = request.get('params', {}).get('protocolVersion')
             return {'jsonrpc': '2.0', 'id': id_, 'result': {'protocolVersion': requested if requested in {'2024-11-05', '2025-03-26', '2025-06-18'} else '2025-03-26',
-                    'serverInfo': {'name': 'texscholar', 'version': '0.9.13'}, 'capabilities': {'tools': {}}, 'instructions': INSTRUCTIONS}}
+                    'serverInfo': {'name': 'texscholar', 'version': '0.9.14'}, 'capabilities': {'tools': {}}, 'instructions': INSTRUCTIONS}}
         if method == 'ping':
             result = {}
         elif method == 'tools/list':

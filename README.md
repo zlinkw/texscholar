@@ -124,7 +124,7 @@ The accepted source stays unchanged until the author accepts a candidate.
 | 候选审核与审核 PDF | Python 3.12 或更新的 Python 3、latexdiff，以及可用的 TeX / Perl 环境 | 需要 |
 | 整理源码缩进 | tex-fmt | 用到时需要 |
 | 备份到私有 GitHub | Git、GitHub CLI，以及你自己的 GitHub 登录 | 可以稍后配置 |
-| 书签等 | 对应的配套扩展 | 可选 |
+| 注释导航等 | 对应的配套扩展 | 可选 |
 
 首次轻量安装可选 [TinyTeX](https://yihui.org/tinytex/)。已经有可用 TeX Live 或 MacTeX 时，不必重复安装另一套。插件不内置整套 TeX 或 Python，也不会自动替你登录账号。
 
@@ -733,7 +733,6 @@ Google 两个入口默认读取当前 Windows／macOS 系统的静态 HTTP／HTT
 |---|---|
 | 编译、PDF 与双向定位 | LaTeX Workshop，必需 |
 | 把诊断显示在行内 | Error Lens |
-| 书签与长文导航 | Bookmarks |
 | 按注释标签浏览任务 | Todo Tree |
 | 数学输入、矩阵操作 | LaTeX Suite |
 | 输入时查看公式效果 | Ultra Math Preview |
@@ -744,13 +743,13 @@ Google 两个入口默认读取当前 Windows／macOS 系统的静态 HTTP／HTT
 
 系统工具和账号仍由各自程序管理；扩展装好不等于所有依赖已经就绪。
 
-#### 章节目录、折叠和书签
+#### 章节目录、折叠和注释导航
 
 - 使用 LaTeX Workshop 的结构树／大纲浏览章节、图表和标签，点击条目定位源文件。
 - 需要把结构树放到资源管理器时，用 VS Code 原生“移动视图”操作；插件不替你强行摆放整个界面。
-- 长文中添加书签后，可按前一个／下一个书签跳转，或列出全部书签。
+- 使用 Todo Tree 浏览 TODO、科研规则和段落计划等注释标签；审核候选使用底部审核编号列表。
 - **折叠写作规则与段落计划**仅折叠显示，不删除科研注释。
-- 注释、书签和结构树用途不同：不要为了有一个任务列表，再复制第二份问题状态文件。
+- 注释导航和结构树用途不同：不要为了有一个任务列表，再复制第二份问题状态文件。
 
 #### 一句话一行与整理缩进
 
@@ -814,10 +813,6 @@ Google 两个入口默认读取当前 Windows／macOS 系统的静态 HTTP／HTT
 | 统计字数 | Ctrl+Alt+W | Cmd+Option+W |
 | 检查未引用文献 | Ctrl+Alt+Shift+C | Cmd+Option+Shift+C |
 | 打开章节结构树 | Ctrl+Alt+Shift+T | Cmd+Option+Shift+T |
-| 添加／取消带名称的书签 | Ctrl+Alt+M | Cmd+Option+M |
-| 添加／取消普通书签 | Ctrl+Alt+K | Cmd+Option+K |
-| 下一个／上一个书签 | Ctrl+Alt+N / P | Cmd+Option+N / P |
-| 列出所有文件书签 | Ctrl+Alt+Shift+B | Cmd+Option+Shift+B |
 | 选中当前环境 | Ctrl+Alt+E | Cmd+Option+E |
 | 把选区放入环境 | Ctrl+Alt+Shift+E | Cmd+Option+Shift+E |
 | 同时改 begin/end 环境名 | Ctrl+Alt+Shift+L | Cmd+Option+Shift+L |
@@ -827,7 +822,7 @@ Google 两个入口默认读取当前 Windows／macOS 系统的静态 HTTP／HTT
 | 切换公式预览 | Ctrl+Alt+Shift+M | Cmd+Option+Shift+M |
 | 刷新公式预览 | Ctrl+Alt+Shift+P | Cmd+Option+Shift+P |
 
-书签、公式预览和可视化编辑需要安装相应配套扩展。编辑器焦点不在 LaTeX 中时，一些键不会生效。审核快捷键作用于当前定位项，不确定时优先点卡片上的按钮。Mac 组合仍需实机核对。
+公式预览和可视化编辑需要安装相应配套扩展。编辑器焦点不在 LaTeX 中时，一些键不会生效。审核快捷键作用于当前定位项，不确定时优先点卡片上的按钮。Mac 组合仍需实机核对。
 
 <a id="faq"></a>
 ### 常见问题
