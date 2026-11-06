@@ -8,10 +8,12 @@ import re
 import subprocess
 import sys
 import tempfile
+import shutil
+import stat
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from source_review import Review, PENDING, body, locate, digest
+from source_review import Review, PENDING, body, locate, digest, writer_lock_at
 
 ASSETS = {'.tex', '.bib', '.cls', '.sty', '.bst', '.bbx', '.cbx', '.cfg', '.def', '.fd',
           '.map', '.enc', '.tfm', '.otf', '.ttf', '.pdf', '.png', '.jpg', '.jpeg', '.eps', '.svg', '.ps'}
@@ -168,6 +170,105 @@ def previous_build(parent, document):
     if not compiled.is_file():
         return None  # Disposable cache was removed; perform an ordinary cold build.
     return previous
+
+
+def cache_tree(path, device):
+    """Record regular cache entries without following links or changing flags."""
+    found = {}
+    def inspect(item):
+        info = item.lstat()
+        readonly = bool(info.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY) if os.name == 'nt' else not bool(info.st_mode & stat.S_IWUSR)
+        if item.is_symlink() or item.is_junction() or info.st_dev != device or readonly:
+            raise ValueError('审核编译缓存包含链接、只读项或挂载异常：' + str(item))
+        if item.name == '.git' or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+            raise ValueError('审核编译缓存包含非普通项目：' + str(item))
+        found[item] = (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns)
+        if stat.S_ISDIR(info.st_mode):
+            for child in item.iterdir():
+                inspect(child)
+    inspect(path)
+    return found
+
+
+def prune_build_cache(review, parent, document):
+    """Rotate owned generations under the PDF cache lock, never review objects."""
+    current = parent / 'current'
+    if parent.resolve(strict=True) != parent or not parent.is_relative_to(review.repo) or (current.exists() and (not current.is_dir() or current.resolve(strict=True) != current)):
+        raise ValueError('审核编译缓存根目录或发布目录异常。')
+    navigation = {}
+    protected = set()
+    for file in current.glob('*-review.json'):
+        if file.is_symlink() or file.is_junction() or not file.is_file():
+            raise ValueError('审核 PDF 导航不是普通文件。')
+        raw = file.read_bytes()
+        compiled = Path(json.loads(raw)['compiled_pdf'])
+        owner = compiled.parent.parent
+        if compiled.name != 'review.pdf' or compiled.parent.name != 'pdf' or owner.parent != parent or owner == current or owner.is_symlink() or owner.is_junction():
+            raise ValueError('审核 PDF 的缓存引用越出专用目录。')
+        navigation[file] = raw
+        protected.add(owner)
+    targets = []
+    for folder in parent.iterdir():
+        if folder == current or folder in protected:
+            continue
+        if folder.is_symlink() or folder.is_junction():
+            raise ValueError('审核编译缓存不能是链接。')
+        if not folder.is_dir():
+            continue
+        metadata = folder / 'comparison.json'
+        if metadata.is_symlink() or metadata.is_junction():
+            raise ValueError('审核编译缓存不能是链接。')
+        if not metadata.exists():
+            continue  # Unknown/old unmarked data requires explicit manual cleanup.
+        saved = json.loads(metadata.read_text(encoding='utf-8'))
+        if not isinstance(saved, dict):
+            raise ValueError('审核编译缓存归属记录无效：' + str(metadata))
+        if saved.get('kind') != 'full-paper-sentence-review':
+            continue
+        if not isinstance(saved.get('output'), str) or Path(saved['output']) != folder or not re.fullmatch(r'[0-9a-z]+-[a-z0-9_]{8}', folder.name):
+            raise ValueError('审核编译缓存归属不明确：' + str(folder))
+        if saved.get('status') == 'building' and saved.get('document') != document.relative_to(review.repo).as_posix():
+            continue  # Keep another document's latest failed diagnosis until its retry.
+        targets.append(('directory', folder))
+    for file in (current.iterdir() if current.exists() else ()):
+        if re.fullmatch(re.escape(document.stem) + r'-[a-z0-9_]{8}\.(?:pdf|synctex|json)\.tmp', file.name):
+            targets.append(('file', file))
+    # Preflight the complete batch, including tracked data and every descendant.
+    if (review.repo / '.git').exists() and targets:
+        tracked = subprocess.run([review.git_exe, '-C', str(review.repo), 'ls-files', '-z', '--',
+                                  *(str(p.relative_to(review.repo)) for _, p in targets)],
+                                 env=review.env, capture_output=True)
+        if tracked.returncode:
+            raise ValueError('无法核对编译缓存的 Git 跟踪状态，未删除：' + tracked.stderr.decode('utf-8', errors='replace').strip())
+        if tracked.stdout:
+            raise ValueError('审核编译缓存已被 Git 跟踪，未自动删除。')
+    snapshots = []
+    for kind, target in targets:
+        if stat.S_ISDIR(target.lstat().st_mode) != (kind == 'directory'):
+            raise ValueError('审核编译缓存清理类型不符：' + str(target))
+        snapshots.append((kind, target, cache_tree(target, parent.stat().st_dev)))
+    removed = []
+    for kind, target, snapshot in snapshots:
+        if set(current.glob('*-review.json')) != set(navigation) or any(p.read_bytes() != raw for p, raw in navigation.items()):
+            raise ValueError('缓存清理期间 PDF 引用已变化，停止后续删除。')
+        direct_parent = parent if kind == 'directory' else current
+        if target.parent != direct_parent or target.resolve(strict=True).parent != direct_parent.resolve(strict=True) or cache_tree(target, parent.stat().st_dev) != snapshot:
+            raise ValueError('缓存清理目标或内容已变化，停止后续删除。')
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(direct_parent)
+            if Path.cwd().resolve(strict=True) != direct_parent.resolve(strict=True):
+                raise ValueError('PARENT_CD_FAILED')
+            if kind == 'directory':
+                shutil.rmtree('./' + target.name)
+            else:
+                Path('./' + target.name).unlink()
+            if target.exists():
+                raise ValueError('旧审核编译缓存未完全删除：' + str(target))
+            removed.append(str(target))
+        finally:
+            os.chdir(previous_cwd)
+    return removed
 
 
 def write_review_file(target, raw, previous=None):
@@ -568,18 +669,25 @@ def reverse_source_map(original, rendered, anchors=None):
 def preview(repo, state, document, id_, version, git, latexdiff, latexmk, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None):
     # Forward and reverse fragments have separate inputs/logs and no shared
     # mutable state. Two workers bound local CPU/process use for personal review.
-    with ThreadPoolExecutor(max_workers=2) as differences:
-        return _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences, style, refresh_accepted, choices, compare_id, request_file)
-
-
-def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, differences, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None):
     review = Review(repo, state, git)
+    document = review.path(str(Path(document).resolve(strict=True).relative_to(review.repo)))
+    parent = document.parent / '.latex-build' / 'review-diff'
+    for component in (parent.parent, parent, parent / 'current'):
+        if component.is_symlink() or component.is_junction():
+            raise ValueError('审核 PDF 输出目录不能是链接。')
+    parent.mkdir(parents=True, exist_ok=True)
+    if not parent.resolve(strict=True).is_relative_to(review.repo):
+        raise ValueError('审核 PDF 输出越出论文目录。')
+    with writer_lock_at(parent), ThreadPoolExecutor(max_workers=2) as differences:
+        return _preview(review, document, id_, version, latexdiff, latexmk, differences, style, refresh_accepted, choices, compare_id, request_file)
+
+
+def _preview(review, document, id_, version, latexdiff, latexmk, differences, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None):
     data = review.inspect(id_, version, source=True)
     allowed = PENDING | {'accepted'} if refresh_accepted else PENDING
     if version != data['edit']['versions'][-1] or not data['source_match'] or data['edit']['status'] not in allowed:
         raise ValueError('候选或原文已经变化，请刷新原文卡片。')
     appearance, preview_macros, preview_legend = display_style(style)
-    document = review.path(str(Path(document).resolve(strict=True).relative_to(review.repo)))
     request_raw = None
     if request_file:
         request_path = Path(request_file)
@@ -606,13 +714,8 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
     if relative not in files:
         raise ValueError('主文档没有进入源码快照，请检查文件类型与路径。')
     parent = document.parent / '.latex-build' / 'review-diff'
-    parent.mkdir(parents=True, exist_ok=True)
-    for component in (parent.parent, parent, parent / 'current'):
-        if component.is_symlink() or component.is_junction():
-            raise ValueError('审核 PDF 输出目录不能是链接。')
-    if not parent.resolve().is_relative_to(review.repo):
-        raise ValueError('审核 PDF 输出越出论文目录。')
     previous = previous_build(parent, document)
+    prune_build_cache(review, parent, document)
     previous_diff = None
     previous_result = None
     if previous:
@@ -665,6 +768,8 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
                 raise ValueError('审核 PDF 复用核验期间源文件或候选已变化，请重新生成。')
             return {**previous_result, 'id': id_, 'version': version, 'reused_pdf': True}
     out = Path(tempfile.mkdtemp(prefix=id_ + '-', dir=parent))
+    (out / 'comparison.json').write_text(json.dumps({'kind': 'full-paper-sentence-review', 'output': str(out),
+                                                   'document': relative.as_posix(), 'status': 'building'}), encoding='utf-8')
     source_dir = out / 'source'
     for rel, raw in files.items():
         destination = source_dir / rel
@@ -870,13 +975,31 @@ def _preview(repo, state, document, id_, version, git, latexdiff, latexmk, diffe
     with tempfile.NamedTemporaryFile(prefix=document.stem + '-', suffix='.json.tmp', dir=current, delete=False) as stream:
         stream.write(json.dumps(nav, ensure_ascii=False).encode('utf-8'))
         temporary = Path(stream.name)
-    os.replace(temporary, navigation)
-    os.replace(temporary_sync, sync)
-    os.replace(temporary_pdf, visible)
+    prior_metadata = {target: target.read_bytes() if target.exists() else None for target in (navigation, sync)}
+    published = []
+    try:
+        os.replace(temporary, navigation); published.append(navigation)
+        os.replace(temporary_sync, sync); published.append(sync)
+        os.replace(temporary_pdf, visible)
+    except OSError as error:
+        # A locked Windows PDF must not leave the old viewer pointing at a new
+        # generation's SyncTeX files, which the next cache rotation could remove.
+        for target in reversed(published):
+            if prior_metadata[target] is None:
+                continue
+            suffix = '.json.tmp' if target == navigation else '.synctex.tmp'
+            with tempfile.NamedTemporaryFile(prefix=document.stem + '-', suffix=suffix, dir=current, delete=False) as stream:
+                stream.write(prior_metadata[target]); restore = Path(stream.name)
+            os.replace(restore, target)
+        raise OSError('审核 PDF 发布失败，已保留上一份 PDF 及已有定位信息：' + str(error)) from error
     result = {'pdf': str(pdf), 'navigation': str(navigation), 'output': str(out), 'id': id_, 'version': version, 'kind': 'full-paper-sentence-review', 'shown_ids': shown,
               'reused_fragments': reused_fragments, 'reused_auxiliary': previous is not None, 'diff_command': [latexdiff, *DIFF_OPTIONS],
               'inputs': inputs, 'dependencies': dependencies, 'reused_pdf': False}
     (out / 'comparison.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+    try:
+        result['removed_cache'] = prune_build_cache(review, parent, document)
+    except (ValueError, OSError) as error:
+        raise ValueError('审核 PDF 已更新；旧编译缓存清理停止：' + str(error)) from error
     return result
 
 
@@ -895,4 +1018,5 @@ if __name__ == '__main__':
         print(json.dumps(preview(**args), ensure_ascii=False))
     except (ValueError, OSError) as error:
         print(str(error), file=sys.stderr)
+        raise SystemExit(1)
         sys.exit(2)

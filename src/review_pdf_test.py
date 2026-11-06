@@ -182,6 +182,129 @@ class ReviewPDF(unittest.TestCase):
     apply = NativeReview.apply
     proposal = NativeReview.proposal
 
+    def test_build_cache_rotates_per_document_and_preserves_last_pdf_on_failure(self):
+        import review_pdf
+        from unittest.mock import patch
+        id_ = self.proposal()
+        response = self.apply('propose', {'file': 'reply.tex', 'kind': 'response', 'before': 'Thank you.', 'after': 'We thank the reviewer.'})['id']
+        def build(item, file='main.tex', **kwargs):
+            version = self.review().inspect(item)['version']
+            return preview(self.root, 'reply.tex', self.root / file, item, version, 'missing-git',
+                           str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)), **kwargs)
+        source = {p: p.read_bytes() for p in [self.root / 'main.tex', self.root / 'reply.tex']}
+        first = build(id_)
+        reply = build(response, 'reply.tex')
+        self.assertTrue(Path(first['output']).is_dir(), 'reply compilation preserves the referenced manuscript cache')
+        stable = {Path(r[k]): Path(r[k]).read_bytes() for r in [first, reply] for k in ['pdf', 'navigation']}
+        stable.update({Path(r['pdf']).with_suffix('.synctex.gz'): Path(r['pdf']).with_suffix('.synctex.gz').read_bytes() for r in [first, reply]})
+        parent = Path(first['output']).parent
+        with review_pdf.writer_lock_at(parent):
+            with self.assertRaisesRegex(ValueError, '另一个审核'):
+                build(id_)
+        execute = review_pdf.command
+        def fail_compiler(args, cwd, log):
+            if args[0] == str(BIN / ('latexmk' + EXE)):
+                log.with_suffix('.stderr.log').write_text('isolated compiler failure', encoding='utf-8')
+                raise ValueError('isolated compiler failure')
+            return execute(args, cwd, log)
+        with patch.object(review_pdf, 'command', fail_compiler):
+            with self.assertRaisesRegex(ValueError, 'isolated compiler failure'):
+                build(id_, style={'addedColor': '#008844'})
+        failed = [p for p in parent.iterdir() if p.is_dir() and p.name != 'current' and p not in [Path(first['output']), Path(reply['output'])]]
+        self.assertEqual(len(failed), 1)
+        self.assertTrue((failed[0] / 'compile.stderr.log').is_file())
+        temporary = parent / 'current/main-aaaaaaaa.pdf.tmp'
+        temporary.write_bytes(b'unpublished PDF fixture')
+        unrelated = parent / 'current/author-file.tmp'
+        unrelated.write_bytes(b'not a tool publication temporary')
+        for p, raw in stable.items():
+            self.assertEqual(p.read_bytes(), raw)
+        compiler_failure = failed[0]
+        replace = review_pdf.os.replace
+        def locked_pdf(src, dst):
+            if Path(dst) == Path(first['pdf']):
+                raise PermissionError('isolated locked PDF')
+            return replace(src, dst)
+        with patch.object(review_pdf.os, 'replace', locked_pdf):
+            with self.assertRaisesRegex(OSError, '发布失败'):
+                build(id_, style={'addedColor': '#008844'})
+        self.assertFalse(compiler_failure.exists())
+        for p, raw in stable.items():
+            self.assertEqual(p.read_bytes(), raw, 'failed publication restores navigation and SyncTeX with the old PDF')
+        failed = [p for p in parent.iterdir() if p.is_dir() and p.name != 'current' and p not in [Path(first['output']), Path(reply['output'])]]
+        self.assertEqual(len(failed), 1)
+        updated = build(id_, style={'addedColor': '#008844'})
+        self.assertFalse(failed[0].exists())
+        self.assertFalse(temporary.exists())
+        self.assertTrue(unrelated.exists())
+        self.assertFalse(Path(first['output']).exists())
+        self.assertTrue(Path(reply['output']).is_dir())
+        self.assertTrue(Path(updated['output']).is_dir())
+        self.assertEqual(len([p for p in parent.iterdir() if p.is_dir()]), 3, 'one active cache per document plus current')
+        self.assertIn('reliable', ' '.join(p.extract_text() for p in PdfReader(updated['pdf']).pages))
+        for p, raw in source.items():
+            self.assertEqual(p.read_bytes(), raw)
+
+    def test_cache_pruning_preflights_all_targets_and_stops_on_changed_references(self):
+        import review_pdf
+        import stat
+        from unittest.mock import patch
+        parent = self.root / '.latex-build/review-diff'
+        current = parent / 'current'; current.mkdir(parents=True)
+        def cache(name):
+            out = parent / name; (out / 'pdf').mkdir(parents=True)
+            (out / 'pdf/review.pdf').write_bytes(b'isolated cache')
+            (out / 'comparison.json').write_text(json.dumps({'kind': 'full-paper-sentence-review', 'output': str(out), 'document': 'main.tex'}), encoding='utf-8')
+            return out
+        first, second = cache('1-aaaaaaaa'), cache('2-bbbbbbbb')
+        readonly = second / 'pdf/review.pdf'; mode = readonly.stat().st_mode
+        readonly.chmod(stat.S_IREAD)
+        try:
+            with self.assertRaisesRegex(ValueError, '只读'):
+                review_pdf.prune_build_cache(self.review(), parent, self.root / 'main.tex')
+            self.assertTrue(first.exists(), 'complete batch preflight precedes the first deletion')
+        finally:
+            readonly.chmod(mode)
+        is_symlink = Path.is_symlink
+        with patch.object(Path, 'is_symlink', lambda p: p == first or is_symlink(p)):
+            with self.assertRaisesRegex(ValueError, '链接'):
+                review_pdf.prune_build_cache(self.review(), parent, self.root / 'main.tex')
+        self.assertTrue(first.exists())
+        inspect = review_pdf.cache_tree
+        changed = False
+        def change_cache(path, device):
+            nonlocal changed
+            result = inspect(path, device)
+            if path == first and not changed:
+                changed = True
+                (first / 'pdf/review.pdf').write_bytes(b'concurrent cache change')
+            return result
+        with patch.object(review_pdf, 'cache_tree', change_cache):
+            with self.assertRaisesRegex(ValueError, '内容已变化'):
+                review_pdf.prune_build_cache(self.review(), parent, self.root / 'main.tex')
+        self.assertTrue(first.exists())
+        self.assertTrue(second.exists())
+        (self.root / '.git').mkdir()
+        with patch.object(review_pdf.subprocess, 'run', return_value=review_pdf.subprocess.CompletedProcess([], 0, b'tracked', b'')):
+            with self.assertRaisesRegex(ValueError, 'Git 跟踪'):
+                review_pdf.prune_build_cache(self.review(), parent, self.root / 'main.tex')
+        self.assertTrue(first.exists())
+        with patch.object(review_pdf.subprocess, 'run', return_value=review_pdf.subprocess.CompletedProcess([], 1, b'', b'isolated Git failure')):
+            with self.assertRaisesRegex(ValueError, 'isolated Git failure'):
+                review_pdf.prune_build_cache(self.review(), parent, self.root / 'main.tex')
+        # Subsequent reference-race fixture is Git-independent, without deleting .git.
+        actual_exists = Path.exists
+        with patch.object(Path, 'exists', lambda p: False if p == self.root / '.git' else actual_exists(p)):
+            actual_delete = review_pdf.shutil.rmtree
+            def change_reference(target):
+                actual_delete(target)
+                (current / 'main-review.json').write_text(json.dumps({'compiled_pdf': str(second / 'pdf/review.pdf')}), encoding='utf-8')
+            with patch.object(review_pdf.shutil, 'rmtree', change_reference):
+                with self.assertRaisesRegex(ValueError, '引用已变化'):
+                    review_pdf.prune_build_cache(self.review(), parent, self.root / 'main.tex')
+        self.assertFalse(first.exists())
+        self.assertTrue(second.exists(), 'newly referenced generation is never deleted')
+
     def test_selected_B_and_all_options_reuse_one_pdf_with_precise_reverse_metadata(self):
         import review_pdf
         from unittest.mock import patch
@@ -337,11 +460,15 @@ class ReviewPDF(unittest.TestCase):
         one, one_seconds = build()
         self.assertEqual(one['reused_fragments'], 198)
         self.assertTrue(one['reused_auxiliary'])
+        self.assertFalse(Path(first['output']).exists())
+        self.assertEqual((Path(one['output']) / 'pdf/review.bbl').read_bytes(), bibliography)
+        self.assertNotRegex((Path(one['output']) / 'compile.stdout.log').read_text(encoding='utf-8'), r"applying rule ['\"]bibtex")
         for i in range(2, 7):
             self.apply('propose', {'after': f'The model for case {i} is compact and reliable.'}, str(i))
         five, five_seconds = build()
         self.assertEqual(five['reused_fragments'], 190)
-        for result in [one, five]:
+        self.assertFalse(Path(one['output']).exists())
+        for result in [five]:
             out = Path(result['output'])
             self.assertEqual((out / 'pdf/review.bbl').read_bytes(), bibliography)
             self.assertNotRegex((out / 'compile.stdout.log').read_text(encoding='utf-8'), r"applying rule ['\"]bibtex")
