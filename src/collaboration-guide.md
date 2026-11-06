@@ -1,20 +1,27 @@
 # TeXScholar 当前任务协作协议：一次提交排序后的三个方案
 
-这是插件提供的任务级协议，不要求修改、覆盖或安装任何全局 SKILL，也不向论文项目添加 AGENTS.md／Markdown 跟踪文件。现有科研技能、作者要求与安全边界继续生效。论文任务从 MCP read_context 读取当前项目和本协议；同一任务已经获得的同版本协议直接复用，不再重复读取文件、get_instructions、--help 或 collaboration-contract。新会话、上下文丢失或升级后重新读取，不依赖旧聊天记忆。
+本协议只约束当前插件任务，不修改全局 SKILL、AGENTS 或真实论文配置。作者要求和科研证据优先。正式正文、已接收成果、手动修改及暂存选择受保护；未接收候选与批注是可替换工作内容。接收、Git 备份与科学问题解决是三件事。
 
 ## 日常修改的最短完整流程
 
-1. 一次 read_context 获取文件角色、版本、作者规则和本次上下文。已有编号传 ids；新写位置传 scopes，例如 `[{"file":"actual.tex","quote":"精确原文","left":"左锚点","right":"右锚点"}]`，或 `[{"file":"actual.tex","section":"\\section{Introduction}"}]`。quote 与 section 二选一；空 quote 表示由锚点定位的插入点，重复标题必须提供精确锚点。需要全文时传 files；都不传才读取整批。context.selections 是所选范围，sources 包含相邻上下文，不代表允许扩大改动。context.targets 也列出所选位置已有的未决项，items 可含相关依赖，不得重复新建。author_comments 的 global 是作者全局要求、local 是相关局部注释、reference 是模板注释；模板不升级为作者规则。omitted_local 统计未返回的无关局部注释，跨章节判断时补读相关 files。任务／返修附件的“插件版本”作为 expected_plugin_version；不匹配、缺少版本或旧服务不支持参数时重启 Codex 的 TeXScholar MCP，不混用 CLI。
-2. 默认 core 协议包含三方案、科学证据和审核边界。按任务在 modules 追加 writing（新稿／注释结构）、abstract、introduction、method、experiments、figures、response、questions 或 backup；将实际获得的 rules_receipt 原样作为后续 known_rules，工具只补发缺少或新版规则。新会话或上下文丢失不能沿用“已读”回执。context.items 已有 original、options、question_refs、requests 时直接使用；只有缺少批注绑定的旧版本才用 read_feedback(ids) 补读。每组 ID/version 的全部方案仅出现一次，每条 requests 保留 option 和精确选区。已有材料不重复全盘搜索，日常改稿不附带安装检查、环境迁移或全仓审计。
-3. 确定最小充分修改，直接组织 A/B/C；intent、summary、reason 是本次候选内的简短说明，不是额外的计划审批环节。作者明确要求先确认方案时仍先确认。
-4. 单项用 MCP propose_options 或 rework_options 直接提交，apply 默认 true，不必先预览再重复提交。多项用 submit_options，传 project、state、expected_sha256 和 operations；每项包含 operation（propose_options 或 rework_options）、spec，返修还需 id/version。工具顺序使用成功回执的 sha256，每项仍独立核验和持久化，遇错停止后续项。results 中已成功项不会回滚，不能重放；failed_index 是从 0 开始的失败位置，not_attempted_indices 是未尝试位置。按 error.recovery 处理后只续写失败／未尝试项。单项连续写同样使用上一条成功结果的 sha256，不逐项重读全篇或另写核验脚本，也不要并行写同一状态。
-5. 成功回执已给出实际编号、版本及状态摘要，正常保存后直接简报，不逐项重读全文、重算哈希或另写核验脚本。仅在冲突、新作者操作、内容变化、返回错误或缺失必要信息时重新读取受影响内容；不盲目重试写入。科学事实、实际数值、作者明确要求的检查仍需完成，不能用工具成功代替科学核验。
-
-版本、原文定位、重叠、问题摘录、写入锁和并发保护由工具承担；AI 不重复实现这些内部校验，不直接操作 DATA／对象。不为普通候选保存编译论文或提交 Git。这里减少的是重复流程，不削弱作者接收和科研证据要求。
+1. 首次 read_context 核对插件版本和 file_roles。已有编号传 ids，新位置传 scopes 的精确 quote（插入点为空并给 left/right）或完整 section 命令；需要全文才传 files。默认返回全部未决项及相邻段落，不自动发送整篇源码。sources 是上下文，不是扩大改动的授权；global 作者规则、local 局部注释、reference 模板要求分开处理，模板不能覆盖作者规则。
+2. 按任务选 modules；只在本会话确实仍有对应规则时传 known_rules。返修附件有 known_feedback 时原样传入：工具会重读当前源文件和状态，未变的原文、候选、批注可标 feedback_reused 而不重复返回，其他上下文照常提供。附件缺失、上下文丢失或版本失效时不得声称已经持有；新版返回优先，不要求恢复被废弃的旧批注。缺少必要依据时按需补读，不用工具成功冒充科学核验。
+3. 直接组织 A/B/C 并保存。单项用 propose_options/rework_options，多项用 submit_options；apply 默认 true，无需预览后再写一遍。下一次写入使用成功回执的 sha256/version，不逐项重读、重算摘要或编译。成功后简报实际编号和目的即可。维护 CLI propose-options 不属于日常 MCP 的额外步骤。
+4. AI rework_options 成功时默认清除本项旧批注并提供新版，无需作者预先拒绝。失败保留原状态。明确需要保留时传 discard_annotations=false；明确逐条处理时可用 resolve_requests。元数据关联绝不清除批注，不因放弃旧候选宣布科学问题解决。旧版本可以按需读取，不强制追溯或迁移它们。
+5. question_refs 在读取结果中引用本次 context.questions；提交可在 question_pool 明确提供完整 {id,file,quote}，由各项 question_refs 引用。仅在本次请求内有效，不自动配对；每条摘录仍由工具核验。新候选直接带关联，只补关联用 link_questions，也可放入 submit_options。replace=true 才替换整组关联。
+6. 批量首错停止，results 中成功项已保存，不能重放；只续写失败和未尝试项。invalid_field 的 field 指出需修正的位置，无需为修参数重读论文。状态、原文、版本冲突按 recovery 重读实际受影响范围，不盲目重试，不绕过写入锁或精确匹配。重叠错误的 existing 指向已有项，核对后返修，不自动合并。
+7. references 可与 read_context 同时请求：每项给 kind（label/citation/macro）、准确 key 和 files。返回指定源文件中的真实定义及邻近内容；缺失或多处匹配明确报告。仅查定义可同时传 ids=[]。不执行宏展开，不把 BibTeX 条目当作已验证文献，跨段逻辑与科学事实仍由 AI 核对。
 
 ## 候选生成
 
-### 先确认文件角色
+- 文件角色须 confirmed，变化时让作者确认。正文、回复、模板按实际登记处理，不猜文件名或改模板。初始化新稿只在作者授权的写作任务内进行；安装工具不初始化论文。
+- 每个原文位置提交完整、实质不同且排序后的 A/B/C；不凑同义版本。确实不足三个合理选项时写 fewer_options_reason。普通单元最多一个自然段；公式、图注、表注单独处理。最小充分修改，不为一句重写整段；新写或实质重写内容一句一行。
+- 三方案共享真实事实、数值和限定条件，不编造实验、引文或因果。intent.goal/preserve 简述本次目的与保留内容，不新增计划审批；作者明确要求先确认时除外。reason 默认一句实际取舍，只有较长依据才另填 summary；after 始终完整。
+- 手改候选的 manually_edited 说明原理由和排名可能过时；返修使用实际保存内容重新排序，不照搬内部标记。当前旧候选和批注可被新版替换，但不能自动接收、覆盖已接收成果或手动正文。
+- 全局科研要求放顶部 CODEX-RULES，局部逻辑放对应段前。交接和状态放既有 CODEX-REVIEW-STATE 注释块，不混入候选、不另建跟踪文档。详细格式请求 writing，问题关联请求 questions；角色结构、界面和备份分别请求 roles、interface、backup。
+- 只处理当前目标及必要依赖。跨章节判断补读相关内容；无证据结论标待核验。缺少当前插件版本信息或版本不匹配时重启实际 MCP 宿主，不改用另一个版本 CLI。
+
+## 文件角色细节
 
 每次论文任务先读 read_context 返回的 file_roles。插件按实际 TeX 内容、documentclass、input/include/subfile/import 和 !TeX root 提供建议，不要求特定文件名。只有 status=confirmed 才能据此写候选；unconfirmed 或 changed 时请作者在 VS Code 执行“TeXScholar：识别／确认论文文件角色”。不要自行伪造确认、猜测用途或绕过 MCP 检查。首次新项目可在作者授权下先创建必要模板骨架，但不能将草稿直接冒充已接收正文。
 
@@ -22,43 +29,10 @@
 
 增删改名、documentclass、包含关系或 !TeX root 改变才需重新确认；普通正文润色、保存、接收和批注不重做首次确认。动态宏和共享子文件可能无法唯一解析，按作者实际指定入口，不做模糊自动配对。template 不作为论文改写目标；确实需改模板，先请作者在文件角色中调整用途。confirmed 映射也是插件选择审核 PDF 主文档的依据。
 
-- 先读取真实正文、作者顶部 CODEX-RULES、相关局部逻辑注释、唯一审核状态、当前候选与返修要求。不要修改无关区域。
-- 同一原文位置只有一个审核编号；一次请求提交 A/B/C 三个有实质区别的方案，按作者要求、科学准确性、逻辑和简洁程度排序。A 是优先推荐，不是已经接收。每个方案附简短 reason，指出取舍，不给伪造置信度。
-- 三方案共享事实、数据和约束，不凑同义词版本，不编造实验或引文。确实不足三个合理方案时，提供一或两个并明确 fewer_options_reason。工具只能核对结构和文字是否重复，科学合理性仍需核验。
-- 生成或返修前，先根据原始意见、作者要求和当前原文确定最小充分修改范围，在同一请求的 `intent` 中填写 `goal`（解决的具体问题）与 `preserve`（必须保留的事实、限定条件及不需改动的内容）。范围不明确且影响结果时先讨论；已明确的要求直接执行，不额外索取确认。不为修一句而重写整个段落，也不为减少字数遗漏必要解释。新论文撰写同样说明本段写作目标和应保留的已确认内容。
-- 每个方案默认仅用一句 `reason` 说明实际取舍；只有需要较长依据时才另加简短 `summary`，不重复写两份同义说明。保留三个完整 after，不截短候选。避免“更好、更专业”等空泛评价，三方案不强制对应固定的长短或风格。审核页的修改句数仅供作者判断，不是质量分数或硬性上限；旧候选缺少说明时不自动补写或编造。
-- A/B/C 是同一轮备选，v1/v2 是重新生成的轮次，不能混用。普通审核按位置组织，最多一个自然段；公式、图注、表注等特殊结构单独审核。新写或实质重写正文一句一行，不机械重排旧段落。
-- MCP 新建用 propose_options，返修用 rework_options，传实际 id、当前 version、expected_sha256 和结构化 spec；不要为正常 MCP 调用生成 shell 脚本或临时 JSON。维护用 CLI propose-options／rework-options 与 MCP 是不同入口，其 --apply／--expect 约定不是 MCP 的额外步骤；日常改稿不切换到 CLI。
-- 保留编号和正式原文。AI 生成的备选在作者明确接收具体方案前不能写入正文。接收、备份与科学问题闭合分开。旧单方案 propose/rework 命令已移除，不能绕过多方案约定；作者手动编辑某个方案仍由 edit-option 完成。
 
-新候选 JSON 示例（文件名和内容必须来自当前项目，不照抄）：
+## 界面与交付细节
 
-```json
-{
-  "file": "actual-paper.tex",
-  "kind": "manuscript",
-  "before": "Exact original sentence.",
-  "left": "Exact left anchor. ",
-  "right": " Exact right anchor.",
-  "location": "实际章节与位置",
-  "options": [
-    {"label":"A","reason":"优先保持限定条件，措辞最直接","after":"First supported candidate."},
-    {"label":"B","reason":"突出机制，篇幅稍长","after":"Second supported candidate."},
-    {"label":"C","reason":"突出适用边界","after":"Third supported candidate."}
-  ],
-  "questions": []
-}
-```
-
-在上述请求中同时填写，例如 `"intent":{"goal":"解释权重的作用范围","preserve":"保留原公式、数值及适用条件；未涉及的实验结论保持原样"}`。已有简短 reason 不再重复填 summary；示例不是固定句式，必须与本次候选一致。
-
-返修时保留该编号，按已读批注重排新一轮 A/B/C。可显式 discard_annotations=true 清除旧返修批注；不要求作者先逐条拒绝。手动编辑单个方案由插件的 edit-option 保存，保留其他方案，不用于要求 AI 只交一个新方案。元数据补关联使用 MCP link_questions，不改其他审核字段。
-
-手动保存的方案由插件标记 `manually_edited`；其旧 summary/reason 和原排序只供参考，不是 AI 对当前内容的重新评估。返修前读取作者实际保存的文字，按最新要求重新比较、排序并填写真实取舍；新的 options 不照搬该内部手改标记。页面未保存的实时草稿不是已持久化候选，不能当作已接收正文。A/B、A/C、B/C 阅读对照只改变页面差异展示，批注仍绑定具体方案与版本，不代表接收、排名变化或 PDF 切换。
-
-## 关联、批注和交付
-
-read_context 的 question_refs 指向本次 context.questions 中的完整原始意见，相同 id/file/quote 只返回一份。引用键仅在本次结果内有效，写入仍须展开为完整 questions 数组并由工具精确核验，不按编号猜配。重叠错误返回 existing 的真实编号、版本和文件；按 recovery.ids 补读该项，再判断是否返修，不自动合并或接收。
+read_context 的 question_refs 指向本次 context.questions 中的完整原始意见，相同 id/file/quote 只返回一份。写入可传完整 questions，也可显式构造本次 question_pool 并引用，由工具展开并精确核验，不按编号猜配。重叠错误返回 existing 的真实编号、版本和文件；按 recovery.ids 补读该项，再判断是否返修，不自动合并或接收。
 
 问题关联必须提供实际 id、项目内 file 和唯一精确 quote。多个问题涉及同一原文位置时合并为同一修改项，在 questions 中分别关联，不自动猜配。完整接口见同目录 question-linking-guide.md。返修上下文包含编号、选项、版本、原文、候选与选区；批注只加入 Codex 输入区，不自动发送或调用 AI。
 

@@ -28,6 +28,12 @@ class Conflict(ValueError):
     pass
 
 
+class FieldConflict(Conflict):
+    def __init__(self, field, message):
+        super().__init__(message)
+        self.field = field
+
+
 class OverlapConflict(Conflict):
     def __init__(self, id_, version, file):
         super().__init__(f'Overlapping unresolved edits: existing ID {id_}; rework that item if appropriate, never auto-merge or accept')
@@ -415,25 +421,32 @@ class Review:
     def validate_options(spec, required=False):
         if 'options' not in spec:
             if required:
-                raise Conflict('Provide ranked options A/B/C in one request; read collaboration-contract first')
+                raise FieldConflict('spec.options', 'Provide ranked options A/B/C in one request')
             return None
         options = spec['options']
         if not isinstance(options, list) or not 1 <= len(options) <= 3:
-            raise Conflict('Provide one to three ranked options')
+            raise FieldConflict('spec.options', 'Provide one to three ranked options')
         if len(options) < 3 and not str(spec.get('fewer_options_reason', '')).strip():
-            raise Conflict('Fewer than three options requires fewer_options_reason; do not invent filler variants')
+            raise FieldConflict('spec.fewer_options_reason', 'Fewer than three options requires fewer_options_reason; do not invent filler variants')
         for i, option in enumerate(options):
-            if not isinstance(option, dict) or option.get('label') != 'ABC'[i] or not isinstance(option.get('after'), str) or not isinstance(option.get('reason'), str) or not option['reason'].strip():
-                raise Conflict('Each ranked option needs sequential label A/B/C, after text and a reason')
+            prefix = f'spec.options[{i}]'
+            if not isinstance(option, dict):
+                raise FieldConflict(prefix, 'Each ranked option must be an object')
+            if option.get('label') != 'ABC'[i]:
+                raise FieldConflict(prefix + '.label', 'Each ranked option needs sequential label A/B/C')
+            if not isinstance(option.get('after'), str):
+                raise FieldConflict(prefix + '.after', 'Candidate after must be complete LaTeX text')
+            if not isinstance(option.get('reason'), str) or not option['reason'].strip():
+                raise FieldConflict(prefix + '.reason', 'Each ranked option needs a nonempty reason')
             if 'summary' in option and (not isinstance(option['summary'], str) or not option['summary'].strip()):
-                raise Conflict('Option summary must describe the actual tradeoff in nonempty text')
+                raise FieldConflict(prefix + '.summary', 'Option summary must describe the actual tradeoff in nonempty text')
         if 'intent' in spec:
             intent = spec['intent']
             if not isinstance(intent, dict) or set(intent) != {'goal', 'preserve'} or any(
                     not isinstance(intent[k], str) or not intent[k].strip() for k in ('goal', 'preserve')):
-                raise Conflict('Revision intent needs nonempty goal and preserve text')
+                raise FieldConflict('spec.intent', 'Revision intent needs nonempty goal and preserve text')
         if len({o['after'] for o in options}) != len(options):
-            raise Conflict('Options must contain distinct text, not duplicate candidates')
+            raise FieldConflict('spec.options', 'Options must contain distinct text, not duplicate candidates')
         return copy.deepcopy(options)
 
     def propose_options(self, spec, id_=None, version=None):
@@ -619,9 +632,14 @@ class Review:
             raise Conflict('No content change')
         if self.storage == 'files' and (not rework or edit.get('scope_policy') == 'single-unit'):
             validate_review_unit(original)
-            validate_review_unit(after)
-            for option in options or []:
-                validate_review_unit(option['after'])
+            if options:
+                for i, option in enumerate(options):
+                    try:
+                        validate_review_unit(option['after'])
+                    except Conflict as error:
+                        raise FieldConflict(f'spec.options[{i}].after', str(error)) from error
+            else:
+                validate_review_unit(after)
         # Refuse overlap with another unresolved edit, including insertion boundaries.
         for id_, other in edits.items():
             if id_ == rework or other["file"] != rel or other["status"] not in PENDING:
@@ -984,7 +1002,21 @@ class Review:
                 groups[key]['requests'].append(copy.deepcopy(note))
         if self.state_path.read_bytes() != self.raw:
             raise Conflict('Concurrent review modification while reading feedback context')
-        return {'items': list(groups.values()), 'sha256': digest(self.raw)}
+        current_ids = {id_ for id_, edit in self.state['edits'].items() if edit['status'] in PENDING
+                       and any(n['status'] == 'open' for n in edit.get('requests', []))
+                       and all(n['version'] == edit['versions'][-1] for n in edit.get('requests', []) if n['status'] == 'open')}
+        return {'items': list(groups.values()), 'sha256': digest(self.raw),
+                'known_feedback': [self.feedback_receipt(id_) for id_ in sorted(current_ids)]}
+
+    def feedback_receipt(self, id_):
+        """Reuse only the full prose/notes actually included in a current feedback attachment."""
+        edit = self.state['edits'][id_]
+        payload = self.payload(edit)
+        content = {'session': self.state.get('session'), 'id': id_, 'version': edit['versions'][-1],
+                   'original': payload['before'], 'options': payload.get('options'),
+                   'requests': [n for n in edit.get('requests', []) if n['status'] == 'open']}
+        return {'id': id_, 'version': edit['versions'][-1],
+                'fingerprint': digest(json.dumps(content, ensure_ascii=False, sort_keys=True).encode('utf-8'))}
 
     def view(self, id_, code=None):
         self.assert_ready()

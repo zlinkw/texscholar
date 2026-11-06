@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sys
-from source_review import Review, Conflict, OverlapConflict, PENDING, body, digest, locate
+from source_review import Review, Conflict, FieldConflict, OverlapConflict, PENDING, body, digest, locate
 from document_roles import scan as scan_roles, relative_file
 from ai_context import paragraph_context, source_scope, comment_context
 
@@ -33,37 +33,41 @@ OPTION = schema({'label': {'type': 'string', 'enum': ['A', 'B', 'C']}, 'after': 
 QUESTION = schema({k: STRING for k in ('id', 'file', 'quote')}, ['id', 'file', 'quote'])
 BASE = {'project': STRING, 'state': STRING,
         'expected_plugin_version': {'type': 'string', 'description': 'Version from the current plugin task/feedback packet. A mismatch requires restarting Codex MCP, not CLI fallback.'}}
-WRITE = {**BASE, 'expected_sha256': STRING, 'apply': {'type': 'boolean', 'default': True}}
+POOL = {'type': 'object', 'additionalProperties': QUESTION, 'description': 'Explicit shared question excerpts for this request only; references never auto-pair.'}
+WRITE = {**BASE, 'expected_sha256': STRING, 'apply': {'type': 'boolean', 'default': True}, 'question_pool': POOL}
 STRINGS = {'type': 'array', 'items': STRING}
-RULE_MODULES = ['core', 'writing', 'abstract', 'introduction', 'method', 'experiments', 'figures', 'response', 'questions', 'backup']
+RULE_MODULES = ['core', 'writing', 'abstract', 'introduction', 'method', 'experiments', 'figures', 'response', 'questions', 'backup', 'interface', 'roles']
 MODULES = {'type': 'array', 'items': {'type': 'string', 'enum': RULE_MODULES}}
 RULES = {'modules': MODULES, 'known_rules': schema({'version': STRING, 'modules': MODULES}, ['version', 'modules'])}
 SCOPES = {'type': 'array', 'items': schema({'file': STRING, 'quote': STRING, 'section': STRING, 'left': STRING, 'right': STRING}, ['file'])}
-READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS, 'scopes': SCOPES}
+FEEDBACK_RECEIPTS = {'type': 'array', 'items': schema({'id': STRING, 'version': STRING, 'fingerprint': STRING}, ['id', 'version', 'fingerprint'])}
+REFERENCES = {'type': 'array', 'items': schema({'kind': {'type': 'string', 'enum': ['label', 'citation', 'macro']}, 'key': STRING, 'files': STRINGS}, ['kind', 'key', 'files'])}
+READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS, 'scopes': SCOPES, 'known_feedback': FEEDBACK_RECEIPTS, 'references': REFERENCES}
 SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'response']},
         'intent': schema({'goal': STRING, 'preserve': STRING}, ['goal', 'preserve']),
         'before': STRING, 'left': STRING, 'right': STRING, 'location': STRING,
         'options': {'type': 'array', 'items': OPTION, 'minItems': 1, 'maxItems': 3},
-        'fewer_options_reason': STRING, 'questions': {'type': 'array', 'items': QUESTION},
+        'fewer_options_reason': STRING, 'questions': {'type': 'array', 'items': QUESTION}, 'question_refs': STRINGS,
         'deps': {'type': 'array', 'items': STRING}, 'discard_annotations': {'type': 'boolean'},
         'resolve_requests': {'type': 'array', 'items': STRING}}
 TOOLS = [
     ('get_instructions', 'Read requested rule modules; pass known_rules from an earlier receipt to omit unchanged modules. Core is always required. No SKILL edits.', schema(RULES), True),
-    ('read_context', 'FIRST: use ids for revisions, scopes for an exact quote/cursor (left/right anchors) or literal section command, files for full files. Scoped reads include overlapping pending items. Comments are separated by authority; question_refs resolve in questions. Omit selectors for all pending work. Reuse rules receipt.', schema(READ, ['project']), True),
+    ('read_context', 'FIRST: ids for revisions, scopes for exact source/cursor/section, files only for full files. Default all pending items with local context. Pass known_feedback only from an attachment still in context; unchanged prose/notes are reused, source and state are checked. references reads explicit label/citation/macro keys. Reuse rules receipt.', schema(READ, ['project']), True),
     ('read_feedback', 'Read missing feedback generations, grouped once per ID/version; every note retains its exact option/selection. Optional ids scope.', schema({**BASE, 'ids': STRINGS}, ['project', 'state']), True),
     ('begin_review', 'Explicit new batch only, after protecting unbacked accepted results. Reuses an existing author-approved state header; never silently starts a batch.',
      schema({**WRITE, 'round': STRING, 'files': {'type': 'array', 'items': STRING}, 'submission': STRING}, ['project', 'state', 'expected_sha256', 'round', 'files']), False),
     ('propose_options', 'Validate and save ONE location with ranked A/B/C in one call. apply defaults true; no mandatory preview call. Chain returned sha256 for the next write. Formal prose unchanged.',
      schema({**WRITE, 'spec': schema(SPEC, ['file', 'kind', 'before', 'options'])}, ['project', 'state', 'expected_sha256', 'spec']), False),
-    ('rework_options', 'Validate and replace pending alternatives under SAME ID using current feedback/version and A/B/C together. apply defaults true; chain returned sha256/version. No acceptance; optional discard_annotations.',
+    ('rework_options', 'Replace pending A/B/C under SAME ID/version. On success old notes are discarded by default; failure preserves state. Explicit discard_annotations=false retains notes; resolve_requests supports selective handling. No acceptance. Chain returned sha256/version.',
      schema({**WRITE, 'id': STRING, 'version': STRING, 'spec': schema(SPEC, ['options'])}, ['project', 'state', 'expected_sha256', 'id', 'version', 'spec']), False),
-    ('link_questions', 'Append/deduplicate exact verified original reviewer quotes. Explicit replace only. No wording/version/notes/decision changes; never auto-pair.',
-     schema({**WRITE, 'id': STRING, 'version': STRING, 'questions': {'type': 'array', 'items': QUESTION}, 'replace': {'type': 'boolean', 'default': False}},
-            ['project', 'state', 'expected_sha256', 'id', 'version', 'questions']), False),
-    ('submit_options', 'Save multiple explicit propose/rework operations in order, chaining state receipts internally. Stops at first failure; earlier successes remain saved. Never replay successful entries. No acceptance.',
-     schema({**BASE, 'expected_sha256': STRING, 'operations': {'type': 'array', 'minItems': 1, 'items': schema({
-         'operation': {'type': 'string', 'enum': ['propose_options', 'rework_options']},
-         'id': STRING, 'version': STRING, 'spec': schema(SPEC, ['options'])}, ['operation', 'spec'])}},
+    ('link_questions', 'Append/deduplicate exact verified original reviewer quotes or explicit question_pool references. Explicit replace only. No other changes; never auto-pair.',
+     schema({**WRITE, 'id': STRING, 'version': STRING, 'questions': {'type': 'array', 'items': QUESTION}, 'question_refs': STRINGS, 'replace': {'type': 'boolean', 'default': False}},
+            ['project', 'state', 'expected_sha256', 'id', 'version']), False),
+    ('submit_options', 'Save explicit propose/rework/link_questions operations in order, chaining state receipts. Shared question_pool avoids repeating quotes; each operation names question_refs explicitly. Stops at first failure; earlier successes remain saved. Never replay successes. No acceptance.',
+     schema({**BASE, 'question_pool': POOL, 'expected_sha256': STRING, 'operations': {'type': 'array', 'minItems': 1, 'items': schema({
+         'operation': {'type': 'string', 'enum': ['propose_options', 'rework_options', 'link_questions']},
+         'id': STRING, 'version': STRING, 'spec': schema(SPEC, ['options']),
+         'questions': {'type': 'array', 'items': QUESTION}, 'question_refs': STRINGS, 'replace': {'type': 'boolean'}}, ['operation'])}},
          ['project', 'state', 'expected_sha256', 'operations']), False),
 ]
 
@@ -83,9 +87,17 @@ def rule_packet(args):
                 'abstract': ['摘要'], 'introduction': ['Introduction'], 'method': ['Method'],
                 'experiments': ['Experiments'], 'figures': ['图表、讨论与结论'], 'response': ['回复信'], 'backup': ['每批成果']}
     for name in missing:
-        if name in ('core', 'questions'):
+        if name in ('core', 'questions', 'roles', 'interface'):
             file = 'collaboration-guide.md' if name == 'core' else 'question-linking-guide.md'
-            parts.append((HERE / file).read_text(encoding='utf-8'))
+            if name in ('roles', 'interface'):
+                file = 'collaboration-guide.md'
+            text = (HERE / file).read_text(encoding='utf-8')
+            if name == 'questions':
+                parts.append(text)
+            else:
+                sections = re.split(r'(?m)(?=^## )', text)
+                titles = {'core': ['日常修改的最短完整流程', '候选生成'], 'roles': ['文件角色细节'], 'interface': ['界面与交付细节']}[name]
+                parts.extend(section for i, section in enumerate(sections) if (name == 'core' and i == 0) or section.splitlines()[0].removeprefix('## ') in titles)
         else:
             text = (HERE / 'writing-guide.md').read_text(encoding='utf-8')
             sections = re.split(r'(?m)(?=^## )', text)
@@ -104,6 +116,9 @@ class ToolConflict(Conflict):
 
 def error_detail(error, args):
     # Only classified boundaries prescribe recovery. Unknown failures retain their cause.
+    if isinstance(error, FieldConflict):
+        return {'code': 'invalid_field', 'message': str(error), 'id': args.get('id'), 'field': error.field,
+                'recovery': {'action': 'correct_request', 'reread_required': False, 'automatic_retry': False}}
     if isinstance(error, OverlapConflict):
         return {'code': 'overlapping_candidate', 'message': str(error), 'id': args.get('id'),
                 'existing': {'id': error.id, 'version': error.version, 'file': error.file},
@@ -114,8 +129,10 @@ def error_detail(error, args):
             scope = {'ids': [args['id']]} if 'id' in args else {'files': list(dict.fromkeys(files))}
             error = ToolConflict(str(error), 'source_changed', {'action': 'read_context', **scope, 'automatic_retry': False})
         elif str(error) == 'Reviewer question quote must match its actual source uniquely':
+            links = args.get('spec', args)
+            questions = [*links.get('questions', []), *[args.get('question_pool', {})[ref] for ref in links.get('question_refs', []) if ref in args.get('question_pool', {})]]
             error = ToolConflict(str(error), 'question_quote_invalid', {'action': 'read_exact_question_source',
-                'files': list(dict.fromkeys(q['file'] for q in args.get('questions', args.get('spec', {}).get('questions', []))
+                'files': list(dict.fromkeys(q['file'] for q in questions
                                            if isinstance(q, dict) and isinstance(q.get('file'), str))), 'automatic_retry': False})
     return {'code': error.code if isinstance(error, ToolConflict) else 'operation_failed',
             'message': str(error), 'id': args.get('id'),
@@ -187,7 +204,24 @@ def initial_source_context(root, roles, args):
     return result
 
 
-def ai_context(review, roles, ids=None, files=None, scopes=None):
+def role_packet(roles):
+    return {k: roles[k] for k in ('status', 'owner', 'files', 'roots')} if roles['status'] == 'confirmed' else roles
+
+
+def expand_questions(value, pool, field):
+    """Callers choose associations; the ordinary writer still verifies every quote."""
+    if 'question_refs' not in value:
+        return value
+    refs = value['question_refs']
+    if not isinstance(pool, dict) or not isinstance(refs, list) or any(not isinstance(ref, str) or ref not in pool for ref in refs):
+        raise FieldConflict(field + 'question_refs', 'Every question reference must name an entry in this request question_pool')
+    direct = value.get('questions', [])
+    if not isinstance(direct, list):
+        raise FieldConflict(field + 'questions', 'questions must be an array')
+    return {**{k: v for k, v in value.items() if k != 'question_refs'}, 'questions': [*direct, *[pool[ref] for ref in refs]]}
+
+
+def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=None):
     """AI projection: exact text/metadata, never display diffs or duplicate ledger history."""
     review.assert_ready()
     texts, spans, selections = {}, {}, []
@@ -255,6 +289,12 @@ def ai_context(review, roles, ids=None, files=None, scopes=None):
                     options=payload.get('options', [{'label': 'A', 'after': payload['after'], 'reason': '已有单方案'}]),
                     intent=payload.get('intent'), fewer_options_reason=payload.get('fewer_options_reason', ''),
                     left=payload['left'], right=payload['right'])
+        receipt = review.feedback_receipt(id_)
+        item['feedback_receipt'] = receipt
+        if receipt in (known_feedback or []):
+            for key in ('original', 'options', 'requests'):
+                item.pop(key)
+            item['feedback_reused'] = True
         text = read(edit['file'])
         try:
             start, end = locate(text, review.live_excerpt(edit, payload), payload['left'], payload['right'])
@@ -263,9 +303,7 @@ def ai_context(review, roles, ids=None, files=None, scopes=None):
             item.update(source_match=False, conflict=str(error))
             continue
         spans.setdefault(edit['file'], []).append(paragraph_context(text, start, end))
-    full_files = files if files is not None else (list(dict.fromkeys(edits[id_]['file'] for id_ in included)) if ids is None and scopes is None else [])
-    if ids is None and files is None and scopes is None and not targets:
-        full_files = review.state['rounds'][-1]['files']
+    full_files = files or []
     for file in full_files:
         text = read(file)
         spans[file] = [(0, len(text))]
@@ -305,6 +343,10 @@ class Server:
             return self.submit(args)
         root, git = self.project(args['project'])
         if name == 'read_context':
+            receipts = args.get('known_feedback', [])
+            if not isinstance(receipts, list) or any(not isinstance(r, dict) or set(r) != {'id', 'version', 'fingerprint'}
+                or any(not isinstance(v, str) or not v for v in r.values()) for r in receipts):
+                raise FieldConflict('known_feedback', 'Use the exact known_feedback receipts from an attachment already available in this conversation')
             for key in ('ids', 'files'):
                 if key in args and (not isinstance(args[key], list) or any(not isinstance(v, str) or not v for v in args[key])):
                     raise Conflict('ids and files must be arrays of nonempty strings')
@@ -328,21 +370,34 @@ class Server:
                     if '% CODEX-REVIEW-STATE-BEGIN' in text and '% CODEX-REVIEW-STATE-END' in text:
                         owners.append(path.relative_to(root).as_posix())
             if not owners:
-                return {'initialized': False, 'plugin_version': VERSION, 'files': sources, 'file_roles': roles, **rule_packet({**args, 'modules': [*args.get('modules', []), 'writing']}),
+                return {'initialized': False, 'plugin_version': VERSION, 'files': sources, 'file_roles': role_packet(roles), **rule_packet({**args, 'modules': [*args.get('modules', []), 'writing']}),
                         'context': initial_source_context(root, roles, args),
+                        **self.references(root, args),
                         'next': 'Read actual author files. During authorized paper work establish one comment-only state header, then begin_review. Do not initialize merely for tool installation.'}
             if len(owners) != 1:
                 raise Conflict('Reconcile multiple state owners; do not guess')
             state = owners[0]
         review = Review(root, state, git)
         if name == 'read_context':
-            result = ai_context(review, roles, args.get('ids'), args.get('files'), args.get('scopes')) if review.state else {**review.status(), **initial_source_context(root, roles, args)}
+            result = ai_context(review, roles, args.get('ids'), args.get('files'), args.get('scopes'), args.get('known_feedback')) if review.state else {**review.status(), **initial_source_context(root, roles, args)}
             rules = args if review.state else {**args, 'modules': [*args.get('modules', []), 'writing']}
-            return {'owner': state, 'context': result, 'file_roles': roles, **rule_packet(rules), 'plugin_version': VERSION}
+            references = self.references(root, args)
+            verify_read(review)
+            return {'owner': state, 'context': result, 'file_roles': role_packet(roles), **rule_packet(rules), 'plugin_version': VERSION, **references}
         if name == 'read_feedback':
             return {**feedback_packet(review, args.get('ids')), 'plugin_version': VERSION}
         if name not in {'begin_review', 'propose_options', 'rework_options', 'link_questions'}:
             raise Conflict('Unknown or unavailable AI tool; decisions remain author actions')
+        for key in ['expected_sha256', *(['id', 'version'] if name in ('rework_options', 'link_questions') else [])]:
+            if not isinstance(args.get(key), str) or not args[key]:
+                raise FieldConflict(key, 'Provide the current nonempty value for ' + key)
+        if name in ('propose_options', 'rework_options'):
+            if not isinstance(args.get('spec'), dict):
+                raise FieldConflict('spec', 'spec must be a candidate object')
+            if name == 'propose_options':
+                for key in ('file', 'kind', 'before'):
+                    if not isinstance(args['spec'].get(key), str):
+                        raise FieldConflict('spec.' + key, 'Provide ' + key + ' as a string')
         apply = args.get('apply', True)
         if type(apply) is not bool:
             raise Conflict('apply must be boolean')
@@ -362,7 +417,9 @@ class Server:
             if name == 'begin_review':
                 updated, result = r.begin(args['round'], args['files'], args.get('submission'))
             elif name in {'propose_options', 'rework_options'}:
-                spec = args['spec']
+                spec = expand_questions(args['spec'], args.get('question_pool', {}), 'spec.')
+                if name == 'rework_options' and 'discard_annotations' not in spec and not spec.get('resolve_requests'):
+                    spec = {**spec, 'discard_annotations': True}
                 actual_roles = scan_roles(root)
                 if actual_roles['status'] != 'confirmed':
                     raise ToolConflict('请先在 VS Code 执行“识别／确认论文文件角色”；文件映射未确认或结构已变化，不能猜测正文与回复信。',
@@ -377,7 +434,10 @@ class Server:
             else:
                 if type(args.get('replace', False)) is not bool:
                     raise Conflict('replace must be boolean')
-                updated, result = r.update_questions(args['id'], args['version'], args['questions'], args.get('replace', False))
+                links = expand_questions(args, args.get('question_pool', {}), '')
+                if 'questions' not in links:
+                    raise FieldConflict('questions', 'Provide questions or explicit question_refs; use [] for an explicitly empty set')
+                updated, result = r.update_questions(args['id'], args['version'], links['questions'], args.get('replace', False))
             if apply:
                 r.persist(updated, args['expected_sha256'])
             receipt = {**result, 'applied': apply, 'plugin_version': VERSION,
@@ -392,23 +452,30 @@ class Server:
                 return mutate(Review(root, state, git))
         return mutate(review)
 
+    @staticmethod
+    def references(root, args):
+        if 'references' not in args:
+            return {}
+        from reference_context import read_references
+        return {'references': read_references(root, args['references'])}
+
     def submit(self, args):
         operations = args['operations']
         if not isinstance(operations, list) or not operations:
             raise Conflict('operations must be a nonempty list')
         results, sha = [], args['expected_sha256']
         for index, operation in enumerate(operations):
-            current = {**{key: args[key] for key in BASE if key in args}, 'expected_sha256': sha}
+            current = {**{key: args[key] for key in BASE if key in args}, 'expected_sha256': sha, 'question_pool': args.get('question_pool', {})}
             try:
-                if not isinstance(operation, dict) or operation.get('operation') not in {'propose_options', 'rework_options'}:
-                    raise Conflict('Batch supports only explicit propose_options / rework_options')
-                current.update({key: operation[key] for key in ('id', 'version', 'spec') if key in operation})
+                if not isinstance(operation, dict) or operation.get('operation') not in {'propose_options', 'rework_options', 'link_questions'}:
+                    raise FieldConflict('operation', 'Batch supports explicit propose_options / rework_options / link_questions')
+                current.update({key: operation[key] for key in ('id', 'version', 'spec', 'questions', 'question_refs', 'replace') if key in operation})
                 result = self.call(operation['operation'], current)
             except (Conflict, OSError, ValueError, KeyError, TypeError) as error:
                 return {'complete': False, 'results': results, 'failed_index': index,
                         'not_attempted_indices': list(range(index + 1, len(operations))), 'sha256': sha,
                         'plugin_version': VERSION, 'error': error_detail(error, current),
-                        'next': 'Earlier results remain saved. Do not replay them. Resolve the failed item and reread its scope before submitting remaining operations.'}
+                        'next': 'Earlier results remain saved. Do not replay them. Follow error.recovery; correct request fields without rereading, or reread changed context when required.'}
             results.append({'index': index, **result})
             sha = result['sha256']
         return {'complete': True, 'results': results, 'sha256': sha, 'plugin_version': VERSION,

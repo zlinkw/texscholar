@@ -699,7 +699,7 @@ function createInlineReview(vscode, context, execute = run) {
             + `\n【原版完整内容】\n${item.original}`
             + (item.options ? '\n【本轮全部备选（本批注对应方案见上方）】\n' + JSON.stringify(item.options, null, 2) : '\n【修改版完整内容】\n' + item.candidate)
             + '\n【作者返修批注】\n'
-            + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.side === 'original' ? '原文' : '候选'}选区：${n.quote}\n返修要求：${n.text}`).join('\n\n')
+            + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.side === 'original' ? '原文' : '候选'}选区：${n.quote}\n返修要求：${n.text}\n定位：${JSON.stringify({id: n.id, version: n.version, side: n.side, option: n.option, start: n.start, end: n.end})}`).join('\n\n')
         );
         if (!notes.length) return vscode.window.showInformationMessage('没有待处理的批注。');
         if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread')) throw new Error('当前 Codex 插件没有可用的添加上下文命令；批注仍保留，未发送。');
@@ -707,7 +707,10 @@ function createInlineReview(vscode, context, execute = run) {
         await fs.mkdir(parent, {recursive: true});
         const folder = await fs.mkdtemp(path.join(parent, 'batch-'));
         const file = path.join(folder, '返修批注.txt');
-        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 传 expected_plugin_version 为上方版本；若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n请使用 read_context，state=${JSON.stringify(c.owner)}，ids=${JSON.stringify([...new Set(items.map(item => item.id))])}，读取最新上下文和插件规则；有同版本 rules_receipt 时作为 known_rules 传回。不修改全局 SKILL。此文件是请求快照，不是状态表。\n保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${notes.join('\n\n')}\n`, 'utf8');
+        const ids = [...new Set(items.map(item => item.id))];
+        const readRequest = {project: c.repo, state: c.owner, ids, expected_plugin_version: require('../package.json').version,
+            known_feedback: (state.known_feedback || []).filter(receipt => ids.includes(receipt.id))};
+        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 参数：${JSON.stringify(readRequest)}\n若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n先核对当前状态；known_feedback 仅表示本附件已经完整提供的原文、候选与批注，工具核对未变时不重复发送，变化时以新版为准。有同版本 rules_receipt 时作为 known_rules 传回。不修改全局 SKILL。此文件是请求快照，不是状态表。\n保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；成功返修默认替换旧批注，无需先逐条拒绝，失败保留原状。旧附件过期不要求恢复旧批注。多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${notes.join('\n\n')}\n`, 'utf8');
         await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
         vscode.window.showInformationMessage((target ? '本项待处理批注' : '全部批注') + '已作为上下文加入 Codex 输入区，请检查后自行发送。');
     }

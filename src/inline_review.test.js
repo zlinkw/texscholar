@@ -70,7 +70,8 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
             {id: '1', file: edit.file, version: 'v1', current_version: 'v1', original: data.original, candidate: data.candidate, options: data.options, requests: edit.requests},
             {id: '1', file: edit.file, version: 'v1', current_version: 'v1', original: data.original, candidate: data.options[1].after, options: data.options,
                 requests: [{option: 'B', side: 'candidate', quote: 'Clearer', text: '同一版本另一个方案的要求'}]},
-            {id: 'other', file: edit.file, version: 'v9', current_version: 'v9', original: 'Other original', candidate: 'Other candidate', requests: [{text: 'other item'}]}]});
+            {id: 'other', file: edit.file, version: 'v9', current_version: 'v9', original: 'Other original', candidate: 'Other candidate', requests: [{text: 'other item'}]}],
+            known_feedback: [{id: '1', version: 'v1', fingerprint: 'first-receipt'}, {id: 'other', version: 'v9', fingerprint: 'other-receipt'}]});
         if (args.includes('decide')) {edit.status = args.includes('--accept') ? 'accepted' : 'rejected';
             if (edit.status === 'accepted') value = value.replace(data.original, data.options.find(o => o.label === args.at(-1)).after);
             return '{}';}
@@ -122,6 +123,9 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     const scoped = fs.readFileSync(f.calls.findLast(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
     assert(scoped.includes('请更准确。') && scoped.includes('同一版本另一个方案的要求'));
     assert(!scoped.includes('other item'), 'combined action must not export another item');
+    assert(scoped.includes('"known_feedback":[{"id":"1","version":"v1","fingerprint":"first-receipt"}]'));
+    assert(!scoped.includes('other-receipt'), 'reuse receipts must not claim unseen attachment content');
+    assert(scoped.includes('成功返修默认替换旧批注'));
     const sent = f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length;
     await assert.rejects(f.ui.addRequests({...c, version: 'outdated'}), /候选已更新/);
     assert.equal(f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length, sent);

@@ -15,6 +15,189 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_explicit_reference_lookup_preserves_exact_source_and_reports_ambiguity(self):
+        tex = ('% \\label{ignored}\r\n\\begin{verbatim}\r\n\\label{ignored}\r\n\\end{verbatim}\r\n'
+               '\\newcommand{\\methodname}[1]["a]{Model {#1}}\r\n'
+               '\\NewDocumentCommand{\\pair}{m O{Y}}{#1 and #2}\r\n'
+               '\\def\\score#1{f({#1})}\r\n'
+               '\\begin{equation}\r\nx=1.5 \\label{eq:test}\r\n\\end{equation}\r\n'
+               '\\renewcommand{\\methodname}{Updated}\r\n')
+        bib = ('% @article{ignored,title={Comment}}\n'
+               '@article{ref1, title={Nested {MRI} and 100% precision}, url={https://example.org/a%20b}, year={2026}}\n'
+               '@book(ref2, title="A (parenthesized) title", year={2025})\n')
+        (self.root / 'definitions.sty').write_bytes(tex.encode('utf-8'))
+        (self.root / 'refs.bib').write_bytes(bib.encode('utf-8'))
+        requests = [{'kind': 'label', 'key': 'eq:test', 'files': ['definitions.sty']},
+            {'kind': 'macro', 'key': r'\methodname', 'files': ['definitions.sty']},
+            {'kind': 'macro', 'key': r'\pair', 'files': ['definitions.sty']},
+            {'kind': 'macro', 'key': r'\score', 'files': ['definitions.sty']},
+            {'kind': 'citation', 'key': 'ref1', 'files': ['refs.bib']},
+            {'kind': 'citation', 'key': 'ref2', 'files': ['refs.bib']},
+            {'kind': 'label', 'key': 'ignored', 'files': ['definitions.sty']},
+            {'kind': 'citation', 'key': 'ignored', 'files': ['refs.bib']}]
+        server = self.server()
+        raw = self.review().raw
+        result = server.call('read_context', {'project': str(self.root), 'ids': [], 'references': requests})
+        rows = result['references']
+        self.assertEqual([r['status'] for r in rows], ['found', 'ambiguous', 'found', 'found', 'found', 'found', 'missing', 'missing'])
+        for row in rows:
+            for match in row['matches']:
+                text = tex if match['file'].endswith('.sty') else bib
+                self.assertEqual(match['text'], text[match['start']:match['end']])
+        self.assertIn('Model {#1}', rows[1]['matches'][0]['text'])
+        self.assertIn(r'{m O{Y}}{#1 and #2}', rows[2]['matches'][0]['text'])
+        self.assertIn('a%20b', rows[4]['matches'][0]['text'])
+        self.assertIn('(parenthesized)', rows[5]['matches'][0]['text'])
+        self.assertEqual(self.review().raw, raw)
+        for spec in [{'kind': 'citation', 'key': 'x', 'files': ['../escape.bib']},
+                     {'kind': 'macro', 'key': 'not-a-command', 'files': ['definitions.sty']},
+                     {'kind': 'label', 'key': 'x', 'files': ['refs.bib']},
+                     {'kind': 'citation', 'key': 'x', 'files': ['.codex-review/object.bib']}]:
+            with self.assertRaises(ValueError):
+                server.call('read_context', {'project': str(self.root), 'ids': [], 'references': [spec]})
+        from reference_context import read_references
+        read_bytes = Path.read_bytes
+        changed = False
+        def concurrent(path):
+            nonlocal changed
+            data = read_bytes(path)
+            if path == self.root / 'refs.bib' and not changed:
+                changed = True
+                path.write_bytes(data + b'\n% external change')
+            return data
+        with patch.object(Path, 'read_bytes', concurrent), self.assertRaisesRegex(ValueError, 'changed during reading'):
+            read_references(self.root, [requests[4]])
+
+    def test_feedback_receipts_reuse_only_unchanged_attachment_fields(self):
+        options = [{'label': k, 'after': 'Candidate ' + k + '.', 'reason': k} for k in 'ABC']
+        id_ = self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'The model is strong and fast.', 'options': options})['id']
+        version = self.review().state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id': id_, 'version': version, 'side': 'candidate', 'option': 'A',
+            'start': 0, 'end': 9, 'quote': 'Candidate', 'text': '作者当前要求'})
+        attachment = self.review().feedback_context()
+        receipts = attachment['known_feedback']
+        self.assertEqual(len(receipts), 1)
+        server = self.server()
+        args = {'project': str(self.root), 'state': 'reply.tex', 'ids': [id_], 'known_feedback': receipts}
+        before = self.review().raw
+        data = server.call('read_context', args)['context']
+        self.assertTrue(data['items'][id_]['feedback_reused'])
+        self.assertTrue(data['items'][id_]['source_match'])
+        for field in ('original', 'options', 'requests'):
+            self.assertNotIn(field, data['items'][id_])
+        self.assertTrue(data['sources']['main.tex'])
+        self.assertEqual(self.review().raw, before)
+        self.apply('feedback', {'id': id_, 'version': version, 'side': 'original', 'start': 0, 'end': 0, 'quote': '', 'text': '新增要求'})
+        changed = server.call('read_context', args)['context']['items'][id_]
+        self.assertNotIn('feedback_reused', changed)
+        self.assertEqual(len(changed['requests']), 2)
+        self.assertEqual(changed['options'], options)
+        current = self.review().feedback_context()['known_feedback']
+        main = self.root / 'main.tex'
+        main.write_bytes(main.read_bytes().replace(b'The model is strong and fast.', b'Manually changed sentence.'))
+        changed = server.call('read_context', {**args, 'known_feedback': current})['context']['items'][id_]
+        self.assertFalse(changed['source_match'], 'reusing an attachment cannot hide real source changes')
+        with self.assertRaises(ValueError): server.call('read_context', {**args, 'known_feedback': ['bad']})
+
+    def test_rework_defaults_to_disposable_notes_only_after_success(self):
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        options = [{'label': k, 'after': 'Candidate ' + k + '.', 'reason': k} for k in 'ABC']
+        id_ = self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'The model is strong and fast.', 'options': options})['id']
+        version = self.review().state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id': id_, 'version': version, 'side': 'original', 'start': 0, 'end': 0, 'quote': '', 'text': '重写即可'})
+        before, source = self.review().raw, (self.root / 'main.tex').read_bytes()
+        args = {**base, 'id': id_, 'version': version, 'expected_sha256': digest(before), 'spec': {'options': options}}
+        with self.assertRaisesRegex(ValueError, 'No content change'): server.call('rework_options', args)
+        self.assertEqual(self.review().raw, before)
+        args['spec']['options'] = [{**o, 'after': o['after'].replace('.', ' revised.')} for o in options]
+        saved = server.call('rework_options', args)
+        edit = self.review().state['edits'][id_]
+        self.assertEqual(edit.get('requests', []), [])
+        self.assertEqual(self.review().inspect(id_)['original'], 'The model is strong and fast.')
+        self.assertEqual((self.root / 'main.tex').read_bytes(), source)
+        self.apply('feedback', {'id': id_, 'version': saved['version'], 'side': 'original', 'start': 0, 'end': 0, 'quote': '', 'text': '显式保留'})
+        saved = server.call('rework_options', {**args, 'version': saved['version'], 'expected_sha256': digest(self.review().raw),
+            'spec': {'options': options, 'discard_annotations': False}})
+        self.assertEqual(self.review().state['edits'][id_]['requests'][0]['text'], '显式保留')
+        self.apply('decide', [id_], [], {id_: saved['version']}, 'A')
+        accepted = (self.root / 'main.tex').read_bytes()
+        with self.assertRaisesRegex(ValueError, 'Only unresolved'):
+            server.call('rework_options', {**args, 'version': saved['version'], 'expected_sha256': digest(self.review().raw)})
+        self.assertEqual((self.root / 'main.tex').read_bytes(), accepted)
+
+    def test_default_context_is_local_and_confirmed_roles_are_compact(self):
+        main = self.root / 'main.tex'
+        main.write_bytes(main.read_bytes().replace(b'\\end{document}', b'\n\nDistant paragraph.\n\nFar away context.\n\\end{document}'))
+        options = [{'label': k, 'after': 'Candidate ' + k + '.', 'reason': k} for k in 'ABC']
+        self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': options})
+        server = self.server()
+        data = server.call('read_context', {'project': str(self.root)})
+        self.assertEqual(data['file_roles']['status'], 'confirmed')
+        self.assertNotIn('structure', data['file_roles'])
+        self.assertNotIn('suggested', data['file_roles'])
+        self.assertNotIn('Far away context.', str(data['context']['sources']))
+        full = server.call('read_context', {'project': str(self.root), 'files': ['main.tex']})
+        self.assertIn('Far away context.', str(full['context']['sources']))
+        core = server.call('get_instructions', {})
+        self.assertNotIn('## 界面与交付细节', core['protocol'])
+        self.assertNotIn('structure 保存', core['protocol'])
+        details = server.call('get_instructions', {'modules': ['roles', 'interface', 'backup'], 'known_rules': core['rules_receipt']})
+        self.assertIn('## 界面与交付细节', details['protocol'])
+        self.assertIn('structure 保存', details['protocol'])
+        self.assertIn('## 每批成果', details['protocol'])
+
+    def test_shared_question_pool_and_batched_metadata_keep_other_fields(self):
+        import copy
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        options = [{'label': k, 'after': 'Candidate ' + k + '.', 'reason': k} for k in 'ABC']
+        question = {'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you.'}
+        created = server.call('submit_options', {**base, 'expected_sha256': digest(self.review().raw), 'question_pool': {'q': question},
+            'operations': [{'operation': 'propose_options', 'spec': {'file': 'main.tex', 'kind': 'manuscript', 'before': original,
+                'options': options, 'question_refs': ['q']}} for original in ['Unchanged context before.', 'The model is strong and fast.']]})
+        self.assertTrue(created['complete'])
+        old = copy.deepcopy(self.review().state)
+        replacement = {**question, 'id': 'R2-Q1'}
+        operations = [{'operation': 'link_questions', 'id': r['id'], 'version': r['version'], 'question_refs': ['r'], 'replace': True} for r in created['results']]
+        saved = server.call('submit_options', {**base, 'expected_sha256': created['sha256'], 'question_pool': {'r': replacement}, 'operations': operations})
+        self.assertTrue(saved['complete'])
+        for id_, edit in self.review().state['edits'].items():
+            self.assertEqual(edit['questions'], [replacement])
+            self.assertEqual({k: v for k, v in edit.items() if k != 'questions'}, {k: v for k, v in old['edits'][id_].items() if k != 'questions'})
+        failed = server.call('submit_options', {**base, 'expected_sha256': saved['sha256'], 'question_pool': {'r': question},
+            'operations': [operations[0], {**operations[1], 'question_refs': ['missing']}, operations[1]]})
+        self.assertFalse(failed['complete'])
+        self.assertEqual(failed['failed_index'], 1)
+        self.assertEqual(failed['not_attempted_indices'], [2])
+        self.assertEqual(failed['error']['field'], 'question_refs')
+        self.assertEqual(failed['error']['recovery']['action'], 'correct_request')
+        self.assertEqual(self.review().state['edits']['1']['questions'], [question])
+        raw = self.review().raw
+        args = {**base, 'expected_sha256': digest(raw), **operations[1], 'question_pool': {'r': {**question, 'quote': 'Absent quote'}}}
+        error = server.message({'id': 1, 'method': 'tools/call', 'params': {'name': 'link_questions', 'arguments': args}})['result']['structuredContent']
+        self.assertEqual(error['code'], 'question_quote_invalid')
+        self.assertEqual(error['recovery']['files'], ['reply.tex'])
+        self.assertEqual(self.review().raw, raw)
+
+    def test_field_errors_identify_option_without_requiring_context_reread(self):
+        server = self.server()
+        options = [{'label': k, 'after': 'Candidate ' + k + '.', 'reason': k} for k in 'ABC']
+        options[1]['reason'] = ''
+        args = {'project': str(self.root), 'state': 'reply.tex', 'expected_sha256': digest(self.review().raw),
+            'spec': {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': options}}
+        raw = self.review().raw
+        error = server.message({'id': 1, 'method': 'tools/call', 'params': {'name': 'propose_options', 'arguments': args}})['result']['structuredContent']
+        self.assertEqual(error['field'], 'spec.options[1].reason')
+        self.assertFalse(error['recovery']['reread_required'])
+        self.assertEqual(self.review().raw, raw)
+        options[1].update(reason='Different mechanism', after='First paragraph.\n\nSecond paragraph.')
+        error = server.message({'id': 2, 'method': 'tools/call', 'params': {'name': 'propose_options', 'arguments': args}})['result']['structuredContent']
+        self.assertEqual(error['field'], 'spec.options[1].after')
+        self.assertEqual(self.review().raw, raw)
+
     def test_exact_scopes_reveal_overlap_and_return_actionable_conflict(self):
         options = [{'label': k, 'after': 'Alternative ' + k + '.', 'reason': '取舍 ' + k} for k in 'ABC']
         id_ = self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript',
