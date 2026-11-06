@@ -44,6 +44,8 @@ MCP read_context 返回同一 file_roles；AI 写候选前在共享锁内重新�
 
 0.9.8 自动配置状态使用只读 MCP --check 和工具发现，不再相信人工完成标记。启动、TeX 创建、工作区／设置／扩展及窗口聚焦事件触发复查；队列串行，不轮询，相同缺项去重。审核页配置按钮通过订阅局部更新，不重建页面或编译 PDF。“已配置”仅为可检测核心前提，不声称当前模型会话已加载、GitHub 登录或论文编译已通过。规定检查为 editor 组、MCP 配置定向及 Windows 隔离界面；实际 editor 77 项和 MCP 配置定向测试通过。首次定向检查发现缺失工具路径未过滤，修复后通过。Windows 隔离界面验证缺项到已配置、关闭 MCP 后回到待完善、恢复后再次已配置，读取配置未改文件。原复用界面驱动通过上述新功能后在后续批注等待阶段未结束，停止该精确测试进程，保留失败退出码；不将该整套驱动记为通过，既有批注由本轮 editor 覆盖。补查脚本首次缺少 assert 导入，补齐后实际通过。Mac 未实机验证。不涉及真实论文、Typst、全局 SKILL 或 PDF／Git 算法。
 
+0.9.9 仅将“全部批注加入 Codex”从更多菜单移到顶部，复用同一 handoff 操作，不改变批注收集、输入区交接或发送边界。规定检查为 review_workbench 与 inline_review 定向回归；布局和 handler 验证复用现有套件，不增加全量组或独立包后检查。实际 12 项定向检查通过，验证顶部唯一按钮与同一批注交接 handler；没有单独原生 UI 复验，Mac 未实机验证。首次项目 AI 引导仅讨论，未在此版本改动。
+
 ## 开发依赖
 
 Node.js 22 或更新版本、Python 3.12 或更新的 Python 3、Git、tex-fmt、TeX Live/TinyTeX/MacTeX。Python PDF 测试另需 `pypdf`，不是插件后端的运行依赖。ChkTeX 测试需要实际安装的 LaTeX Workshop 的 `out/src/lint/latex-code-actions.js`，通过环境变量指定，不依赖个人扩展目录或固定版本。

@@ -21,7 +21,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
         save: async (c, label, after) => {const r = records.get(c.id); r.data.options.find(o => o.label === label).after = after;
             r.c.version = r.data.version = 'v2'; r.data.edit.versions.push('v2'); view.sync(records, c); return structuredClone(r.data);},
         saved() {}, accept: async c => {events.push({type: 'accept', c}); records.delete(c.id); view.sync(records, c);},
-        reopen: async () => events.push({type: 'reopen'}), start: async () => events.push({type: 'start'}), copy: async () => events.push({type: 'copy'}), handoff() {}, finish() {}};
+        reopen: async () => events.push({type: 'reopen'}), start: async () => events.push({type: 'start'}), copy: async () => events.push({type: 'copy'}), handoff: async () => events.push({type: 'handoff'}), finish() {}};
     const view = createWorkbench(vscode, {subscriptions: []}, services);
     view.setRecords(records); await view.show(records.get('1').c); await receive({type: 'ready'});
     const count = messages.length;
@@ -32,6 +32,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     await send('reopen');
     assert.equal(events.pop().type, 'reopen', 'top button opens an existing PDF without invoking compile/preview');
     await send('start'); assert.equal(events.pop().type, 'start');
+    await send('handoff'); assert.equal(events.pop().type, 'handoff');
     assert(html('test').includes('data-action="reopen">打开 PDF 窗口'));
     await send('note', {option: 'B', side: 'candidate', value: 'The model is compact.', start: 13, end: 20, text: '限定这个词'});
     assert.deepEqual(events[0].selection, {side: 'candidate', option: 'B', start: 13, end: 20, quote: 'compact'});
@@ -59,5 +60,8 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert(!page.includes('id="originalSource"'), 'full source is available through the mode button, not a second source block');
     assert(page.includes('data-action="start">AI 论文助手'));
     assert(page.includes('id="configuration"'));
+    const header = page.slice(page.indexOf('<header>'), page.indexOf('</header>'));
+    assert(header.split('<details class="more">')[0].includes('data-action="handoff"'));
+    assert(!header.split('<details class="more">')[1].includes('data-action="handoff"'));
     assert(!page.includes('data-action="connect"')); assert(!page.includes('data-action="copy"'));
 });
