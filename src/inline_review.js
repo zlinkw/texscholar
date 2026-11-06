@@ -707,8 +707,7 @@ function createInlineReview(vscode, context, execute = run) {
         await fs.mkdir(parent, {recursive: true});
         const folder = await fs.mkdtemp(path.join(parent, 'batch-'));
         const file = path.join(folder, '返修批注.txt');
-        const contract = await fs.readFile(path.join(__dirname, 'collaboration-guide.md'), 'utf8');
-        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 传 expected_plugin_version 为上方版本；若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n${contract}\n\n请读取 ${c.owner} 中最新的唯一审核状态，再处理以下批注。此文件是请求快照，不是状态表。\n保留原文与编号，使用 MCP rework_options 一次提交排序后的 A/B/C；接收后才替换正文，不自动接收。\n\n${notes.join('\n\n')}\n`, 'utf8');
+        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 传 expected_plugin_version 为上方版本；若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n请使用 read_context，state=${JSON.stringify(c.owner)}，ids=${JSON.stringify([...new Set(items.map(item => item.id))])}，读取最新上下文和插件规则；有同版本 rules_receipt 时作为 known_rules 传回。不修改全局 SKILL。此文件是请求快照，不是状态表。\n保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${notes.join('\n\n')}\n`, 'utf8');
         await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
         vscode.window.showInformationMessage((target ? '本项待处理批注' : '全部批注') + '已作为上下文加入 Codex 输入区，请检查后自行发送。');
     }

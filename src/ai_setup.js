@@ -100,38 +100,39 @@ let current = {ready: false, issues: ['正在检查配置']};
 function subscribe(listener) {listeners.add(listener); return {dispose: () => listeners.delete(listener)};}
 function status() {return current;}
 async function inspectConfiguration(context, vscode) {
-    const issues = [], tools = require('./tools');
+    const writingIssues = [], compileIssues = [], tools = require('./tools');
     const cfg = vscode.workspace.getConfiguration('localLatex');
     const found = tools.discover(key => cfg.get(key)).found;
     for (const [key, label] of [['pythonPath','Python 3.12+'],['latexmkPath','latexmk'],['latexdiffPath','latexdiff'],['synctexPath','SyncTeX']])
-        if (!found[key]) issues.push('未找到 ' + label);
+        if (!found[key]) (key === 'pythonPath' ? writingIssues : compileIssues).push('未找到 ' + label);
     const dirs = [...new Set([...Object.values(found).filter(Boolean).map(file => path.dirname(file)), ...tools.searchDirectories()])];
-    for (const name of ['pdflatex', 'bibtex']) if (!tools.findExecutable([name], dirs)) issues.push('未找到 ' + name);
-    if (!vscode.extensions.getExtension('james-yu.latex-workshop')) issues.push('未安装 LaTeX Workshop');
-    if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread')) issues.push('Codex 输入区接口不可用');
+    for (const name of ['pdflatex', 'bibtex']) if (!tools.findExecutable([name], dirs)) compileIssues.push('未找到 ' + name);
+    if (!vscode.extensions.getExtension('james-yu.latex-workshop')) compileIssues.push('未安装 LaTeX Workshop');
+    if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread')) writingIssues.push('Codex 输入区接口不可用');
     if (found.pythonPath) {
         try {
             const version = await tools.version(found.pythonPath);
             const match = /Python (\d+)\.(\d+)/.exec(version);
-            if (!match || +match[1] !== 3 || +match[2] < 12) issues.push('Python 版本需要 3.12+');
+            if (!match || +match[1] !== 3 || +match[2] < 12) writingIssues.push('Python 版本需要 3.12+');
             else {
                 const home = process.env.CODEX_HOME || path.join(require('node:os').homedir(), '.codex');
                 const launcher = path.join(context.globalStorageUri.fsPath, 'texscholar-mcp.py');
                 const result = JSON.parse(await require('./backup').run(found.pythonPath, ['-X','utf8',path.join(__dirname,'mcp_config.py'),'--home',home,'--launcher',launcher,'--python',found.pythonPath,'--check'], context.globalStorageUri.fsPath));
-                if (!result.connected) issues.push(result.reason);
+                if (!result.connected) writingIssues.push(result.reason);
                 const id = context.workspaceState.get('mcpWorkspaceId');
-                if (!id) issues.push('当前项目尚未登记 MCP');
+                if (!id) writingIssues.push('当前项目尚未登记 MCP');
                 else {
                     const registration = JSON.parse(await fs.readFile(path.join(context.globalStorageUri.fsPath,'mcp-workspaces',id+'.json'),'utf8'));
                     const roots = [];
                     for (const folder of vscode.workspace.workspaceFolders || []) if (folder.uri.scheme === 'file' && (await vscode.workspace.findFiles(new vscode.RelativePattern(folder, '**/*.tex'), EXCLUDE, 1)).length) roots.push(folder.uri.fsPath);
-                    if (!roots.every(root => registration.roots.some(saved => tools.samePath(saved, root)))) issues.push('MCP 项目登记未更新');
+                    if (!roots.every(root => registration.roots.some(saved => tools.samePath(saved, root)))) writingIssues.push('MCP 项目登记未更新');
                     await fs.access(launcher);
                 }
             }
-        } catch (error) {issues.push('MCP／Python 检查失败：' + error.message);}
+        } catch (error) {writingIssues.push('MCP／Python 检查失败：' + error.message);}
     }
-    return {ready: !issues.length, issues};
+    const issues = [...writingIssues, ...compileIssues];
+    return {ready: !issues.length, issues, writingReady: !writingIssues.length, writingIssues, compileIssues};
 }
 function activate(context, vscode) {
     let chain = Promise.resolve(), previous;
@@ -144,10 +145,10 @@ function activate(context, vscode) {
             const signature = JSON.stringify(result);
             if (explicit || !result.ready && signature !== previous) {
                 const message = result.ready ? '已配置：本地编译工具、Workshop、Codex 接口和 MCP 文件配置检查通过。尚未验证当前 AI 会话已加载 MCP、GitHub 登录或实际论文编译。'
-                    : '配置不完整：' + result.issues.join('；');
+                    : (result.writingReady ? '写作连接配置已就绪；编译配置不完整（不阻塞候选撰写）：' : '配置不完整：') + result.issues.join('；');
                 // Activation never waits for a notification decision.
                 vscode.window.showInformationMessage(message, ...(result.ready ? [] : ['补齐配置'])).then(choice => {
-                    if (choice === '补齐配置') return vscode.commands.executeCommand('localLatex.startPaperTask');
+                    if (choice === '补齐配置') return vscode.commands.executeCommand('localLatex.startPaperTask', {setup: true});
                 }).catch(error => vscode.window.showErrorMessage(error.message));
             }
             previous = signature; return result;

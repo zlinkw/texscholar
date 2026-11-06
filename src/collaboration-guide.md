@@ -4,10 +4,10 @@
 
 ## 日常修改的最短完整流程
 
-1. 一次 read_context 获取当前正文、文件角色、版本、作者规则和候选。任务／返修附件有“插件版本”时，将其作为 expected_plugin_version 传入。版本不匹配、旧服务不支持该参数或缺少 plugin_version 时，只报告需重启 Codex 的 TeXScholar MCP，再继续原会话；不要边读旧 MCP 边调用新 CLI，也不要为字段差异重新保存同一候选。
-2. 只读取本次目标及相关依据。当前 context.cards 已有原文、A/B/C、questions、requests 时直接使用；只有缺少批注所绑定的历史版本或准确选区上下文时才调用 read_feedback。已有完整摘录不重复在全盘搜索，同任务已读且未变化的技能不反复加载。日常改稿不附带安装检查、环境迁移或全仓审计。
+1. 一次 read_context 获取文件角色、版本、作者规则和本次上下文。已有编号传 ids；新写位置传 files，读取明确文件的全文；不传两者才读取整批。context.targets 是本次目标，items 也可能含相关依赖，不能因此扩大修改范围。sources 提供真实源码片段，author_comments 保留作者注释；需要跨章节核对时补读所需 files，不把局部材料当全文。任务／返修附件有“插件版本”时，将其作为 expected_plugin_version 传入。版本不匹配、旧服务不支持该参数或缺少 plugin_version 时，只报告需重启 Codex 的 TeXScholar MCP，再继续原会话；不要混用 CLI。
+2. 默认 core 协议包含三方案、科学证据和审核边界。按任务在 modules 追加 writing（新稿／注释结构）、abstract、introduction、method、experiments、figures、response、questions 或 backup；将实际获得的 rules_receipt 原样作为后续 known_rules，工具只补发缺少或新版规则。新会话或上下文丢失不能沿用“已读”回执。context.items 已有 original、options、questions、requests 时直接使用；只有缺少批注绑定的旧版本才用 read_feedback(ids) 补读。每组 ID/version 的全部方案仅出现一次，每条 requests 保留 option 和精确选区。已有材料不重复全盘搜索，日常改稿不附带安装检查、环境迁移或全仓审计。
 3. 确定最小充分修改，直接组织 A/B/C；intent、summary、reason 是本次候选内的简短说明，不是额外的计划审批环节。作者明确要求先确认方案时仍先确认。
-4. 用 MCP propose_options 或 rework_options 直接提交，apply 默认 true。接口在同一调用内完成校验和持久化，通常不需要先 apply=false 再重复提交。多个位置按共享状态顺序保存，将上一条成功结果的 sha256 用作下一条 expected_sha256；需要再次修改同项时用返回的 version。不要并行写入同一状态。
+4. 单项用 MCP propose_options 或 rework_options 直接提交，apply 默认 true，不必先预览再重复提交。多项用 submit_options，传 project、state、expected_sha256 和 operations；每项包含 operation（propose_options 或 rework_options）、spec，返修还需 id/version。工具顺序使用成功回执的 sha256，每项仍独立核验和持久化，遇错停止后续项。results 中已成功项不会回滚，不能重放；failed_index 是从 0 开始的失败位置，not_attempted_indices 是未尝试位置。按 error.recovery 处理后只续写失败／未尝试项。单项连续写同样使用上一条成功结果的 sha256，不逐项重读全篇或另写核验脚本，也不要并行写同一状态。
 5. 成功回执已给出实际编号、版本及状态摘要，正常保存后直接简报，不逐项重读全文、重算哈希或另写核验脚本。仅在冲突、新作者操作、内容变化、返回错误或缺失必要信息时重新读取受影响内容；不盲目重试写入。科学事实、实际数值、作者明确要求的检查仍需完成，不能用工具成功代替科学核验。
 
 版本、原文定位、重叠、问题摘录、写入锁和并发保护由工具承担；AI 不重复实现这些内部校验，不直接操作 DATA／对象。不为普通候选保存编译论文或提交 Git。这里减少的是重复流程，不削弱作者接收和科研证据要求。

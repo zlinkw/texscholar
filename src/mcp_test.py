@@ -101,7 +101,7 @@ class MCP(unittest.TestCase):
         self.assertIn('State changed', stale['result']['content'][0]['text'])
         self.apply('feedback', {'id': '1', 'version': data['version'], 'side': 'candidate', 'option': 'B', 'start': 13, 'end': 20, 'quote': 'compact', 'text': '改得更明确。'})
         notes = server.call('read_feedback', {'project': str(self.root), 'state': 'reply.tex'})['items']
-        self.assertEqual(notes[0]['option'], 'B')
+        self.assertEqual(notes[0]['requests'][0]['option'], 'B')
         args.update(id='1', version=data['version'], expected_sha256=digest(self.review().raw))
         args['spec']['options'][1]['after'] = 'The model is compact in this setting.'
         args['spec']['discard_annotations'] = True
@@ -173,3 +173,198 @@ class MCP(unittest.TestCase):
             server.call('propose_options', args)
         self.assertEqual((self.root / 'main.tex').read_bytes(), original)
         self.assertEqual(self.review().raw, state)
+
+    def test_scoped_ai_context_preserves_rules_sources_dependencies_and_notes_without_ui_data(self):
+        main = self.root / 'main.tex'
+        main.write_text(main.read_text(encoding='utf-8').replace('Unchanged context before.',
+            '% CODEX-RULES: 保留实验数值\nUnchanged context before.').replace('The model is strong',
+            '% CODEX-PARAGRAPH-PLAN: 解释边界\nThe model is strong'), encoding='utf-8')
+        options = [{'label': label, 'after': 'The model is ' + word + '.', 'reason': word}
+                   for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]
+        first = self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'The model is strong and fast.', 'options': options, 'questions': [
+                {'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you.'}]})['id']
+        second = self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'Unchanged context after.', 'options': options})['id']
+        reply = self.apply('propose_options', {'file': 'reply.tex', 'kind': 'response',
+            'before': 'Thank you.', 'options': options, 'deps': [first]})['id']
+        version = self.review().state['edits'][first]['versions'][-1]
+        self.apply('feedback', {'id': first, 'version': version, 'side': 'candidate', 'option': 'B',
+            'start': 0, 'end': 0, 'quote': '', 'text': '保留这个限定。'})
+        before = {f: (self.root / f).read_bytes() for f in ['main.tex', 'reply.tex']}
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        with patch('source_review.word_changes', side_effect=AssertionError('No UI diff in AI reads')), patch('source_review.change_scope', side_effect=AssertionError('No UI counts')):
+            context = server.call('read_context', {**base, 'ids': [first]})['context']
+            self.assertEqual(context['targets'], [first])
+            self.assertEqual(set(context['items']), {first, reply})
+            self.assertNotIn(second, context['items'])
+            item = context['items'][first]
+            self.assertEqual(item['options'], options)
+            self.assertEqual(item['requests'][0]['text'], '保留这个限定。')
+            self.assertEqual(item['questions'][0]['quote'], 'Thank you.')
+            self.assertNotIn('versions', item)
+            self.assertNotIn('cards', context)
+            self.assertIn('保留实验数值', '\n'.join(context['author_comments']['main.tex']))
+            self.assertIn('解释边界', '\n'.join(context['author_comments']['main.tex']))
+            for file, spans in context['sources'].items():
+                text = self.review().read(file)
+                for span in spans:
+                    self.assertEqual(span['text'], text[span['start']:span['end']])
+            self.assertNotIn('CODEX-REVIEW-DATA', json.dumps(context))
+            full = server.call('read_context', {**base, 'files': ['main.tex']})['context']
+            self.assertEqual(full['sources']['main.tex'][0]['text'], self.review().read('main.tex'))
+        self.assertEqual(before, {f: (self.root / f).read_bytes() for f in before})
+        with self.assertRaisesRegex(ValueError, 'Unknown review ID'):
+            server.call('read_context', {**base, 'ids': ['missing']})
+        with self.assertRaisesRegex(ValueError, 'arrays'):
+            server.call('read_context', {**base, 'ids': first})
+        with self.assertRaises(ValueError):
+            server.call('read_context', {**base, 'files': ['../escape.tex']})
+
+    def test_rules_are_loaded_by_module_and_acknowledgement_not_server_session(self):
+        server = self.server()
+        first = server.call('get_instructions', {})
+        self.assertIn('三方案', first['protocol'])
+        self.assertNotIn('## Experiments', first['protocol'])
+        expanded = server.call('get_instructions', {'modules': ['experiments'], 'known_rules': first['rules_receipt']})
+        self.assertIn('## Experiments', expanded['protocol'])
+        self.assertNotIn('## 候选生成', expanded['protocol'])
+        self.assertEqual(server.call('get_instructions', {'modules': ['experiments'], 'known_rules': expanded['rules_receipt']})['protocol'], '')
+        upgraded = server.call('get_instructions', {'modules': ['response'], 'known_rules': {'version': 'old', 'modules': ['core', 'response']}})
+        self.assertIn('## 回复信', upgraded['protocol'])
+        self.assertIn('## 候选生成', upgraded['protocol'])
+        fresh = server.call('get_instructions', {})
+        self.assertEqual(fresh, first, 'another caller never inherits a hidden already-read flag')
+        writing = server.call('get_instructions', {'modules': ['writing', 'questions']})
+        self.assertIn('CODEX-PARAGRAPH-PLAN', writing['protocol'])
+        self.assertNotIn('先读取工具帮助', writing['protocol'])
+
+    def test_scoped_context_keeps_crlf_boundaries_and_detects_source_changes_during_read(self):
+        main = self.root / 'main.tex'
+        text = main.read_text(encoding='utf-8').replace('The model is strong and fast.',
+            'Extra earlier paragraph.\n\nThe model is strong and fast.\n\nExtra later paragraph.')
+        main.write_bytes(text.replace('\n', '\r\n').encode('utf-8'))
+        id_ = self.propose_fixture()
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex', 'ids': [id_]}
+        data = server.call('read_context', base)['context']
+        span = data['sources']['main.tex'][0]
+        self.assertEqual(span['text'], 'Extra earlier paragraph.\r\n\r\nThe model is strong and fast.\r\n\r\nExtra later paragraph.')
+        read = __import__('source_review').Review.read
+        changed = False
+        def race(review, file):
+            nonlocal changed
+            value = read(review, file)
+            if file == 'main.tex' and not changed:
+                changed = True
+                main.write_bytes(main.read_bytes() + b'% concurrent author note\r\n')
+            return value
+        with patch('mcp_server.Review.read', race):
+            failure = server.message({'id': 1, 'method': 'tools/call', 'params': {'name': 'read_context', 'arguments': base}})['result']
+        self.assertTrue(failure['isError'])
+        self.assertEqual(failure['structuredContent']['code'], 'context_changed')
+
+    def propose_fixture(self):
+        return self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.',
+            'options': [{'label': label, 'after': 'The model is ' + word + '.', 'reason': word}
+                        for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]})['id']
+
+    def test_question_failure_has_specific_recovery_and_never_changes_state(self):
+        id_ = self.propose_fixture()
+        server = self.server()
+        raw = self.review().raw
+        args = {'project': str(self.root), 'state': 'reply.tex', 'id': id_,
+                'version': self.review().state['edits'][id_]['versions'][-1], 'expected_sha256': digest(raw),
+                'questions': [{'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Not a real quote.'}]}
+        result = server.message({'id': 1, 'method': 'tools/call', 'params': {'name': 'link_questions', 'arguments': args}})['result']
+        self.assertTrue(result['isError'])
+        self.assertEqual(result['structuredContent']['code'], 'question_quote_invalid')
+        self.assertEqual(result['structuredContent']['recovery']['files'], ['reply.tex'])
+        self.assertEqual(self.review().raw, raw)
+
+    def test_feedback_groups_option_notes_once_per_generation_and_scopes_ids(self):
+        options = [{'label': label, 'after': 'The model is ' + word + '.', 'reason': word}
+                   for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]
+        id_ = self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'The model is strong and fast.', 'options': options})['id']
+        version = self.review().state['edits'][id_]['versions'][-1]
+        for option in 'AB':
+            self.apply('feedback', {'id': id_, 'version': version, 'side': 'candidate', 'option': option,
+                'start': 0, 'end': 3, 'quote': 'The', 'text': '要求 ' + option})
+        self.apply('propose_options', {'options': [{**o, 'after': o['after'].replace('.', ' here.')} for o in options]}, id_, version)
+        new_version = self.review().state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id': id_, 'version': new_version, 'side': 'candidate', 'option': 'C',
+            'start': 0, 'end': 3, 'quote': 'The', 'text': '新要求'})
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        groups = server.call('read_feedback', {**base, 'ids': [id_]})['items']
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0]['options'], options)
+        self.assertEqual([n['option'] for n in groups[0]['requests']], ['A', 'B'])
+        self.assertEqual(groups[0]['current_version'], new_version)
+        self.assertEqual(groups[1]['requests'][0]['quote'], 'The')
+        self.assertEqual(server.call('read_feedback', {**base, 'ids': []})['items'], [])
+
+    def test_batch_saves_ordered_successes_stops_on_failure_and_resumes_remaining_only(self):
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        options = [{'label': label, 'after': 'The model is ' + word + '.', 'reason': word}
+                   for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]
+        def operation(before):
+            return {'operation': 'propose_options', 'spec': {'file': 'main.tex', 'kind': 'manuscript', 'before': before, 'options': options}}
+        source = (self.root / 'main.tex').read_bytes()
+        operations = [operation('Unchanged context before.'), operation('Missing source.'), operation('Unchanged context after.')]
+        reply = server.message({'id': 1, 'method': 'tools/call', 'params': {'name': 'submit_options',
+            'arguments': {**base, 'expected_sha256': digest(self.review().raw), 'operations': operations}}})['result']
+        self.assertTrue(reply['isError'])
+        result = reply['structuredContent']
+        self.assertEqual(result['failed_index'], 1)
+        self.assertEqual(result['not_attempted_indices'], [2])
+        self.assertEqual([r['id'] for r in result['results']], ['1'])
+        self.assertEqual(result['sha256'], digest(self.review().raw))
+        self.assertEqual(result['error']['code'], 'source_changed')
+        self.assertEqual(set(self.review().state['edits']), {'1'})
+        operations[1] = operation('The model is strong and fast.')
+        saved = server.call('submit_options', {**base, 'expected_sha256': result['sha256'], 'operations': operations[1:]})
+        self.assertTrue(saved['complete'])
+        self.assertEqual([r['id'] for r in saved['results']], ['2', '3'])
+        rework = {'operation': 'rework_options', 'id': '2', 'version': saved['results'][0]['version'],
+                  'spec': {'options': [{**o, 'after': o['after'].replace('.', ' here.')} for o in options]}}
+        revised = server.call('submit_options', {**base, 'expected_sha256': saved['sha256'], 'operations': [rework]})
+        self.assertTrue(revised['complete'])
+        self.assertEqual(revised['results'][0]['id'], '2')
+        self.assertEqual((self.root / 'main.tex').read_bytes(), source)
+        self.assertTrue(all(e['status'] in ('pending', 'rework') for e in self.review().state['edits'].values()))
+
+    def test_batch_keeps_concurrent_write_guard_and_returns_scoped_recovery(self):
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        options = [{'label': label, 'after': 'The model is ' + word + '.', 'reason': word}
+                   for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]
+        operations = [{'operation': 'propose_options', 'spec': {'file': 'main.tex', 'kind': 'manuscript',
+            'before': before, 'options': options}} for before in ['Unchanged context before.', 'Unchanged context after.']]
+        original_call = server.call
+        def concurrent(name, args):
+            value = original_call(name, args)
+            if name == 'propose_options' and value['id'] == '1':
+                self.apply('feedback', {'id': '1', 'version': value['version'], 'side': 'original',
+                    'start': 0, 'end': 0, 'quote': '', 'text': '作者同时新增的批注'})
+            return value
+        with patch.object(server, 'call', side_effect=concurrent):
+            result = server.call('submit_options', {**base, 'expected_sha256': digest(self.review().raw), 'operations': operations})
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['error']['code'], 'state_changed')
+        self.assertEqual(result['error']['recovery']['files'], ['main.tex'])
+        self.assertEqual(self.review().state['edits']['1']['requests'][0]['text'], '作者同时新增的批注')
+        self.assertEqual(set(self.review().state['edits']), {'1'})
+        args = {**base, 'id': '1', 'version': 'stale', 'expected_sha256': digest(self.review().raw), 'spec': {'options': options}}
+        failure = server.message({'id': 2, 'method': 'tools/call', 'params': {'name': 'rework_options', 'arguments': args}})['result']['structuredContent']
+        self.assertEqual(failure['code'], 'candidate_changed')
+        self.assertEqual(failure['recovery']['ids'], ['1'])
+        raw = self.review().raw
+        with self.review().writer_lock():
+            locked = server.call('submit_options', {**base, 'expected_sha256': digest(raw), 'operations': operations})
+        self.assertFalse(locked['complete'])
+        self.assertEqual(locked['results'], [])
+        self.assertEqual(self.review().raw, raw)

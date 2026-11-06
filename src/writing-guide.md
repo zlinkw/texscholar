@@ -73,4 +73,4 @@
 
 ## AI 的工具入口
 
-本指南同目录包含 `source_review.py`、`review_checkpoint.py` 和 `backup.js`，不依赖个人 SKILL 安装目录。先读取工具帮助及真实源文件／唯一状态；状态修改通过其 `--apply --expect <当前拥有文件 SHA256>` 和 UTF-8 JSON stdin 入口，不手改压缩 DATA 或对象文件。写新候选用 propose-options，返修用 rework-options 并指定当前版本，作者明确接收才 decide。先预览操作范围；编号和候选必须以实际返回为准，失败不能声称已保存。未决批注和源文件局部注释是继续工作的依据，不靠聊天缓存或额外跟踪文件。
+日常论文修改使用内置 MCP read_context、propose_options、rework_options 和 submit_options；先按目标编号／文件获取实际状态和适用规则，直接校验保存，不重复读 CLI 帮助或要求额外预览。成功回执可连续写入，失败按返回的具体恢复动作核对，不手改 DATA 或对象文件。批量提交保留已成功项，不能重放整批；编号和候选以实际回执为准。源码维护工具 source_review.py、review_checkpoint.py 和 backup.js 不依赖个人 SKILL，但不是日常 MCP 任务的额外步骤；作者接收与成果备份继续由对应授权入口执行。未决批注和局部注释是继续依据，不另造跟踪文件。

@@ -103,10 +103,11 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         const attachments = calls.filter(c => c[0] === 'chatgpt.addFileToThread');
         assert.equal(attachments.length, 1, 'task and rules are a single attachment');
         const initial = await fs.readFile(attachments[0][1].fsPath, 'utf8');
-        assert(initial.includes(goal)); assert(initial.includes('read_context')); assert(initial.includes('\n40. '));
+        assert(initial.includes(goal)); assert(initial.includes('read_context')); assert(!initial.includes('\n40. '), 'first writing task is not a machine migration');
         assert(initial.includes('插件版本：' + require('../package.json').version));
         assert(initial.includes('expected_plugin_version'));
-        assert.equal(initial.split('# TeXScholar 当前任务协作协议：').length, 2, 'protocol appears only once');
+        assert(!initial.includes('# TeXScholar 当前任务协作协议：'), 'MCP provides the actual applicable protocol once');
+        assert(initial.includes('known_rules')); assert(initial.includes('ids'));
         assert(notices.at(-1).includes('首次连接需重启 Codex'));
         const configured = await fs.readFile(path.join(home, 'config.toml'), 'utf8');
         assert(configured.includes(unrelated.trim())); assert(configured.includes('[mcp_servers.texscholar]'));
@@ -114,8 +115,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         goal = '修改回复信'; await start();
         const everyday = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
         assert(everyday.includes(goal)); assert(everyday.includes('A/B/C')); assert(!everyday.includes('\n40. '));
-        assert(everyday.includes('apply 默认 true'));
-        assert(everyday.includes('上一条成功结果的 sha256'));
+        assert(everyday.includes('rules_receipt'));
         assert(!everyday.includes('工具升级后读取同目录 source_review.py 的 --help'));
         assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), configured, 'repeat setup is idempotent');
         assert(!notices.at(-1).includes('首次连接'));
@@ -125,11 +125,42 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         available = ['chatgpt.addFileToThread']; python = path.join(root, 'missing-python');
         await start();
         const repair = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
-        assert(repair.includes('MCP 尚未连接成功')); assert(repair.includes('\n40. '));
+        assert(repair.includes('MCP 尚未连接成功')); assert(!repair.includes('\n40. '), 'connection repair does not request unrelated compiler installation');
         assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), configured, 'connection failure preserves configuration');
+        calls.length = 0; python = process.env.LOCAL_LATEX_PYTHON;
+        goal = '配置新电脑'; await start({setup: true});
+        const setup = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
+        assert(setup.includes('\n40. '), 'explicit setup retains all approved migration groups');
         assert.equal(await fs.readFile(path.join(paper, 'paper.tex'), 'utf8'), source);
         assert(!calls.some(c => /send|submit/i.test(c[0])));
     } finally {
         if (previousHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previousHome;
+    }
+});
+
+test('missing compiler tools do not make a configured writing connection unavailable', async () => {
+    const tools = require('./tools'), backup = require('./backup');
+    const fs = require('node:fs/promises'), path = require('node:path');
+    const root = await fs.mkdtemp(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'capabilities-'));
+    await fs.mkdir(path.join(root, 'mcp-workspaces'));
+    await fs.writeFile(path.join(root, 'mcp-workspaces', 'test.json'), JSON.stringify({roots: [root]}), 'utf8');
+    await fs.writeFile(path.join(root, 'texscholar-mcp.py'), '# test launcher', 'utf8');
+    const saved = {discover: tools.discover, searchDirectories: tools.searchDirectories, findExecutable: tools.findExecutable, version: tools.version, run: backup.run};
+    try {
+        tools.discover = () => ({found: {pythonPath: process.env.LOCAL_LATEX_PYTHON}});
+        tools.searchDirectories = () => []; tools.findExecutable = () => undefined;
+        tools.version = async () => 'Python 3.14.0'; backup.run = async () => JSON.stringify({connected: true});
+        const vscode = {RelativePattern: class {}, extensions: {getExtension: () => ({})},
+            commands: {getCommands: async () => ['chatgpt.addFileToThread']}, workspace: {
+                getConfiguration: () => ({get: () => undefined}), findFiles: async () => ['paper.tex'],
+                workspaceFolders: [{uri: {scheme: 'file', fsPath: root}}]}};
+        const result = await require('./ai_setup').inspectConfiguration({globalStorageUri: {fsPath: root}, workspaceState: {get: () => 'test'}}, vscode);
+        assert.equal(result.ready, false);
+        assert.equal(result.writingReady, true);
+        assert.deepEqual(result.writingIssues, []);
+        assert(result.compileIssues.some(issue => issue.includes('SyncTeX')));
+    } finally {
+        Object.assign(tools, {discover: saved.discover, searchDirectories: saved.searchDirectories, findExecutable: saved.findExecutable, version: saved.version});
+        backup.run = saved.run;
     }
 });
