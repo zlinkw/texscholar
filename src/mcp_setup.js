@@ -20,7 +20,8 @@ async function write(file, text) {
 }
 async function taskRequest(goal, roots, setup, connection) {
     const rules = setup ? await require('./ai_setup').buildPrompt() : await fs.readFile(path.join(__dirname, 'collaboration-guide.md'), 'utf8');
-    return ['# TeXScholar AI 论文任务', '', '本次任务：', goal.trim(), '', '当前工作区：', ...roots, '',
+    return ['# TeXScholar AI 论文任务', '', '插件版本：' + require('../package.json').version,
+        '首次 read_context 传 expected_plugin_version 为上方版本；不匹配或旧服务缺少版本信息时，提示重启 Codex 的 MCP，不能转用另一个版本的 CLI 继续。', '', '本次任务：', goal.trim(), '', '当前工作区：', ...roots, '',
         '先使用 texscholar MCP read_context 读取实际项目、file_roles 和最新协议。不修改全局 SKILL，不自动发送或接收候选。',
         connection || '若当前会话尚未发现 texscholar，请先核对连接与重载状态，不绕过接口直接修改审核数据。', '', rules].join('\n');
 }

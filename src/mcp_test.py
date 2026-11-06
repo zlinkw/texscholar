@@ -12,6 +12,7 @@ from mcp_config import configure, check
 import native_review_test as fixtures
 from source_review import digest
 from document_roles import scan as scan_roles, save as save_roles
+from unittest.mock import patch
 
 class MCP(unittest.TestCase):
     def setUp(self):
@@ -29,6 +30,48 @@ class MCP(unittest.TestCase):
         (directory / 'closed-workspace.json').write_text(json.dumps({'roots': [str(self.root / 'already-removed-project')]}), encoding='utf-8')
         (directory / 'fixture.json').write_text(json.dumps({'roots': [str(self.root)]}), encoding='utf-8')
         return Server(directory)
+
+    def test_write_results_chain_without_context_rereads_and_keep_conflict_guards(self):
+        VERSION = json.loads((Path(__file__).parent.parent / 'package.json').read_text(encoding='utf-8'))['version']
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        source = (self.root / 'main.tex').read_bytes()
+        context = server.call('read_context', {**base, 'expected_plugin_version': VERSION})
+        self.assertEqual(context['plugin_version'], VERSION)
+        options = [{'label': label, 'after': 'The model is ' + word + '.', 'reason': word}
+                   for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]
+        args = {**base, 'expected_sha256': context['context']['sha256'], 'spec': {
+            'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': options}}
+        with patch('mcp_server.Review.cards', side_effect=AssertionError('Writes must not require a full context')):
+            preview = server.call('propose_options', {**args, 'apply': False})
+            self.assertEqual(preview['sha256'], args['expected_sha256'])
+            self.assertNotIn('version', preview, 'dry-run placeholder is not a saved candidate version')
+            first = server.call('propose_options', args)
+            self.assertEqual(first['sha256'], digest(self.review().raw))
+            self.assertEqual(first['version'], self.review().state['edits']['1']['versions'][-1])
+            revised = [{**o, 'after': o['after'].replace('.', ' under this condition.')} for o in options]
+            rework = {**base, 'id': first['id'], 'version': first['version'],
+                      'expected_sha256': first['sha256'], 'spec': {'options': revised}}
+            second = server.call('rework_options', rework)
+            self.assertEqual(second['sha256'], digest(self.review().raw))
+            self.assertEqual(second['plugin_version'], VERSION)
+            self.assertNotEqual(second['version'], first['version'])
+            with self.assertRaisesRegex(ValueError, 'State changed'):
+                server.call('rework_options', rework)
+            rework['expected_sha256'] = second['sha256']
+            with self.assertRaisesRegex(ValueError, 'stale'):
+                server.call('rework_options', rework)
+        state = self.review().raw
+        with self.assertRaisesRegex(ValueError, '重启 Codex'):
+            server.call('propose_options', {**args, 'expected_plugin_version': 'old-fixture'})
+        self.assertEqual(self.review().raw, state)
+        self.assertEqual((self.root / 'main.tex').read_bytes(), source)
+        linked = server.call('link_questions', {**base, 'id': second['id'], 'version': second['version'],
+            'expected_sha256': second['sha256'], 'questions': []})
+        self.assertEqual(linked['version'], second['version'])
+        self.assertEqual(linked['sha256'], digest(self.review().raw))
+        with patch('mcp_server.VERSION', 'running-fixture'):
+            self.assertEqual(server.call('get_instructions', {})['version'], 'running-fixture')
 
     def test_first_message_instructions_ranked_write_feedback_and_stale_failures(self):
         server = self.server()

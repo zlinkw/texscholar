@@ -44,7 +44,8 @@ test('association warning copies plugin-owned task rules without modifying skill
     await notifyProblem(api, '尚未关联');
     assert(choices.includes('查看规则'));
     assert(copied.includes('不要修改全局科研 SKILL'));
-    assert(copied.includes('link-questions'));
+    assert(copied.includes('link_questions'));
+    assert(copied.includes('apply 默认 true'));
     assert(copied.includes('不能按候选编号'));
     assert(copied.includes('最多一个自然段'));
 });

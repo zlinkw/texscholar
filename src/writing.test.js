@@ -104,6 +104,8 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         assert.equal(attachments.length, 1, 'task and rules are a single attachment');
         const initial = await fs.readFile(attachments[0][1].fsPath, 'utf8');
         assert(initial.includes(goal)); assert(initial.includes('read_context')); assert(initial.includes('\n40. '));
+        assert(initial.includes('插件版本：' + require('../package.json').version));
+        assert(initial.includes('expected_plugin_version'));
         assert.equal(initial.split('# TeXScholar 当前任务协作协议：').length, 2, 'protocol appears only once');
         assert(notices.at(-1).includes('首次连接需重启 Codex'));
         const configured = await fs.readFile(path.join(home, 'config.toml'), 'utf8');
@@ -112,6 +114,9 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         goal = '修改回复信'; await start();
         const everyday = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
         assert(everyday.includes(goal)); assert(everyday.includes('A/B/C')); assert(!everyday.includes('\n40. '));
+        assert(everyday.includes('apply 默认 true'));
+        assert(everyday.includes('上一条成功结果的 sha256'));
+        assert(!everyday.includes('工具升级后读取同目录 source_review.py 的 --help'));
         assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), configured, 'repeat setup is idempotent');
         assert(!notices.at(-1).includes('首次连接'));
         available = []; calls.length = 0; copyChoice = '复制完整任务说明'; await start();
