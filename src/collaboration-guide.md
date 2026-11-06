@@ -32,6 +32,8 @@
 
 ## 界面与交付细节
 
+作者可以保存草稿并切换审核项，也可在准备 Codex 交接时继续编辑；这些操作均不代表接收。批注附件只反映生成时的内容，AI 仍按核心流程核对当前状态与附件回执，不要求作者先处理可替换的旧批注。
+
 read_context 的 question_refs 指向本次 context.questions 中的完整原始意见，相同 id/file/quote 只返回一份。写入可传完整 questions，也可显式构造本次 question_pool 并引用，由工具展开并精确核验，不按编号猜配。重叠错误返回 existing 的真实编号、版本和文件；按 recovery.ids 补读该项，再判断是否返修，不自动合并或接收。
 
 问题关联必须提供实际 id、项目内 file 和唯一精确 quote。多个问题涉及同一原文位置时合并为同一修改项，在 questions 中分别关联，不自动猜配。完整接口见同目录 question-linking-guide.md。返修上下文包含编号、选项、版本、原文、候选与选区；批注只加入 Codex 输入区，不自动发送或调用 AI。

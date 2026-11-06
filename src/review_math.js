@@ -98,9 +98,11 @@
         if (start < 0 || start >= end || end > model.text.length) return;
         return {start: model.offsets[start], end: model.offsets[end - 1] + 1};
     }
-    function render(node, raw, changes, side, mode, katex) {
+    function render(node, raw, changes, side, mode, katex, previous) {
         const doc = node.ownerDocument, model = projection(raw, mode === 'source'), ranges = changedRanges(raw, changes, side);
         model.anchors = [];
+        model.formulas = [];
+        const reusable = [...(previous?.formulas || [])];
         const fragment = doc.createDocumentFragment();
         function plain(parent, start, end, literal = false) {
             let at = start;
@@ -125,6 +127,13 @@
         const parts = mode === 'source' ? [{start: 0, end: model.text.length}] : segments(model.text);
         for (const part of parts) {
             if (!part.math) {plain(fragment, part.start, part.end, part.literal); continue;}
+            const existing = reusable.findIndex(f => f.tex === part.tex && f.display === part.display && f.engine === katex);
+            if (existing >= 0) {
+                const saved = reusable.splice(existing, 1)[0];
+                fragment.appendChild(saved.node); model.formulas.push(saved);
+                model.anchors.push({node: saved.anchor, start: part.start, end: part.end, atomic: true, math: true});
+                continue;
+            }
             const formula = doc.createElement('span'); formula.className = 'formula' + (part.display ? ' display-formula' : '');
             const preview = doc.createElement('span'); preview.className = 'math-preview';
             let error;
@@ -146,6 +155,7 @@
                 preview.title = '预览中的公式选区按整式绑定；细部请切换 LaTeX 源码。';
                 model.anchors.push({node: preview, start: part.start, end: part.end, atomic: true, math: true});
             }
+            model.formulas.push({tex: part.tex, display: part.display, engine: katex, node: formula, anchor: model.anchors.at(-1).node});
             fragment.appendChild(formula);
         }
         if (!model.text.trim()) {
@@ -153,6 +163,33 @@
         }
         node.replaceChildren(fragment);
         return model;
+    }
+    function selectionRanges(model, start, end) {
+        // UI offsets use LF and UTF-16; source anchors retain exact CRLF positions.
+        const rawOffset = offset => {
+            let at = 0, visible = 0;
+            while (at < model.raw.length && visible < offset) {
+                if (model.raw[at] === '\r' && model.raw[at + 1] === '\n') at++;
+                at++; visible++;
+            }
+            return at;
+        };
+        const a = rawOffset(start), b = rawOffset(end), ranges = [];
+        for (const anchor of model.anchors) {
+            const from = model.offsets[anchor.start], to = model.offsets[anchor.end - 1] + 1;
+            if (from >= b || to <= a) continue;
+            const range = anchor.node.ownerDocument.createRange();
+            range.selectNodeContents(anchor.node);
+            if (!anchor.atomic) {
+                let lo = anchor.start, hi = anchor.end;
+                while (lo < hi && model.offsets[lo] < a) lo++;
+                while (hi > lo && model.offsets[hi - 1] >= b) hi--;
+                range.setStart(anchor.node.firstChild, lo - anchor.start);
+                range.setEnd(anchor.node.firstChild, hi - anchor.start);
+            }
+            ranges.push(range);
+        }
+        return ranges;
     }
     function selectedRange(node, range, model) {
         const doc = node.ownerDocument, begin = range.cloneRange(), end = range.cloneRange();
@@ -172,5 +209,5 @@
         const raw = rawBounds(model, point(a, range.startContainer, range.startOffset, false), point(b, range.endContainer, range.endOffset, true));
         return raw ? {...raw, wholeMath: anchors.some(a => a.math)} : undefined;
     }
-    return {projection, segments, changedRanges, rawBounds, previewTex, render, selectedRange, wordChanges};
+    return {projection, segments, changedRanges, rawBounds, previewTex, render, selectedRange, selectionRanges, wordChanges};
 });

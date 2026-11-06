@@ -202,4 +202,35 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert(page.includes('data-action="saveAccept"'));
     assert(page.includes('data-action="retryHandoff"'));
     assert(page.includes('id="comparisonChoice"'));
+
+    // Lightweight view patches retain the draft payload; save-and-switch never accepts it.
+    services.save = originalSave;
+    await send('dirty', {dirty: true, noteDirty: true, state: {c: {...view.active}, drafts: {A: 'Saved before switch'},
+        note: '先保留这个要求', scope: 'group', scrollTop: 10, composer: true}});
+    await send('viewStatePatch', {patch: {scrollTop: 222, focus: 'note', textareas: {note: {start: 1, end: 1}}}});
+    panel.visible = false; changed({webviewPanel: panel});
+    await view.show(view.active); await receive({type: 'ready', instance: 'patch-restored'});
+    restored = messages.findLast(m => m.type === 'content');
+    assert.equal(restored.resume.scrollTop, 222);
+    assert.equal(restored.resume.drafts.A, 'Saved before switch');
+    confirmation = '保存并切换';
+    const nextItem = make('3'); records.set('3', nextItem); view.setRecords(records);
+    const acceptedBeforeSwitch = events.filter(e => e.type === 'accept').length;
+    await send('switch', {target: '3'});
+    assert.equal(view.active.id, '3');
+    assert.equal(records.get('2').data.options[0].after, 'Saved before switch');
+    assert.equal(records.get('2').data.edit.requests.at(-1).text, '先保留这个要求');
+    assert.equal(events.filter(e => e.type === 'accept').length, acceptedBeforeSwitch);
+    await send('dirty', {dirty: true, noteDirty: false, state: {c: {...view.active}, drafts: {B: 'Must survive failed save'}, note: ''}});
+    services.save = async () => {throw new Error('fixture failed switch save');};
+    await send('switch', {target: '2'});
+    assert.equal(view.active.id, '3');
+    assert.match(messages.findLast(m => m.type === 'result').message, /未切换/);
+    await send('dirty', {dirty: false, noteDirty: false, state: {c: {...view.active}, drafts: {}, note: ''}});
+    let finishHandoff;
+    services.handoff = async () => new Promise(resolve => {finishHandoff = resolve;});
+    const handoffRun = send('handoff');
+    await send('note', {text: '交接期间仍可保存新要求'});
+    assert.equal(records.get('3').data.edit.requests.at(-1).text, '交接期间仍可保存新要求');
+    finishHandoff(); await handoffRun;
 });

@@ -9,6 +9,23 @@ const disposable = () => ({dispose() {}});
 const fileWatcher = () => ({dispose() {}, onDidChange: disposable, onDidCreate: disposable, onDidDelete: disposable});
 const {view, locateDisplay} = require('./review_positions');
 
+test('one PDF queue coalesces pending document updates and preserves running work and errors', async () => {
+    const text = fs.readFileSync(require.resolve('./inline_review'), 'utf8');
+    const scheduler = text.slice(text.indexOf('    function schedulePDF('), text.indexOf('    async function queueAcceptedPDF('));
+    const schedule = new Function('const pdfRequests = new Map(); let pdfRun; ' + scheduler + '; return schedulePDF;')();
+    const events = []; let release;
+    const running = schedule('paper', async () => {events.push('running'); await new Promise(r => {release = r;});});
+    await Promise.resolve();
+    const obsolete = schedule('paper', async () => events.push('obsolete manual'));
+    const latest = schedule('paper', async () => events.push('latest accepted'));
+    const other = schedule('response', async () => events.push('response'));
+    release(); await Promise.all([running, obsolete, latest, other]);
+    assert.deepEqual(events, ['running', 'latest accepted', 'response']);
+    await assert.rejects(schedule('paper', async () => {throw Error('compile failed');}), /compile failed/);
+    await schedule('paper', async () => events.push('recovered'));
+    assert.equal(events.at(-1), 'recovered');
+});
+
 function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'review-list-'));
     const file = path.join(root, tex ? 'paper.tex' : 'main.js'), owner = path.join(root, 'reply.tex');
