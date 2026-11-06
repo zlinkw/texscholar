@@ -5,6 +5,15 @@ const path = require('node:path');
 const {selection} = require('./candidate_panel');
 const reviewStyle = require('./review_style');
 
+function filterItems(items, filter) {
+    const query = filter.query.trim().toLocaleLowerCase(), kind = filter.kind;
+    const exactQuestion = /^r\d+-q\d+$/i.test(query);
+    return items.filter(i => (!kind || i.kind === kind) && (!filter.notes || i.requests > 0)
+        && (exactQuestion ? (i.questions || []).some(q => q.toLocaleLowerCase() === query)
+            : [i.id, i.file, i.location, i.summary, ...(i.questions || [])].join(' ').toLocaleLowerCase().includes(query)))
+        .sort((a, b) => Number(b.id.toLocaleLowerCase() === query) - Number(a.id.toLocaleLowerCase() === query));
+}
+
 function html(nonce, assets = {}) {
     const client = fs.readFileSync(path.join(__dirname, 'review_workbench_client.js'), 'utf8');
     const math = fs.readFileSync(path.join(__dirname, 'review_math.js'), 'utf8');
@@ -25,23 +34,24 @@ header{position:sticky;top:0;z-index:2;background:var(--vscode-editor-background
 #layout{display:grid;grid-template-columns:minmax(0,1fr)}main{min-width:0;padding:.4em .65em}h3,h4,p{margin:var(--space) 0}h3{font-size:1.05em}h4{font-size:1em}small,#status,#pdfStatus{color:var(--vscode-descriptionForeground)}#pdfError{padding:.3em .65em;font-size:var(--control-font-size,13px)}#pdfError,#status.error,#appearanceStatus.error{color:var(--vscode-errorForeground)}#status:empty,#translateStatus:empty,#fewer:empty,.zh:empty{display:none}
 section{margin:0 0 var(--section-space)}#options{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,24em),1fr));gap:.55em}article{min-width:0;border:1px solid var(--vscode-panel-border);padding:var(--space);border-radius:.3em}article.selected{border-color:var(--vscode-focusBorder)}article.focused{grid-column:1/-1}article.folded .detail,article.folded .reason{display:none}
 .text{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}.text .old{color:var(--removed);text-decoration:var(--strike)}.text .new{color:var(--added)}.text .same{color:var(--unchanged,inherit)}
+::highlight(review-location){background:var(--vscode-editor-findMatchHighlightBackground,#e5c07b66);text-decoration:underline}
 ::highlight(review-selection){background:var(--vscode-editor-selectionBackground);color:var(--vscode-editor-selectionForeground,inherit)}
 .zh{font-size:var(--translation-font-size,15px);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:var(--space);border-left:2px solid var(--vscode-panel-border);padding-left:.5em;color:var(--vscode-descriptionForeground)}
 textarea{width:100%;min-height:6em;resize:vertical;padding:.5em;white-space:pre-wrap;overflow-wrap:anywhere}textarea.edit{min-height:11em;font-family:var(--vscode-editor-font-family,monospace)}details{margin:var(--space) 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:var(--space) 0;font:inherit}.question,.note{border-top:1px solid var(--vscode-panel-border);padding:var(--space) 0}.note{font-size:.94em}.questionHeading{justify-content:space-between;flex-wrap:wrap}.questionHeading>div{display:flex;gap:.3em}#scope{overflow-wrap:anywhere}#translateStatus{font-size:.8em}[hidden]{display:none!important}#empty{padding:1em}
 .formula{display:inline;vertical-align:baseline}.math-preview{display:inline;vertical-align:baseline;white-space:normal;color:var(--unchanged,inherit);overflow-wrap:normal;word-break:normal}.display-formula{display:block;max-width:100%;overflow-x:auto;overflow-y:hidden;padding:.45em .2em}.display-formula>.math-preview{display:block}.math-preview .katex-display{margin:.3em 0}.math-error{font-size:.8em;color:var(--vscode-descriptionForeground)}
 .reviewHeading{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4em}.comparisonControl{font-size:var(--control-font-size,13px)}.draftLabel{display:block;font-size:.85em;color:var(--vscode-descriptionForeground)}#rankingNotice{display:block;margin-bottom:.4em;color:var(--vscode-descriptionForeground)}.optionHeading{display:flex;align-items:center;justify-content:space-between;gap:.3em;flex-wrap:wrap}.optionHeading h4{white-space:nowrap;margin:0}.optionActions{flex-wrap:wrap;margin-left:auto}.tradeoff,.scopeSummary,.intent{font-size:.85em;overflow-wrap:anywhere;margin:.2em 0}.scopeSummary{color:var(--vscode-descriptionForeground)}.reason{font-size:.85em;margin:var(--space) 0}.reason summary{cursor:pointer;color:var(--vscode-descriptionForeground)}
 .more{position:relative;display:inline-block;margin:0}.more summary{list-style:none}.more summary::-webkit-details-marker{display:none}.more>.menu{position:absolute;right:0;top:100%;z-index:10;min-width:17em;max-width:calc(100vw - 1em);max-height:65vh;overflow-y:auto;padding:.5em;border:1px solid var(--vscode-panel-border);border-radius:.45em;background:var(--vscode-editor-background);box-shadow:0 3px 12px #0003;display:flex;flex-direction:column;gap:.3em;font-size:var(--control-font-size,13px)}.more>.menu button{text-align:left;white-space:normal}.more>.menu label{padding:.3em}#overflowActions:empty{display:none}#overflowActions{display:flex;flex-direction:column;gap:.3em;border-bottom:1px solid var(--vscode-panel-border);padding-bottom:.4em}
-dialog{background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);border:1px solid var(--vscode-panel-border);border-radius:.5em;padding:.8em;width:min(38em,calc(100vw - 1em));max-height:85vh;overflow:auto;font-size:var(--control-font-size,13px)}dialog::backdrop{background:#0005}.dialogHeading{justify-content:space-between;margin-bottom:.7em}.appearanceFields{display:grid;grid-template-columns:1fr 1fr;gap:.6em}.appearanceFields label{display:flex;flex-direction:column;gap:.2em}.appearanceFields label:first-child{grid-column:1/-1}.appearanceFields input,.appearanceFields select{width:100%;padding:.3em}dialog small{display:block;margin:.7em 0}.directoryFilters{display:flex;gap:.4em;flex-wrap:wrap;margin-bottom:.5em}#directoryQuery{flex:1;min-width:10em}.directoryFilters input,.directoryFilters select{padding:.3em}#directoryResults{display:flex;flex-direction:column;gap:.2em}#directoryResults button{text-align:left;white-space:normal}.note.editing>.text,.note.editing>details,.note.editing>button{display:none}#noteComposer{margin:var(--space) 0}#noteComposer button{margin:.2em .2em .2em 0}
+dialog{background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);border:1px solid var(--vscode-panel-border);border-radius:.5em;padding:.8em;width:min(38em,calc(100vw - 1em));max-height:85vh;overflow:auto;font-size:var(--control-font-size,13px)}dialog::backdrop{background:#0005}.dialogHeading{justify-content:space-between;margin-bottom:.7em}.appearanceFields{display:grid;grid-template-columns:1fr 1fr;gap:.6em}.appearanceFields label{display:flex;flex-direction:column;gap:.2em}.appearanceFields label:first-child{grid-column:1/-1}.appearanceFields input,.appearanceFields select{width:100%;padding:.3em}dialog small{display:block;margin:.7em 0}.directoryFilters{display:flex;gap:.4em;flex-wrap:wrap;margin-bottom:.5em}#directoryQuery{flex:1;min-width:10em}.directoryFilters input,.directoryFilters select{padding:.3em}#directoryResults{display:flex;flex-direction:column;gap:.2em}#directoryResults button{text-align:left;white-space:normal}.note.editing>.text,.note.editing>details,.note.editing>button{display:none}.noteQuote{white-space:pre-wrap!important;overflow-wrap:anywhere;text-align:left;max-width:100%}#noteComposer{margin:var(--space) 0}#noteComposer button{margin:.2em .2em .2em 0}
 </style></head><body>
 <header><div class="navigation"><button data-action="previous" class="secondary" title="上一审核项（Alt+←）" aria-label="上一审核项">‹</button><button data-action="next" class="secondary" title="下一审核项（Alt+→）" aria-label="下一审核项">›</button><button id="progress" data-action="directory" class="secondary" title="按编号、位置、文件或关联问题查找（Alt+F）">审核项</button></div><div id="toolbarExtras"><button data-action="mathMode" class="secondary" id="mathMode" aria-pressed="false" title="切换审核页公式预览／完整 LaTeX 源码，不保存、不编译">LaTeX 源码</button><div id="pdfActions" role="group" aria-label="审核 PDF"><button data-action="reopen" title="打开已有审核 PDF 窗口，不编译">打开 PDF</button><button data-action="locate" title="定位到当前审核项">定位</button><button data-action="pdf" title="更新完整审核 PDF">更新</button></div><span id="pdfStatus" role="status">PDF 未核对</span></div><button data-action="handoff" title="把全部待处理批注加入 Codex 输入区，不自动发送">批注 → Codex</button><details class="more"><summary>更多</summary><div class="menu" id="mainMenu"><div id="overflowActions"></div><button data-action="appearance">外观设置</button><button id="configuration" data-action="configuration" class="secondary">检查配置</button><button data-action="start">AI 论文助手</button><button data-action="translate">翻译／重试当前项</button><button data-action="provider">切换翻译来源</button><button data-action="toggleChinese">显示／收起中文</button><label><input type="checkbox" id="compare">PDF 对比本项全部方案</label><button data-action="source">定位 LaTeX 原文</button><button data-action="finish">Git 备份已接收修改</button></div></details></header><div id="pdfError" role="alert" hidden></div>
 <dialog id="appearanceDialog" aria-labelledby="appearanceTitle"><form method="dialog"><div class="dialogHeading"><strong id="appearanceTitle">审核页外观</strong><button aria-label="关闭外观设置" class="secondary">关闭</button></div></form><div class="appearanceFields"><label>阅读字体<input id="style-fontFamily" data-style="fontFamily" placeholder="留空跟随 VS Code；如 Microsoft YaHei, sans-serif"></label><label>阅读字号<input type="number" id="style-candidateFontSize" data-style="candidateFontSize" min="10" max="32" step="1"></label><label>文字行高<input type="number" id="style-candidateLineHeight" data-style="candidateLineHeight" min="1" max="2.5" step="0.1"></label><label>按钮字号<input type="number" id="style-controlFontSize" data-style="controlFontSize" min="10" max="24" step="1"></label><label>中文字号<input type="number" id="style-translationFontSize" data-style="translationFontSize" min="10" max="32" step="1"></label><label>内容间距<select id="style-cardLayout" data-style="cardLayout"><option value="compact">紧凑</option><option value="comfortable">宽松</option></select></label></div><small>更改后即时生效并保存。仅影响审核页，不修改论文、PDF 字号或全局 SKILL。源码编辑保持等宽字体。</small><div><button data-action="resetAppearance" class="secondary">恢复默认外观</button><span id="appearanceStatus" role="status"></span></div></dialog>
-<dialog id="directoryDialog" aria-labelledby="directoryTitle"><form method="dialog"><div class="dialogHeading"><strong id="directoryTitle">跳转审核项</strong><button class="secondary">关闭</button></div></form><div class="directoryFilters"><input id="directoryQuery" aria-label="搜索审核项" placeholder="编号、位置、文件、R1-Q3…"><select id="directoryKind" aria-label="筛选文档"><option value="">全部文档</option><option value="manuscript">正文</option><option value="response">回复信</option></select><label><input id="directoryNotes" type="checkbox">有待处理批注</label></div><div id="directoryResults"></div></dialog>
-<div id="layout"><main><div id="empty" hidden>本批没有可操作的待审项。可用“Git 备份已接收修改”备份成果。</div><div id="review"><div class="reviewHeading"><h3 id="title"></h3><label class="comparisonControl">对照 <select id="comparisonChoice" aria-label="审核页对照方式"><option value="original">原文对照</option></select></label></div><small id="rankingNotice" hidden></small><p id="comparisonNotice" class="scopeSummary" hidden></p>
+<dialog id="directoryDialog" aria-labelledby="directoryTitle"><form method="dialog"><div class="dialogHeading"><strong id="directoryTitle">跳转审核项</strong><button class="secondary">关闭</button></div></form><div class="directoryFilters"><input id="directoryQuery" aria-label="搜索审核项" placeholder="编号、位置、文件、R1-Q3…"><select id="directoryKind" aria-label="筛选文档"><option value="">全部文档</option><option value="manuscript">正文</option><option value="response">回复信</option></select><label><input id="directoryNotes" type="checkbox">有待处理批注</label></div><button data-action="clearFilter" class="secondary">清除筛选</button><small>上一项、下一项及接收后跳转遵循此筛选。</small><div id="directoryResults"></div></dialog>
+<div id="layout"><main><div id="empty" hidden>当前没有可显示的审核项；可通过顶部编号目录清除筛选、选择其他项目，或用“Git 备份已接收修改”备份成果。</div><div id="review"><div class="reviewHeading"><h3 id="title"></h3><div class="optionActions"><button data-action="previousChange" class="secondary" title="定位当前可见内容中的上一处实际差异">上处差异</button><button data-action="nextChange" class="secondary" title="定位当前可见内容中的下一处实际差异">下处差异</button><label class="comparisonControl">对照 <select id="comparisonChoice" aria-label="审核页对照方式"><option value="original">原文对照</option></select></label></div></div><small id="rankingNotice" hidden></small><p id="comparisonNotice" class="scopeSummary" hidden></p>
 <p id="intent" class="intent" hidden></p><section><h4>原文</h4><div id="original" class="text" data-side="original"></div><div id="originalZh" class="zh"></div></section>
 <div id="translateStatus"></div>
 <section id="options"></section><p id="fewer"></p><section><h4>关联原始审稿问题</h4><div id="questions"></div></section>
 <section><h4>返修批注</h4><button data-action="newNote" title="新增返修批注（Alt+N）" class="secondary">新增返修批注</button><button data-action="reject" data-write class="secondary">拒绝本项全部候选</button><div id="noteComposer" hidden><p id="noteMode">新增返修批注</p><div id="noteScopeControls"><label>范围 <select id="scopeChoice"><option value="group">本项全部方案（默认）</option><option value="original">完整原文</option></select></label><button data-action="whole" class="secondary">取消选区／整项批注</button></div><p id="scope">未划词时可以直接填写整项要求。</p><button id="useSelection" data-action="useSelection" class="secondary" hidden>改用新选区</button><textarea id="note" placeholder="填写返修要求"></textarea><button title="保存当前批注（Ctrl/Cmd+Enter）" id="saveNote" data-action="note" data-write>保存返修批注</button><button data-action="noteHandoff" data-write title="先保存，再把本项待处理批注加入 Codex 输入区；不自动发送">保存并加入 Codex</button><button data-action="cancelNote" class="secondary">取消</button></div><div id="notes"></div></section></div><small id="operationStatus" role="status" aria-live="polite"></small><p id="status" role="status" aria-live="polite"></p><button id="retryHandoff" data-action="retryHandoff" data-write hidden>重试本项交接</button></main></div>
-${assets.script ? `<script nonce="${nonce}" src="${assets.script}"></script>` : ''}<script nonce="${nonce}">${diff}</script><script nonce="${nonce}">${math}</script><script nonce="${nonce}">${client}</script></body></html>`;
+${assets.script ? `<script nonce="${nonce}" src="${assets.script}"></script>` : ''}<script nonce="${nonce}">${diff}</script><script nonce="${nonce}">${math}</script><script nonce="${nonce}">${filterItems.toString()}\n${client}</script></body></html>`;
 }
 
 function createWorkbench(vscode, context, services) {
@@ -51,13 +61,20 @@ function createWorkbench(vscode, context, services) {
     let lastRecords = new Map(), sourceSelection;
     let ready = false, client, uiState, notice, reading, handoffRetry;
     let appearanceWork = Promise.resolve();
+    let navigationFilter = {query: '', kind: '', notes: false};
     function post(message) {
         if (message.type === 'noteSaved' || message.type === 'noteEdited') {
             noteDirty = false;
             if (uiState) Object.assign(uiState, {note: '', editingNote: undefined, selected: undefined, composer: false});
         }
         if (message.type === 'saved' && uiState) {
-            uiState.c = {...active}; delete uiState.drafts[message.option]; uiState.selected = undefined;
+            uiState.c = {...active}; delete uiState.drafts[message.option];
+            if (uiState.selected) {
+                const chosen = uiState.selected;
+                const text = chosen.side === 'candidate' ? options(loaded).find(o => o.label === chosen.option)?.after : loaded.original;
+                uiState.selectionStale = text === undefined || text.replace(/\r\n/g, '\n') !== chosen.value;
+            }
+            message.resume = uiState;
             dirty = Object.entries(uiState.drafts).some(([label, value]) => options(loaded).some(o => o.label === label && o.after.replace(/\r\n/g, '\n') !== value));
         }
         if (['result', 'noteSaved', 'noteEdited'].includes(message.type)) notice = message;
@@ -71,18 +88,19 @@ function createWorkbench(vscode, context, services) {
     function packet() {
         const {file, kind, location, versions, requests, questions} = loaded.edit;
         return {type: 'content', c: active, data: {original: loaded.original, edit: {file, kind, location, versions, requests, questions}, intent: loaded.intent, fewer_options_reason: loaded.fewer_options_reason},
-            options: options(loaded), directory: directory(), style: services.style(),
+            options: options(loaded), directory: directory(), navigationFilter, style: services.style(),
             sourceSelection, resume: uiState, reading, busy: handling,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }
     const valid = c => active && key(active) === key(c);
     async function decideAndAdvance(c, action, option) {
-        const list = [...lastRecords.values()], index = list.findIndex(r => r.c.id === c.id);
+        const list = filterItems(directory(), navigationFilter), index = list.findIndex(r => r.id === c.id);
         await services[action]({...c, option, workbench: true});
-        const next = list.slice(index + 1).concat(list.slice(0, index)).find(r => lastRecords.has(r.c.id));
+        const eligible = new Set(filterItems(directory(), navigationFilter).map(r => r.id));
+        const next = list.slice(index + 1).concat(list.slice(0, Math.max(0, index))).find(r => eligible.has(r.id) && r.id !== c.id);
         hasPending = false;
-        if (next) await show(lastRecords.get(next.c.id).c);
-        else post({type: 'unavailable', message: '本批可操作项目已处理。未自动提交 Git 或判定科学问题完成。'});
+        if (next) await show(lastRecords.get(next.id).c);
+        else post({type: 'unavailable', message: '当前筛选范围没有下一项；可清除筛选查看其余项目。未自动提交 Git 或判定科学问题完成。'});
     }
     async function handoffSavedNote(c) {
         try {
@@ -105,7 +123,7 @@ function createWorkbench(vscode, context, services) {
         if (notice?.message) post(notice);
         if (translations.size) for (const item of translationItems(loaded)) {
             const entry = translations.get(JSON.stringify([services.provider(), item.text]));
-            if (entry) post({type: 'translation', key: item.key, ...entry});
+            if (entry) post({type: 'translation', key: item.key, source: item.text, ...entry});
         }
         autoTranslate();
     }
@@ -125,6 +143,7 @@ function createWorkbench(vscode, context, services) {
         try {
             // Save an existing version's note before draft edits create a new version.
             if (noteDirty) {
+                if (state.selectionStale) throw new Error('批注所选文字已变化，请重新选择范围或明确改为整项批注。');
                 if (state.editingNote) {
                     const note = loaded.edit.requests.find(n => n.id === state.editingNote.id);
                     if (!note || note.version !== active.version || note.status !== 'open') throw new Error('批注版本已变化，未覆盖新版。');
@@ -235,7 +254,7 @@ function createWorkbench(vscode, context, services) {
                 if (epoch !== translationEpoch) return;
                 translations.set(cacheKey, translated);
             }
-            if (valid(c)) post({type: 'translation', key: item.key, ...translated});
+            if (valid(c)) post({type: 'translation', key: item.key, source: item.text, ...translated});
         }
         if (valid(c)) post({type: 'translationStatus', message: provider + '：本项翻译已处理，失败项可手动重试'});
     }
@@ -251,6 +270,12 @@ function createWorkbench(vscode, context, services) {
             client = message.instance; ready = true; sendContent(); return;
         }
         if (!active || !panel) return;
+        if (message.type === 'filter') {
+            const f = message.filter;
+            if (!f || typeof f.query !== 'string' || !['', 'manuscript', 'response'].includes(f.kind) || typeof f.notes !== 'boolean') return;
+            navigationFilter = {query: f.query, kind: f.kind, notes: f.notes};
+            return;
+        }
         if (message.type === 'appearance') {
             appearanceWork = appearanceWork.then(async () => {
                 const values = message.reset ? Object.fromEntries(reviewStyle.screenKeys.map(k => [k, reviewStyle.defaults[k]])) : message.values;
@@ -315,11 +340,11 @@ function createWorkbench(vscode, context, services) {
                 return await handoffSavedNote({...handoffRetry});
             }
             if (message.type === 'switch' || message.type === 'next' || message.type === 'previous') {
-                const list = directory().filter(e => lastRecords.has(e.id)), index = list.findIndex(e => e.id === active.id);
+                const list = filterItems(directory(), navigationFilter), index = list.findIndex(e => e.id === active.id);
                 const id = message.type === 'switch' ? message.target : list[index + (message.type === 'next' ? 1 : -1)]?.id;
                 const next = lastRecords.get(id);
                 if (next) await show(next.c);
-                else return post({type: 'result', message: '没有下一个可操作项；已接收成果可查 Git，未重新创建候选。'});
+                else return post({type: 'result', message: '当前筛选范围没有更多项目；可清除筛选查看全部。已接收成果可查 Git。'});
             } else if (message.type === 'latest') {
                 if (!await allowSwitch()) return;
                 const data = await services.read({...c, version: pending?.c.version || c.version});
@@ -332,7 +357,8 @@ function createWorkbench(vscode, context, services) {
                     throw new Error('请先保存其他方案草稿和返修批注，再保存并接收本方案。');
                 }
                 const value = option.after.includes('\r\n') ? message.value.replace(/\r?\n/g, '\r\n') : message.value;
-                if (message.type === 'save' || value !== option.after) {
+                if (message.type === 'save' && value === option.after) return post({type: 'result', message: '候选未修改，无需保存。'});
+                if (value !== option.after) {
                     loaded = await services.save(c, message.option, value);
                     active = {...c, version: loaded.version}; dirty = false;
                     post({...packet(), type: 'saved', option: message.option});
@@ -401,4 +427,4 @@ function createWorkbench(vscode, context, services) {
         settingsChanged() {if (active) {translationEpoch++; autoTranslate();}},
         get active() {return active;}, whenTranslationIdle: () => translationRun || Promise.resolve()};
 }
-module.exports = {createWorkbench, html};
+module.exports = {createWorkbench, html, filterItems};

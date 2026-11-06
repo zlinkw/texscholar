@@ -1,6 +1,6 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
-const {createWorkbench, html} = require('./review_workbench');
+const {createWorkbench, html, filterItems} = require('./review_workbench');
 test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts and next acceptance', async () => {
     let receive, creations = 0, htmlWrites = 0, confirmation, disposed, panel, changed;
     const messages = [], events = [], original = 'The model is strong.';
@@ -233,4 +233,47 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     await send('note', {text: '交接期间仍可保存新要求'});
     assert.equal(records.get('3').data.edit.requests.at(-1).text, '交接期间仍可保存新要求');
     finishHandoff(); await handoffRun;
+});
+
+test('filtered navigation and own saves preserve exact note bindings without accepting or guessing', async () => {
+    let receive, version = 1;
+    const messages = [], writes = [];
+    const records = new Map(['1', '2', 'a', 'b'].map(id => [id, {c: {repo: '/fixture', owner: 'reply.tex', id, version: 'v1'},
+        data: {version: 'v1', original: 'Same original.', edit: {kind: /^\d/.test(id) ? 'manuscript' : 'response', file: 'paper.tex', versions: ['v1'], requests: [],
+            questions: [{id: id === '2' ? 'R1-Q30' : 'R1-Q3', file: 'reply.tex', quote: 'Question'}]},
+        options: [...'ABC'].map(label => ({label, after: label + ' text.', changes: [], reason: label}))}}]));
+    const services = {read: async c => structuredClone(records.get(c.id).data), style: () => require('./review_style').defaults,
+        selection: () => 'A', pdfStatus: () => '', autoTranslate: () => false,
+        directory: () => [...records.values()].map(r => ({id: r.c.id, kind: r.data.edit.kind, questions: r.data.edit.questions.map(q => q.id), requests: 0})),
+        save: async (c, label, after) => {writes.push('save'); const r = records.get(c.id); r.data.options.find(o => o.label === label).after = after;
+            r.c.version = r.data.version = 'v' + ++version; r.data.edit.versions.push(r.c.version); view.sync(records, c); return structuredClone(r.data);}, saved() {},
+        accept: async c => {writes.push('accept'); records.delete(c.id); view.sync(records, c);}};
+    const vscode = {Uri: {file: fsPath => ({fsPath})}, ViewColumn: {One: 1}, window: {createWebviewPanel: () => ({visible: true, reveal() {}, dispose() {},
+        onDidDispose() {}, onDidChangeViewState() {}, webview: {asWebviewUri: uri => uri.fsPath, onDidReceiveMessage: fn => {receive = fn;}, postMessage: m => messages.push(m)}})}};
+    const view = createWorkbench(vscode, {subscriptions: []}, services);
+    view.setRecords(records); await view.show(records.get('1').c); await receive({type: 'ready'});
+    const send = (type, extra = {}) => receive({type, id: view.active.id, version: view.active.version, ...extra});
+    await send('dirty', {dirty: true, noteDirty: true, state: {drafts: {B: 'B changed.'}, note: 'Keep C exact', scope: 'C',
+        selected: {side: 'candidate', option: 'C', value: 'C text.', start: 2, end: 6}}});
+    await send('save', {option: 'B', value: 'B changed.'});
+    let resume = messages.findLast(m => m.type === 'saved').resume;
+    assert.equal(resume.selected.option, 'C'); assert.equal(resume.selectionStale, false); assert.equal(resume.scope, 'C');
+    await send('save', {option: 'C', value: 'Different C.'});
+    resume = messages.findLast(m => m.type === 'saved').resume;
+    assert.equal(resume.selectionStale, true); assert.equal(resume.selected.value, 'C text.'); assert.equal(resume.note, 'Keep C exact');
+    const saves = writes.length;
+    await send('save', {option: 'C', value: 'Different C.'}); assert.equal(writes.length, saves, 'unchanged saves do not create versions');
+    await send('save', {option: 'C', value: ''}); assert.equal(records.get('1').data.options[2].after, '', 'deleting all candidate text is valid');
+    await send('dirty', {dirty: false, noteDirty: false});
+    await send('filter', {filter: {query: 'R1-Q3', kind: 'response', notes: false}});
+    await send('next'); assert.equal(view.active.id, 'a');
+    await send('next'); assert.equal(view.active.id, 'b');
+    await send('previous'); assert.equal(view.active.id, 'a');
+    await send('accept', {option: 'A'}); assert.equal(view.active.id, 'b');
+    await send('accept', {option: 'A'}); assert.equal(view.active.id, 'b', 'do not escape filter after its last item');
+    await send('filter', {filter: {query: '', kind: '', notes: false}});
+    await send('next'); assert.equal(view.active.id, '1');
+    assert.deepEqual(filterItems(services.directory(), {query: 'R1-Q3', kind: '', notes: false}).map(i => i.id), ['1']);
+    assert.deepEqual(filterItems(services.directory(), {query: '', kind: '', notes: true}), []);
+    assert.equal(records.get('1').data.original, 'Same original.');
 });
