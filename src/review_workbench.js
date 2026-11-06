@@ -29,7 +29,19 @@ function createWorkbench(vscode, context, services) {
     const translations = new Map();
     let translationRun, translationRequested = false, retryTranslation = false, translationEpoch = 0;
     let lastRecords = new Map(), sourceSelection;
-    const post = message => panel?.webview.postMessage(message);
+    let ready = false, client, uiState, notice, reading;
+    function post(message) {
+        if (message.type === 'noteSaved' || message.type === 'noteEdited') {
+            noteDirty = false;
+            if (uiState) Object.assign(uiState, {note: '', editingNote: undefined, selected: undefined, composer: false});
+        }
+        if (message.type === 'saved' && uiState) {
+            uiState.c = {...active}; delete uiState.drafts[message.option]; uiState.selected = undefined;
+            dirty = Object.entries(uiState.drafts).some(([label, value]) => options(loaded).some(o => o.label === label && o.after.replace(/\r\n/g, '\n') !== value));
+        }
+        if (['result', 'noteSaved', 'noteEdited'].includes(message.type)) notice = message;
+        if (ready && panel?.visible) return panel.webview.postMessage(message);
+    }
     const configuration = require('./ai_setup');
     context.subscriptions.push(configuration.subscribe(value => post({type: 'configuration', ...value})));
     const key = c => JSON.stringify([c.repo, c.owner, c.id, c.version]);
@@ -39,11 +51,22 @@ function createWorkbench(vscode, context, services) {
         const {file, kind, location, versions, requests, questions} = loaded.edit;
         return {type: 'content', c: active, data: {original: loaded.original, edit: {file, kind, location, versions, requests, questions}, fewer_options_reason: loaded.fewer_options_reason},
             options: options(loaded), directory: directory(), style: services.style(),
-            sourceSelection,
+            sourceSelection, resume: uiState, reading, busy: handling,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }
     const valid = c => active && key(active) === key(c);
-    function sendContent() {post(packet()); post({type: 'configuration', ...configuration.status()}); autoTranslate();}
+    function sendContent() {
+        if (!ready || !panel?.visible) return;
+        post(packet()); post({type: 'configuration', ...configuration.status()});
+        if (hasPending && pending && pending.c.version !== active.version && (dirty || noteDirty)) post({type: 'conflict', message: 'AI 已生成新版。未保存编辑仍保留；请保存到别处或放弃后载入最新。'});
+        if (!lastRecords.has(active.id)) post({type: 'unavailable', message: '当前项已处理或原文冲突；未覆盖任何未保存内容。'});
+        if (notice?.message) post(notice);
+        if (translations.size) for (const item of translationItems(loaded)) {
+            const entry = translations.get(JSON.stringify([services.provider(), item.text]));
+            if (entry) post({type: 'translation', key: item.key, ...entry});
+        }
+        autoTranslate();
+    }
     async function allowSwitch() {
         if (!dirty && !noteDirty) return true;
         return await vscode.window.showWarningMessage('当前审核页有未保存的候选或返修要求，切换会丢失它们。', {modal: true}, '放弃未保存内容并切换') === '放弃未保存内容并切换';
@@ -53,12 +76,14 @@ function createWorkbench(vscode, context, services) {
         if (!await allowSwitch()) return;
         const data = await services.read(c);
         active = {...c}; loaded = data; dirty = noteDirty = false; hasPending = false; sourceSelection = undefined;
+        uiState = notice = undefined;
         if (!panel) {
             panel = vscode.window.createWebviewPanel('texscholarReview', '论文审核', vscode.ViewColumn.One,
-                {enableScripts: true, localResourceRoots: [vscode.Uri.file(path.join(__dirname, 'vendor', 'katex'))], retainContextWhenHidden: true});
+                {enableScripts: true, localResourceRoots: [vscode.Uri.file(path.join(__dirname, 'vendor', 'katex'))], retainContextWhenHidden: false});
             panel.webview.onDidReceiveMessage(receive);
+            panel.onDidChangeViewState(({webviewPanel}) => {if (!webviewPanel.visible) {ready = false; translationRequested = retryTranslation = false;}});
             panel.onDidDispose(() => {panel = undefined; active = loaded = pending = sourceSelection = undefined;
-                lastRecords = new Map(); hasPending = dirty = noteDirty = false; translationEpoch++; translations.clear();});
+                lastRecords = new Map(); hasPending = dirty = noteDirty = ready = false; uiState = notice = client = reading = undefined; translationEpoch++; translations.clear();});
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
@@ -79,10 +104,10 @@ function createWorkbench(vscode, context, services) {
         } else if (dirty || noteDirty) {
             pending = next; hasPending = true;
             post({type: 'conflict', message: 'AI 已生成新版。未保存编辑仍保留；请保存到别处或放弃后载入最新。'});
-        } else {active = {...next.c}; loaded = next.data; sendContent();}
+        } else {active = {...next.c}; loaded = next.data; uiState = notice = undefined; sendContent();}
     }
     function autoTranslate(force = false) {
-        if (!active || (!force && !services.autoTranslate())) return;
+        if (!active || !ready || !panel?.visible || (!force && !services.autoTranslate())) return;
         translationRequested = true;
         retryTranslation ||= force;
         if (translationRun) return;
@@ -107,11 +132,10 @@ function createWorkbench(vscode, context, services) {
     async function translate(retry) {
         trimTranslations();
         const c = {...active}, data = loaded, epoch = translationEpoch, provider = services.provider();
-        const items = [{key: 'original', text: data.original}, ...options(data).map(o => ({key: o.label, text: o.after})),
-            ...(data.edit.questions || []).map((q, i) => ({key: 'question' + i, text: q.quote}))];
+        const items = translationItems(data);
         let failure;
         for (const item of items) {
-            if (!valid(c) || epoch !== translationEpoch) return;
+            if (!valid(c) || epoch !== translationEpoch || !ready || !panel?.visible) return;
             if (!item.text.trim()) continue;
             const cacheKey = JSON.stringify([provider, item.text]);
             let translated = translations.get(cacheKey);
@@ -126,14 +150,27 @@ function createWorkbench(vscode, context, services) {
         }
         if (valid(c)) post({type: 'translationStatus', message: provider + '：本项翻译已处理，失败项可手动重试'});
     }
+    function translationItems(data) {
+        return [{key: 'original', text: data.original}, ...options(data).map(o => ({key: o.label, text: o.after})),
+            ...(data.edit.questions || []).map((q, i) => ({key: 'question' + i, text: q.quote}))];
+    }
     async function receive(message) {
-        if (message.type === 'ready') {if (active) sendContent(); return;}
+        if (message.type === 'ready') {
+            if (!active || !panel?.visible || ready && client === message.instance) return;
+            if (!uiState && message.state?.c && key(message.state.c) === key(active)) uiState = message.state;
+            if (!reading && uiState) reading = {sourceMode: uiState.sourceMode, chinese: uiState.chinese};
+            client = message.instance; ready = true; sendContent(); return;
+        }
         if (!active || !panel) return;
+        if (message.type === 'viewState' && message.version === active.version && message.id === active.id) {
+            uiState = {...message.state, c: {...active}}; reading = {sourceMode: uiState.sourceMode, chinese: uiState.chinese}; return;
+        }
         if (message.type === 'dirty' && message.version === active.version && message.id === active.id) {
+            if (message.state) {uiState = {...message.state, c: {...active}}; reading = {sourceMode: uiState.sourceMode, chinese: uiState.chinese};}
             dirty = message.dirty === true; noteDirty = message.noteDirty === true; return;
         }
         if (handling) return post({type: 'result', error: true, message: '本次保存尚未结束，内容仍保留。'});
-        handling = true;
+        handling = true; notice = undefined;
         try {
             if (message.type === 'connect' || message.type === 'start') {await services[message.type](); return post({type: 'result', message: ''});}
             if (message.type === 'configuration') {await vscode.commands.executeCommand('localLatex.checkAIConfiguration'); return post({type: 'result', message: ''});}
@@ -152,7 +189,7 @@ function createWorkbench(vscode, context, services) {
             } else if (message.type === 'latest') {
                 if (!await allowSwitch()) return;
                 const data = await services.read({...c, version: pending?.c.version || c.version});
-                active = {...c, version: data.version}; loaded = data; dirty = noteDirty = false; hasPending = false; sendContent();
+                active = {...c, version: data.version}; loaded = data; dirty = noteDirty = false; hasPending = false; uiState = notice = undefined; sendContent();
             } else if (message.type === 'save') {
                 const option = options(loaded).find(o => o.label === message.option);
                 if (!option || typeof message.value !== 'string') throw new Error('请选择现有候选方案。');
@@ -212,7 +249,7 @@ function createWorkbench(vscode, context, services) {
         } catch (error) {post({type: 'result', error: true, message: error.message});}
         finally {
             handling = false;
-            if (hasPending && !dirty && !noteDirty) {const next = pending; hasPending = false; sync(next ? new Map(lastRecords) : lastRecords, {repo: active.repo, owner: active.owner});}
+            if (hasPending && (!dirty && !noteDirty || pending?.c.version === active.version)) {const next = pending; hasPending = false; sync(next ? new Map(lastRecords) : lastRecords, {repo: active.repo, owner: active.owner});}
         }
     }
     context.subscriptions.push({dispose() {panel?.dispose();}});

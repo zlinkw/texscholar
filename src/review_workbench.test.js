@@ -2,14 +2,15 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html} = require('./review_workbench');
 test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts and next acceptance', async () => {
-    let receive, creations = 0, htmlWrites = 0, confirmation, disposed;
+    let receive, creations = 0, htmlWrites = 0, confirmation, disposed, panel, changed;
     const messages = [], events = [], original = 'The model is strong.';
     const make = id => ({c: {repo: '/fixture', owner: 'reply.tex', id, version: 'v1'}, data: {version: 'v1', original,
         candidate: 'The model is reliable.', fewer_options_reason: 'fixture explanation', source: {text: 'private full source with machine state'}, edit: {file: 'main.tex', kind: 'manuscript', versions: ['v1'], requests: []},
         options: [...'ABC'].map((label, i) => ({label, after: ['The model is reliable.', 'The model is compact.', 'The model is efficient.'][i], reason: label, changes: []}))}});
     const records = new Map(['1', '2', 'a'].map(id => [id, make(id)]));
     const vscode = {Uri: {file: fsPath => ({fsPath})}, ViewColumn: {One: 1}, window: {showWarningMessage: async () => confirmation,
-        createWebviewPanel: () => {creations++; return {reveal() {}, dispose() {}, onDidDispose(fn) {disposed = fn;}, webview: {
+        createWebviewPanel: (_, __, ___, settings) => {creations++; assert.equal(settings.retainContextWhenHidden, false); return panel = {visible: true,
+            reveal() {panel.visible = true;}, onDidChangeViewState(fn) {changed = fn;}, dispose() {}, onDidDispose(fn) {disposed = fn;}, webview: {
             cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}),
             set html(value) {htmlWrites++; assert(value.includes('Content-Security-Policy'));},
             onDidReceiveMessage: fn => {receive = fn;}, postMessage: async value => messages.push(value)}};}}};
@@ -82,4 +83,44 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     disposed(); assert.equal(view.active, undefined);
     view.setRecords(records); await view.show(records.get('a').c); await receive({type: 'ready'}); await view.whenTranslationIdle();
     assert.equal(translations, once * 2, 'closing releases translations; reopening reads current content');
+    services.autoTranslate = () => false;
+    const state = {c: {...view.active}, drafts: {A: 'Draft A', B: 'Draft B'}, note: '保留未保存要求', composer: true,
+        selected: {side: 'candidate', option: 'B', value: 'The model is compact.', start: 13, end: 20}};
+    await send('dirty', {dirty: true, noteDirty: true, state});
+    const originalSave = services.save;
+    let finishSave;
+    services.save = async (...args) => {await new Promise(resolve => {finishSave = resolve;}); return originalSave(...args);};
+    const cachedRequests = translations;
+    const saving = send('save', {option: 'B', value: 'Saved B'});
+    panel.visible = false; changed({webviewPanel: panel}); const hiddenCount = messages.length;
+    finishSave(); await saving;
+    assert.equal(messages.length, hiddenCount, 'background writes update state without posting to a destroyed page');
+    await view.show(view.active); await receive({type: 'ready', instance: 'restored-1', state});
+    let restored = messages.filter(m => m.type === 'content').at(-1);
+    assert.equal(restored.c.version, 'v2');
+    assert.deepEqual(restored.resume.drafts, {A: 'Draft A'});
+    assert.equal(restored.resume.note, state.note);
+    assert(messages.slice(hiddenCount).some(m => m.type === 'translation'), 'existing translations restore even when automatic translation is off');
+    assert.equal(translations, cachedRequests, 'restoring cached translations makes no new service request');
+    assert(!messages.slice(hiddenCount).some(m => m.type === 'conflict'), 'the acknowledged own save is not an AI version conflict');
+    const readyCount = messages.length;
+    await receive({type: 'ready', instance: 'restored-1', state}); assert.equal(messages.length, readyCount, 'one document handshakes only once');
+    await send('dirty', {dirty: false, noteDirty: true, state: {...restored.resume, drafts: {}}});
+    const originalNote = services.note;
+    let finishNote;
+    services.note = async (...args) => {await new Promise(resolve => {finishNote = resolve;}); return originalNote(...args);};
+    const noting = send('note', {text: '保存一次要求'});
+    panel.visible = false; changed({webviewPanel: panel}); finishNote(); await noting;
+    await view.show(view.active); await receive({type: 'ready', instance: 'restored-2', state});
+    restored = messages.filter(m => m.type === 'content').at(-1);
+    assert.equal(restored.resume.note, ''); assert.equal(restored.resume.composer, false);
+    assert.equal(records.get('a').data.edit.requests.length, 1, 'background note completion is not restored as a new unsaved submission');
+    await send('dirty', {dirty: true, noteDirty: false, state: {...restored.resume, drafts: {A: '旧版未保存候选'}}});
+    panel.visible = false; changed({webviewPanel: panel});
+    const updated = records.get('a'); updated.c.version = updated.data.version = 'v3'; updated.data.edit.versions.push('v3');
+    view.sync(records, updated.c);
+    await view.show(view.active); await receive({type: 'ready', instance: 'restored-3'});
+    restored = messages.filter(m => m.type === 'content').at(-1);
+    assert.equal(restored.c.version, 'v2'); assert.equal(restored.resume.drafts.A, '旧版未保存候选');
+    assert(messages.some(m => m.type === 'conflict'));
 });
