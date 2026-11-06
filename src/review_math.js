@@ -91,7 +91,7 @@
         const fragment = doc.createDocumentFragment();
         function plain(parent, start, end, literal = false) {
             let at = start;
-            const percentAt = i => mode !== 'source' && !literal && model.text.startsWith('\\%', i) && !escaped(model.text, i);
+            const escapeAt = i => mode !== 'source' && !literal && model.text[i] === '\\' && '%&_#${}'.includes(model.text[i + 1]) && !escaped(model.text, i);
             function append(stop, text, changed, atomic = false) {
                 const span = doc.createElement('span');
                 span.className = changed ? side === 'original' ? 'old' : 'new' : 'same';
@@ -99,13 +99,13 @@
                 parent.appendChild(span); model.anchors.push({node: span, start: at, end: stop, atomic}); at = stop;
             }
             while (at < end) {
-                if (percentAt(at)) {
+                if (escapeAt(at)) {
                     const changed = ranges.some(([a, b]) => model.offsets[at] < b && model.offsets[at + 1] + 1 > a);
-                    append(at + 2, '%', changed, true); continue;
+                    append(at + 2, model.text[at + 1], changed, true); continue;
                 }
                 const changed = ranges.some(([a, b]) => model.offsets[at] >= a && model.offsets[at] < b);
                 let stop = at + 1;
-                while (stop < end && !percentAt(stop) && ranges.some(([a, b]) => model.offsets[stop] >= a && model.offsets[stop] < b) === changed) stop++;
+                while (stop < end && !escapeAt(stop) && ranges.some(([a, b]) => model.offsets[stop] >= a && model.offsets[stop] < b) === changed) stop++;
                 append(stop, model.text.slice(at, stop), changed);
             }
         }

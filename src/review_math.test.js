@@ -64,8 +64,8 @@ test('nonvisual equation labels do not block preview or disappear from the exact
     assert.equal(math.previewTex(String.raw`\verb|\label{x}|`), String.raw`\verb|\label{x}|`);
 });
 
-test('percent escapes in prose remain distinct from math, literal commands and comments', () => {
-    const raw = String.raw`90\% and $95\%$. \verb|\%| \begin{verbatim}\%\end{verbatim} % \% $comment$
+test('common prose escapes remain distinct from math, literal commands and comments', () => {
+    const raw = String.raw`90\% and \& \_ \# \$ \{ \} and $95\%$. \verb|\%| \begin{verbatim}\%\end{verbatim} % \% $comment$
 Next $p$ and 2\%.`;
     const parts = math.segments(raw);
     assert.equal(parts.map(p => raw.slice(p.start, p.end)).join(''), raw);

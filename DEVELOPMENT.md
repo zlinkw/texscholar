@@ -38,6 +38,8 @@ MCP read_context 返回同一 file_roles；AI 写候选前在共享锁内重新�
 
 0.9.5 仅在阅读层把普通文字的百分号转义显示为单个 `%`。分段沿用公式扫描器，区分公式、注释与 verbatim；显示锚点仍覆盖源码的 `\%` 两个字符，不改变正文、候选或 PDF。规定检查为 math/workbench/inline/writing 定向套件和 Windows 隔离选区交互；不增加性能测量或重跑未改的编译／Git／翻译组。实际 21 项定向测试通过；Windows 隔离界面验证 `90\%` 显示为 `90%`，选中 `%` 保存的批注仍精确引用源码 `\%`，源码模式完整保留反斜杠；原有公式基线、整式／分子批注和草稿保留继续通过，正文及 PDF 未改。Mac 未实机验证。
 
+0.9.6 将同一显示锚点机制扩展至 `\&`、`\_`、`\#`、`\$`、`\{`、`\}`，不增加替换流水线。沿用 math/workbench/inline/writing 定向检查及 Windows 隔离界面验证；验证所有字面转义、源码模式、仅变动字符着色、包含转义的单词及跨转义连续选区、CRLF／Unicode 定位、字面环境和数学边界。实际 21 项定向测试通过。Windows 界面逐一验证七种转义的预览／精确选区及批注保存，跨 `A\&B` 的连续选择、只标变化的 `#`、CRLF／emoji 后定位、源码原样、字面内容保护、公式基线与草稿保留均通过，未写正文或编译 PDF。首轮界面样例把 `#` 的预期源位置算到后一个字符，修正该夹具后通过，原失败日志保留；Mac 未实机验证。仅改阅读层，不修改真实项目、PDF 算法、Typst 或全局 SKILL。
+
 ## 开发依赖
 
 Node.js 22 或更新版本、Python 3.12 或更新的 Python 3、Git、tex-fmt、TeX Live/TinyTeX/MacTeX。Python PDF 测试另需 `pypdf`，不是插件后端的运行依赖。ChkTeX 测试需要实际安装的 LaTeX Workshop 的 `out/src/lint/latex-code-actions.js`，通过环境变量指定，不依赖个人扩展目录或固定版本。
