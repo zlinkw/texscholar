@@ -28,6 +28,12 @@ class Conflict(ValueError):
     pass
 
 
+class OverlapConflict(Conflict):
+    def __init__(self, id_, version, file):
+        super().__init__(f'Overlapping unresolved edits: existing ID {id_}; rework that item if appropriate, never auto-merge or accept')
+        self.id, self.version, self.file = id_, version, file
+
+
 @contextmanager
 def writer_lock_at(parent):
     """Share the existing project writer lock with metadata-only configuration."""
@@ -623,7 +629,7 @@ class Review:
             obj = self.payload(other)
             x, y = locate(text, self.live_excerpt(other, obj), obj["left"], obj["right"])
             if max(a, x) < min(b, y) or (a == b and x <= a <= y) or (x == y and a <= x <= b):
-                raise Conflict("Overlapping unresolved edits: rework the existing ID or resolve it first")
+                raise OverlapConflict(id_, other['versions'][-1], rel)
         deps = spec.get("deps", edit.get("deps", []) if rework else [])
         if any(d not in edits or d == rework for d in deps):
             raise Conflict("Dependencies must refer to other existing IDs")

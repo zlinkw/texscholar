@@ -3,23 +3,39 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {activate} = require('./writing');
 const {activate: aiSetup, buildPrompt} = require('./ai_setup');
-test('writing context uses installed guide and current source, adds both to Codex without sending or creating files', async () => {
+test('writing context delegates one precise source scope to the current Codex chat', async () => {
     const handlers = new Map(), calls = [], messages = [];
     const source = {scheme: 'file', fsPath: '/paper/new-paper.tex'};
     const vscode = {Uri: {file: file => ({scheme: 'file', fsPath: file})}, extensions: {onDidChange: () => ({dispose() {}})}, workspace: {onDidChangeConfiguration: () => ({dispose() {}}), isTrusted: true, findFiles: async () => [],
+        getWorkspaceFolder: () => ({uri: {fsPath: '/paper'}}),
         createFileSystemWatcher: () => ({dispose() {}, onDidCreate: () => ({dispose() {}})}), onDidChangeWorkspaceFolders: () => ({dispose() {}})},
-        window: {onDidChangeWindowState: () => ({dispose() {}}), activeTextEditor: {document: {uri: source, languageId: 'latex'}},
+        window: {onDidChangeWindowState: () => ({dispose() {}}), activeTextEditor: {selection: {start: 0, end: 5}, document: {uri: source, languageId: 'latex', getText: () => 'First sentence.', offsetAt: x => x}},
             showInformationMessage: text => messages.push(text), showErrorMessage: text => {throw new Error(text);}},
         commands: {registerCommand: (id, handler) => {handlers.set(id, handler); return {dispose() {}};},
             getCommands: async () => ['chatgpt.addFileToThread'], executeCommand: async (...args) => calls.push(args)}};
     await activate({subscriptions: [], globalState: {get: (_, fallback) => fallback}}, vscode).ready;
     await handlers.get('localLatex.addWritingContext')();
-    assert.equal(calls.length, 3);
-    assert(calls.every(x => x[0] === 'chatgpt.addFileToThread'));
-    assert(calls[0][1].fsPath.endsWith('writing-guide.md'));
-    assert(calls[1][1].fsPath.endsWith('collaboration-guide.md'));
-    assert.equal(calls[2][1], source);
-    assert(messages[0].includes('自行发送'));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], 'localLatex.startPaperTask');
+    assert.equal(calls[0][1].keepCurrentChat, true);
+    assert.deepEqual(calls[0][1].readRequest.scopes, [{file: 'new-paper.tex', quote: 'First', left: '', right: ' sentence.'}]);
+});
+
+test('selected source omits machine state, preserves Unicode and rejects dirty or ledger selections', () => {
+    const {selectedScope} = require('./writing');
+    const state = '% CODEX-REVIEW-STATE-BEGIN\r\n% CODEX-REVIEW-DATA private fixture\r\n% CODEX-REVIEW-STATE-END\r\n';
+    const text = state + '中文😀 selected text.';
+    const editor = {document: {uri: {fsPath: '/paper/main.tex'}, getText: () => text, offsetAt: x => x},
+        selection: {start: state.length, end: state.length + 4}};
+    const folder = {uri: {fsPath: '/paper'}};
+    assert.equal(selectedScope(editor, folder).scopes[0].quote, '中文😀');
+    assert(!JSON.stringify(selectedScope(editor, folder)).includes('CODEX-REVIEW-DATA'));
+    editor.selection.end = editor.selection.start;
+    assert.equal(selectedScope(editor, folder).scopes[0].quote, '');
+    editor.selection.start = editor.selection.end = 5;
+    assert.throws(() => selectedScope(editor, folder), /状态记录/);
+    editor.document.isDirty = true;
+    assert.throws(() => selectedScope(editor, folder), /先保存/);
 });
 
 test('AI setup prompt is portable, complete and reuses one configuration/shortcut authority', async () => {
@@ -119,6 +135,14 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         assert(!everyday.includes('工具升级后读取同目录 source_review.py 的 --help'));
         assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), configured, 'repeat setup is idempotent');
         assert(!notices.at(-1).includes('首次连接'));
+        calls.length = 0;
+        const readRequest = {project: paper, scopes: [{file: 'paper.tex', quote: 'Original paper stays unchanged.'}]};
+        await start({readRequest, goal: '读取当前选区', keepCurrentChat: true});
+        assert(!calls.some(c => c[0] === 'chatgpt.newChat'));
+        assert.equal(calls.filter(c => c[0] === 'chatgpt.addFileToThread').length, 1);
+        const selected = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
+        assert(selected.includes(JSON.stringify({...readRequest, expected_plugin_version: require('../package.json').version})));
+        assert(!selected.includes('\\documentclass{article}'));
         available = []; calls.length = 0; copyChoice = '复制完整任务说明'; await start();
         assert.equal(copied.length, 1); assert(copied[0].includes(goal)); assert(copied[0].includes('A/B/C'));
         assert.equal(calls.length, 0, 'no unavailable command or automatic sending');

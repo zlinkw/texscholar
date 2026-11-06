@@ -4,8 +4,8 @@
 
 ## 日常修改的最短完整流程
 
-1. 一次 read_context 获取文件角色、版本、作者规则和本次上下文。已有编号传 ids；新写位置传 files，读取明确文件的全文；不传两者才读取整批。context.targets 是本次目标，items 也可能含相关依赖，不能因此扩大修改范围。sources 提供真实源码片段，author_comments 保留作者注释；需要跨章节核对时补读所需 files，不把局部材料当全文。任务／返修附件有“插件版本”时，将其作为 expected_plugin_version 传入。版本不匹配、旧服务不支持该参数或缺少 plugin_version 时，只报告需重启 Codex 的 TeXScholar MCP，再继续原会话；不要混用 CLI。
-2. 默认 core 协议包含三方案、科学证据和审核边界。按任务在 modules 追加 writing（新稿／注释结构）、abstract、introduction、method、experiments、figures、response、questions 或 backup；将实际获得的 rules_receipt 原样作为后续 known_rules，工具只补发缺少或新版规则。新会话或上下文丢失不能沿用“已读”回执。context.items 已有 original、options、questions、requests 时直接使用；只有缺少批注绑定的旧版本才用 read_feedback(ids) 补读。每组 ID/version 的全部方案仅出现一次，每条 requests 保留 option 和精确选区。已有材料不重复全盘搜索，日常改稿不附带安装检查、环境迁移或全仓审计。
+1. 一次 read_context 获取文件角色、版本、作者规则和本次上下文。已有编号传 ids；新写位置传 scopes，例如 `[{"file":"actual.tex","quote":"精确原文","left":"左锚点","right":"右锚点"}]`，或 `[{"file":"actual.tex","section":"\\section{Introduction}"}]`。quote 与 section 二选一；空 quote 表示由锚点定位的插入点，重复标题必须提供精确锚点。需要全文时传 files；都不传才读取整批。context.selections 是所选范围，sources 包含相邻上下文，不代表允许扩大改动。context.targets 也列出所选位置已有的未决项，items 可含相关依赖，不得重复新建。author_comments 的 global 是作者全局要求、local 是相关局部注释、reference 是模板注释；模板不升级为作者规则。omitted_local 统计未返回的无关局部注释，跨章节判断时补读相关 files。任务／返修附件的“插件版本”作为 expected_plugin_version；不匹配、缺少版本或旧服务不支持参数时重启 Codex 的 TeXScholar MCP，不混用 CLI。
+2. 默认 core 协议包含三方案、科学证据和审核边界。按任务在 modules 追加 writing（新稿／注释结构）、abstract、introduction、method、experiments、figures、response、questions 或 backup；将实际获得的 rules_receipt 原样作为后续 known_rules，工具只补发缺少或新版规则。新会话或上下文丢失不能沿用“已读”回执。context.items 已有 original、options、question_refs、requests 时直接使用；只有缺少批注绑定的旧版本才用 read_feedback(ids) 补读。每组 ID/version 的全部方案仅出现一次，每条 requests 保留 option 和精确选区。已有材料不重复全盘搜索，日常改稿不附带安装检查、环境迁移或全仓审计。
 3. 确定最小充分修改，直接组织 A/B/C；intent、summary、reason 是本次候选内的简短说明，不是额外的计划审批环节。作者明确要求先确认方案时仍先确认。
 4. 单项用 MCP propose_options 或 rework_options 直接提交，apply 默认 true，不必先预览再重复提交。多项用 submit_options，传 project、state、expected_sha256 和 operations；每项包含 operation（propose_options 或 rework_options）、spec，返修还需 id/version。工具顺序使用成功回执的 sha256，每项仍独立核验和持久化，遇错停止后续项。results 中已成功项不会回滚，不能重放；failed_index 是从 0 开始的失败位置，not_attempted_indices 是未尝试位置。按 error.recovery 处理后只续写失败／未尝试项。单项连续写同样使用上一条成功结果的 sha256，不逐项重读全篇或另写核验脚本，也不要并行写同一状态。
 5. 成功回执已给出实际编号、版本及状态摘要，正常保存后直接简报，不逐项重读全文、重算哈希或另写核验脚本。仅在冲突、新作者操作、内容变化、返回错误或缺失必要信息时重新读取受影响内容；不盲目重试写入。科学事实、实际数值、作者明确要求的检查仍需完成，不能用工具成功代替科学核验。
@@ -26,7 +26,7 @@
 - 同一原文位置只有一个审核编号；一次请求提交 A/B/C 三个有实质区别的方案，按作者要求、科学准确性、逻辑和简洁程度排序。A 是优先推荐，不是已经接收。每个方案附简短 reason，指出取舍，不给伪造置信度。
 - 三方案共享事实、数据和约束，不凑同义词版本，不编造实验或引文。确实不足三个合理方案时，提供一或两个并明确 fewer_options_reason。工具只能核对结构和文字是否重复，科学合理性仍需核验。
 - 生成或返修前，先根据原始意见、作者要求和当前原文确定最小充分修改范围，在同一请求的 `intent` 中填写 `goal`（解决的具体问题）与 `preserve`（必须保留的事实、限定条件及不需改动的内容）。范围不明确且影响结果时先讨论；已明确的要求直接执行，不额外索取确认。不为修一句而重写整个段落，也不为减少字数遗漏必要解释。新论文撰写同样说明本段写作目标和应保留的已确认内容。
-- 每个方案提供简短 `summary`，明确相对其他方案的实际取舍，避免“更好、更专业”等空泛评价；详细依据放 `reason`。三方案不强制对应固定的长短或风格。审核页的修改句数由工具从原文与候选计算，仅供作者判断，不是质量分数或硬性上限。旧候选没有这些说明时不自动补写或编造。
+- 每个方案默认仅用一句 `reason` 说明实际取舍；只有需要较长依据时才另加简短 `summary`，不重复写两份同义说明。保留三个完整 after，不截短候选。避免“更好、更专业”等空泛评价，三方案不强制对应固定的长短或风格。审核页的修改句数仅供作者判断，不是质量分数或硬性上限；旧候选缺少说明时不自动补写或编造。
 - A/B/C 是同一轮备选，v1/v2 是重新生成的轮次，不能混用。普通审核按位置组织，最多一个自然段；公式、图注、表注等特殊结构单独审核。新写或实质重写正文一句一行，不机械重排旧段落。
 - MCP 新建用 propose_options，返修用 rework_options，传实际 id、当前 version、expected_sha256 和结构化 spec；不要为正常 MCP 调用生成 shell 脚本或临时 JSON。维护用 CLI propose-options／rework-options 与 MCP 是不同入口，其 --apply／--expect 约定不是 MCP 的额外步骤；日常改稿不切换到 CLI。
 - 保留编号和正式原文。AI 生成的备选在作者明确接收具体方案前不能写入正文。接收、备份与科学问题闭合分开。旧单方案 propose/rework 命令已移除，不能绕过多方案约定；作者手动编辑某个方案仍由 edit-option 完成。
@@ -50,13 +50,15 @@
 }
 ```
 
-在上述请求中同时填写，例如 `"intent":{"goal":"解释权重的作用范围","preserve":"保留原公式、数值及适用条件；未涉及的实验结论保持原样"}`；各方案可分别用 `"summary":"保留原结构，仅补充作用范围"`、`"summary":"先交代计算对象，再解释权重"`、`"summary":"先界定适用条件，再说明作用"` 概括真实取舍。示例不是固定句式，必须与本次候选一致。
+在上述请求中同时填写，例如 `"intent":{"goal":"解释权重的作用范围","preserve":"保留原公式、数值及适用条件；未涉及的实验结论保持原样"}`。已有简短 reason 不再重复填 summary；示例不是固定句式，必须与本次候选一致。
 
 返修时保留该编号，按已读批注重排新一轮 A/B/C。可显式 discard_annotations=true 清除旧返修批注；不要求作者先逐条拒绝。手动编辑单个方案由插件的 edit-option 保存，保留其他方案，不用于要求 AI 只交一个新方案。元数据补关联使用 MCP link_questions，不改其他审核字段。
 
 手动保存的方案由插件标记 `manually_edited`；其旧 summary/reason 和原排序只供参考，不是 AI 对当前内容的重新评估。返修前读取作者实际保存的文字，按最新要求重新比较、排序并填写真实取舍；新的 options 不照搬该内部手改标记。页面未保存的实时草稿不是已持久化候选，不能当作已接收正文。A/B、A/C、B/C 阅读对照只改变页面差异展示，批注仍绑定具体方案与版本，不代表接收、排名变化或 PDF 切换。
 
 ## 关联、批注和交付
+
+read_context 的 question_refs 指向本次 context.questions 中的完整原始意见，相同 id/file/quote 只返回一份。引用键仅在本次结果内有效，写入仍须展开为完整 questions 数组并由工具精确核验，不按编号猜配。重叠错误返回 existing 的真实编号、版本和文件；按 recovery.ids 补读该项，再判断是否返修，不自动合并或接收。
 
 问题关联必须提供实际 id、项目内 file 和唯一精确 quote。多个问题涉及同一原文位置时合并为同一修改项，在 questions 中分别关联，不自动猜配。完整接口见同目录 question-linking-guide.md。返修上下文包含编号、选项、版本、原文、候选与选区；批注只加入 Codex 输入区，不自动发送或调用 AI。
 

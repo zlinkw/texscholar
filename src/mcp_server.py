@@ -5,8 +5,9 @@ import json
 import os
 import re
 import sys
-from source_review import Review, Conflict, PENDING, body, digest, locate
-from document_roles import scan as scan_roles
+from source_review import Review, Conflict, OverlapConflict, PENDING, body, digest, locate
+from document_roles import scan as scan_roles, relative_file
+from ai_context import paragraph_context, source_scope, comment_context
 
 HERE = Path(__file__).resolve().parent
 VERSION = json.loads((HERE.parent / 'package.json').read_text(encoding='utf-8'))['version']
@@ -17,7 +18,7 @@ INSTRUCTIONS = (
     'never overwrite formal prose before author acceptance. No global SKILL edits. '
     'Read exact author notes, current versions and feedback; no guessed question links. '
     'Acceptance, Git checkpoint and scientific closure are separate; AI tools do not accept candidates. '
-    'Scope reads with ids/files; request relevant rule modules and reuse rules_receipt as known_rules. Do not reread CLI help or run setup for ordinary revisions. '
+    'Scope reads with ids/scopes/files; request relevant rule modules and reuse rules_receipt as known_rules. Do not reread CLI help or run setup for ordinary revisions. '
     'Writes validate and save by default; chain returned sha256/version, rereading only on conflicts or new input. '
     'Use plugin tools, not retired single-candidate CLI interfaces. Unrelated code/Typst tasks are outside this server.'
 )
@@ -26,8 +27,9 @@ def schema(properties, required=()):
     return {'type': 'object', 'properties': properties, 'required': list(required), 'additionalProperties': False}
 
 STRING = {'type': 'string'}
-OPTION = schema({'label': {'type': 'string', 'enum': ['A', 'B', 'C']}, 'after': STRING, 'reason': STRING,
-                 'summary': {'type': 'string', 'description': 'One concise sentence naming the actual tradeoff versus the other options; not a quality score.'}}, ['label', 'after', 'reason'])
+OPTION = schema({'label': {'type': 'string', 'enum': ['A', 'B', 'C']}, 'after': STRING,
+                 'reason': {'type': 'string', 'description': 'Normally one sentence stating the actual tradeoff. Detailed explanation only when needed.'},
+                 'summary': {'type': 'string', 'description': 'Optional short headline only when reason needs a longer explanation; do not repeat reason.'}}, ['label', 'after', 'reason'])
 QUESTION = schema({k: STRING for k in ('id', 'file', 'quote')}, ['id', 'file', 'quote'])
 BASE = {'project': STRING, 'state': STRING,
         'expected_plugin_version': {'type': 'string', 'description': 'Version from the current plugin task/feedback packet. A mismatch requires restarting Codex MCP, not CLI fallback.'}}
@@ -36,7 +38,8 @@ STRINGS = {'type': 'array', 'items': STRING}
 RULE_MODULES = ['core', 'writing', 'abstract', 'introduction', 'method', 'experiments', 'figures', 'response', 'questions', 'backup']
 MODULES = {'type': 'array', 'items': {'type': 'string', 'enum': RULE_MODULES}}
 RULES = {'modules': MODULES, 'known_rules': schema({'version': STRING, 'modules': MODULES}, ['version', 'modules'])}
-READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS}
+SCOPES = {'type': 'array', 'items': schema({'file': STRING, 'quote': STRING, 'section': STRING, 'left': STRING, 'right': STRING}, ['file'])}
+READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS, 'scopes': SCOPES}
 SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'response']},
         'intent': schema({'goal': STRING, 'preserve': STRING}, ['goal', 'preserve']),
         'before': STRING, 'left': STRING, 'right': STRING, 'location': STRING,
@@ -46,7 +49,7 @@ SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'respo
         'resolve_requests': {'type': 'array', 'items': STRING}}
 TOOLS = [
     ('get_instructions', 'Read requested rule modules; pass known_rules from an earlier receipt to omit unchanged modules. Core is always required. No SKILL edits.', schema(RULES), True),
-    ('read_context', 'FIRST: exact source, author comments, current A/B/C, notes and dependencies. Use ids for specific revisions or files for full source of named files; omit both for all pending work. Reuse rules receipt.', schema(READ, ['project']), True),
+    ('read_context', 'FIRST: use ids for revisions, scopes for an exact quote/cursor (left/right anchors) or literal section command, files for full files. Scoped reads include overlapping pending items. Comments are separated by authority; question_refs resolve in questions. Omit selectors for all pending work. Reuse rules receipt.', schema(READ, ['project']), True),
     ('read_feedback', 'Read missing feedback generations, grouped once per ID/version; every note retains its exact option/selection. Optional ids scope.', schema({**BASE, 'ids': STRINGS}, ['project', 'state']), True),
     ('begin_review', 'Explicit new batch only, after protecting unbacked accepted results. Reuses an existing author-approved state header; never silently starts a batch.',
      schema({**WRITE, 'round': STRING, 'files': {'type': 'array', 'items': STRING}, 'submission': STRING}, ['project', 'state', 'expected_sha256', 'round', 'files']), False),
@@ -101,9 +104,14 @@ class ToolConflict(Conflict):
 
 def error_detail(error, args):
     # Only classified boundaries prescribe recovery. Unknown failures retain their cause.
+    if isinstance(error, OverlapConflict):
+        return {'code': 'overlapping_candidate', 'message': str(error), 'id': args.get('id'),
+                'existing': {'id': error.id, 'version': error.version, 'file': error.file},
+                'recovery': {'action': 'read_context', 'ids': [error.id], 'automatic_retry': False}}
     if not isinstance(error, ToolConflict):
         if str(error).startswith('Exact anchored span is missing or ambiguous'):
-            scope = {'ids': [args['id']]} if 'id' in args else {'files': [args['spec']['file']]}
+            files = [args['spec']['file']] if 'spec' in args and 'file' in args['spec'] else [s['file'] for s in args.get('scopes', [])]
+            scope = {'ids': [args['id']]} if 'id' in args else {'files': list(dict.fromkeys(files))}
             error = ToolConflict(str(error), 'source_changed', {'action': 'read_context', **scope, 'automatic_retry': False})
         elif str(error) == 'Reviewer question quote must match its actual source uniquely':
             error = ToolConflict(str(error), 'question_quote_invalid', {'action': 'read_exact_question_source',
@@ -154,11 +162,59 @@ def feedback_packet(review, ids=None):
     return {'items': list(groups.values()), 'sha256': digest(review.raw)}
 
 
-def ai_context(review, roles, ids=None, files=None):
+def initial_source_context(root, roles, args):
+    """Reading a selected new-paper passage never requires initializing review state."""
+    if args.get('ids'):
+        raise Conflict('No initialized batch; existing review IDs cannot be inferred')
+    texts, originals, spans, selections = {}, {}, {}, []
+    def read(file):
+        if file not in texts:
+            originals[file] = relative_file(root, file).read_bytes()
+            texts[file] = body(originals[file].decode('utf-8-sig'))
+        return texts[file]
+    for spec in args.get('scopes', []):
+        selected, surrounding = source_scope(read(spec['file']), spec)
+        spans.setdefault(spec['file'], []).append(surrounding)
+        selections.append({'file': spec['file'], 'start': selected[0], 'end': selected[1]})
+    for file in args.get('files', []):
+        spans[file] = [(0, len(read(file)))]
+    for entry in roles['structure']:
+        read(entry['file'])
+    result = {'sources': {file: [{'start': a, 'end': b, 'text': texts[file][a:b]} for a, b in ranges] for file, ranges in spans.items()},
+              'selections': selections, 'author_comments': comment_context(texts, spans, roles)}
+    if any(relative_file(root, file).read_bytes() != raw for file, raw in originals.items()):
+        raise ToolConflict('Source changed during reading', 'context_changed', {'action': 'read_context', 'automatic_retry': False})
+    return result
+
+
+def ai_context(review, roles, ids=None, files=None, scopes=None):
     """AI projection: exact text/metadata, never display diffs or duplicate ledger history."""
     review.assert_ready()
-    targets = selected_ids(review, ids, files)
+    texts, spans, selections = {}, {}, []
+    def read(file):
+        if file not in texts:
+            texts[file] = review.read(file)
+        return texts[file]
+    for spec in scopes or []:
+        selected, surrounding = source_scope(read(spec['file']), spec)
+        selections.append({'file': spec['file'], 'start': selected[0], 'end': selected[1]})
+        spans.setdefault(spec['file'], []).append(surrounding)
+    targets = selected_ids(review, ids if ids is not None else [] if scopes is not None and files is None else None, files)
     edits = review.state['edits']
+    # A new selection must reveal existing overlapping candidates before AI proposes another.
+    for id_, edit in edits.items():
+        relevant = [s for s in selections if s['file'] == edit['file']]
+        if edit['status'] not in PENDING or not relevant:
+            continue
+        payload = review.payload(edit)
+        try:
+            a, b = locate(read(edit['file']), review.live_excerpt(edit, payload), payload['left'], payload['right'])
+            matches = any(max(a, s['start']) < min(b, s['end']) or (s['start'] == s['end'] and a <= s['start'] <= b)
+                          or (a == b and s['start'] <= a <= s['end']) for s in relevant)
+        except Conflict:
+            matches = True  # Reveal unresolved source conflicts in the selected file, never hide them.
+        if matches and id_ not in targets:
+            targets.append(id_)
     included = set(targets)
     # Include dependents affected by target changes, then their transitive prerequisites.
     included.update(id_ for id_, edit in edits.items() if edit['status'] in PENDING and any(dep in targets for dep in edit.get('deps', [])))
@@ -170,23 +226,26 @@ def ai_context(review, roles, ids=None, files=None):
             if dep not in included:
                 included.add(dep); queue.append(dep)
     result = {'sha256': digest(review.raw), 'session': review.state.get('session'), 'next': review.state['next'],
-              'targets': targets, 'items': {}, 'sources': {}, 'author_comments': {}, 'source_scope': 'full files' if ids is None else 'target paragraphs and adjacent paragraphs; request files for full source'}
-    texts = {}
-    def read(file):
-        if file not in texts:
-            texts[file] = review.read(file)
-        return texts[file]
-    # Preserve all author comments (including global rules and local plans), excluding runtime DATA.
+              'targets': targets, 'items': {}, 'sources': {}, 'questions': {}, 'selections': selections,
+              'source_scope': 'Explicit files are complete; ids/scopes include surrounding paragraphs. Offsets refer to source without the runtime state block.'}
+    # Inspect rules without sending every unrelated comment to the model.
     for file in dict.fromkeys([review.state_rel, *[entry['file'] for entry in roles['structure']]]):
-        text = read(file)
-        result['author_comments'][file] = [match.group() for match in re.finditer(r'(?m)(?:^[ \t]*%[^\n]*(?:\n|$))+', text)]
-    spans = {}
+        read(file)
+    question_keys = {}
     for id_ in edits:
         if id_ not in included:
             continue
         edit = edits[id_]
-        item = {key: value for key, value in edit.items() if key not in ('versions', 'requests')}
+        item = {key: value for key, value in edit.items() if key not in ('versions', 'requests', 'questions')}
         item.update(id=id_, requests=[note for note in edit.get('requests', []) if note['status'] == 'open'])
+        item['question_refs'] = []
+        for question in edit.get('questions', []):
+            key = tuple(question[k] for k in ('id', 'file', 'quote'))
+            if key not in question_keys:
+                ref = 'q' + str(len(question_keys) + 1)
+                question_keys[key] = ref
+                result['questions'][ref] = question
+            item['question_refs'].append(question_keys[key])
         result['items'][id_] = item
         if not edit['versions']:
             item['archived'] = True
@@ -203,13 +262,9 @@ def ai_context(review, roles, ids=None, files=None):
         except Conflict as error:
             item.update(source_match=False, conflict=str(error))
             continue
-        # Read-only context boundaries; never used as a replacement/splitting operation.
-        gaps = list(re.finditer(r'\r?\n[ \t]*\r?\n', text))
-        left = [gap.end() for gap in gaps if gap.end() <= start]
-        right = [gap.start() for gap in gaps if gap.start() >= end]
-        spans.setdefault(edit['file'], []).append((left[-2] if len(left) > 1 else 0, right[1] if len(right) > 1 else len(text)))
-    full_files = files if files is not None else (list(dict.fromkeys(edits[id_]['file'] for id_ in included)) if ids is None else [])
-    if ids is None and files is None and not targets:
+        spans.setdefault(edit['file'], []).append(paragraph_context(text, start, end))
+    full_files = files if files is not None else (list(dict.fromkeys(edits[id_]['file'] for id_ in included)) if ids is None and scopes is None else [])
+    if ids is None and files is None and scopes is None and not targets:
         full_files = review.state['rounds'][-1]['files']
     for file in full_files:
         text = read(file)
@@ -222,6 +277,7 @@ def ai_context(review, roles, ids=None, files=None):
             else:
                 merged.append((start, end))
         result['sources'][file] = [{'start': start, 'end': end, 'text': read(file)[start:end]} for start, end in merged]
+    result['author_comments'] = comment_context(texts, spans, roles)
     verify_read(review)
     return result
 
@@ -248,6 +304,15 @@ class Server:
         if name == 'submit_options':
             return self.submit(args)
         root, git = self.project(args['project'])
+        if name == 'read_context':
+            for key in ('ids', 'files'):
+                if key in args and (not isinstance(args[key], list) or any(not isinstance(v, str) or not v for v in args[key])):
+                    raise Conflict('ids and files must be arrays of nonempty strings')
+            if 'scopes' in args:
+                if not isinstance(args['scopes'], list) or any(not isinstance(s, dict) or not isinstance(s.get('file'), str)
+                    or not s['file'] or any(not isinstance(s[k], str) for k in ('quote', 'section', 'left', 'right') if k in s)
+                    for s in args['scopes']):
+                    raise Conflict('scopes must be an array of file and string selectors')
         roles = scan_roles(root) if name == 'read_context' else None
         state = args.get('state')
         if name == 'read_context' and not state:
@@ -264,13 +329,14 @@ class Server:
                         owners.append(path.relative_to(root).as_posix())
             if not owners:
                 return {'initialized': False, 'plugin_version': VERSION, 'files': sources, 'file_roles': roles, **rule_packet({**args, 'modules': [*args.get('modules', []), 'writing']}),
+                        'context': initial_source_context(root, roles, args),
                         'next': 'Read actual author files. During authorized paper work establish one comment-only state header, then begin_review. Do not initialize merely for tool installation.'}
             if len(owners) != 1:
                 raise Conflict('Reconcile multiple state owners; do not guess')
             state = owners[0]
         review = Review(root, state, git)
         if name == 'read_context':
-            result = ai_context(review, roles, args.get('ids'), args.get('files')) if review.state else review.status()
+            result = ai_context(review, roles, args.get('ids'), args.get('files'), args.get('scopes')) if review.state else {**review.status(), **initial_source_context(root, roles, args)}
             rules = args if review.state else {**args, 'modules': [*args.get('modules', []), 'writing']}
             return {'owner': state, 'context': result, 'file_roles': roles, **rule_packet(rules), 'plugin_version': VERSION}
         if name == 'read_feedback':

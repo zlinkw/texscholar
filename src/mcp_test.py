@@ -15,6 +15,101 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_exact_scopes_reveal_overlap_and_return_actionable_conflict(self):
+        options = [{'label': k, 'after': 'Alternative ' + k + '.', 'reason': '取舍 ' + k} for k in 'ABC']
+        id_ = self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'The model is strong and fast.', 'options': options})['id']
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        before = self.review().raw
+        for scope in [{'quote': 'strong'}, {'quote': '', 'left': 'The model is ', 'right': 'strong and fast.'}]:
+            data = server.call('read_context', {**base, 'scopes': [{'file': 'main.tex', **scope}]})['context']
+            self.assertEqual(data['targets'], [id_])
+            self.assertEqual(data['items'][id_]['options'], options)
+            self.assertEqual(data['selections'][0]['file'], 'main.tex')
+        args = {**base, 'expected_sha256': digest(before), 'spec': {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'The model is strong and fast.', 'options': options}}
+        failure = server.message({'id': 1, 'method': 'tools/call', 'params': {'name': 'propose_options', 'arguments': args}})['result']
+        self.assertTrue(failure['isError'])
+        detail = failure['structuredContent']
+        self.assertEqual(detail['code'], 'overlapping_candidate')
+        self.assertEqual(detail['existing'], {'id': id_, 'version': self.review().state['edits'][id_]['versions'][-1], 'file': 'main.tex'})
+        self.assertEqual(detail['recovery']['ids'], [id_])
+        self.assertEqual(self.review().raw, before)
+        for scopes in ['main.tex', [{'file': 'main.tex', 'quote': 3}], [{'file': 'main.tex'}],
+                       [{'file': 'main.tex', 'quote': 'x', 'section': 'y'}], [{'file': '../escape.tex', 'quote': ''}]]:
+            with self.assertRaises(ValueError):
+                server.call('read_context', {**base, 'scopes': scopes})
+
+    def test_section_reader_preserves_exact_tex_and_comment_authority(self):
+        from ai_context import section_span, comment_context
+        text = ('% CODEX-RULES-BEGIN\r\n% 保留所有数值\r\n% CODEX-RULES-END\r\n'
+                '\\documentclass{article}\r\n% header requirement\r\n\\begin{document}\r\n'
+                '% \\section{Ignored}\r\n\\newcommand{\\titleexample}{\\section{Not active}}\r\n'
+                '\\begin{verbatim}\r\n\\section{Not active either}\r\n\\end{verbatim}\r\n'
+                '\\section[Short]{Method with \\textbf{details}}\r\n% local requirement\r\nExact $x$ and 1.5.\r\n'
+                '\\subsection{Child}\r\nChild text.\r\n\\section{Results}\r\n% unrelated experiment note\r\nEnd.')
+        heading = r'\section[Short]{Method with \textbf{details}}'
+        a, b = section_span(text, heading)
+        self.assertEqual(text[a:b], text[text.index(heading):text.index(r'\section{Results}')])
+        self.assertIn(r'\subsection{Child}', text[a:b])
+        for heading in [r'\section{Ignored}', r'\section{Not active}', r'\section{Not active either}',
+                        text[a:text.index(r'\section{Results}') + len(r'\section{Results}')]]:
+            with self.assertRaises(ValueError): section_span(text, heading)
+        duplicate = '\\section{Same}\nOne.\n\\section{Same}\nTwo.'
+        with self.assertRaises(ValueError): section_span(duplicate, r'\section{Same}')
+        a2, _ = section_span(duplicate, r'\section{Same}', right='\nTwo.')
+        self.assertEqual(a2, duplicate.rindex(r'\section{Same}'))
+        template = '% CODEX-RULES-BEGIN\n% Template example, not author requirements\n% CODEX-RULES-END\nExample.'
+        categories = comment_context({'main.tex': text, 'template.tex': template},
+            {'main.tex': [(a, b)], 'template.tex': [(0, len(template))]},
+            {'files': [{'file': 'main.tex', 'roles': ['manuscript']}, {'file': 'template.tex', 'roles': ['template']}]})
+        self.assertIn('保留所有数值', str(categories['global']))
+        self.assertIn('header requirement', str(categories['global']))
+        self.assertIn('local requirement', str(categories['local']))
+        self.assertNotIn('unrelated experiment note', str(categories['local']))
+        self.assertGreater(categories['omitted_local']['main.tex'], 0)
+        self.assertNotIn('template.tex', categories['global'])
+        self.assertIn('Template example', str(categories['reference']))
+
+    def test_questions_are_pooled_exactly_without_changing_ui_or_state(self):
+        question = {'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you.'}
+        options = [{'label': k, 'after': 'Alternative ' + k + '.', 'reason': '具体取舍 ' + k} for k in 'ABC']
+        ids = []
+        for original in ['Unchanged context before.', 'The model is strong and fast.']:
+            ids.append(self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript',
+                'before': original, 'options': options, 'questions': [question]})['id'])
+        raw = self.review().raw
+        ui = self.review().cards()
+        data = self.server().call('read_context', {'project': str(self.root), 'ids': ids})['context']
+        self.assertEqual(data['questions'], {'q1': question})
+        for id_ in ids:
+            self.assertEqual(data['items'][id_]['question_refs'], ['q1'])
+            self.assertEqual(self.review().state['edits'][id_]['questions'], [question])
+        self.assertEqual(self.review().raw, raw)
+        self.assertEqual(self.review().cards(), ui)
+        other = {'id': 'R1-Q1', 'file': 'main.tex', 'quote': 'Unchanged context after.'}
+        self.apply('update_questions', ids[1], self.review().state['edits'][ids[1]]['versions'][-1], [other])
+        data = self.server().call('read_context', {'project': str(self.root), 'ids': ids})['context']
+        self.assertEqual(data['questions'], {'q1': question, 'q2': other})
+        self.assertEqual(data['items'][ids[1]]['question_refs'], ['q1', 'q2'])
+
+    def test_new_paper_selection_can_be_read_without_review_initialization(self):
+        root = self.root / 'new-paper'; root.mkdir()
+        source = '% Author requirement\n\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nNew text.\n\\end{document}\n'
+        (root / 'draft.tex').write_text(source, encoding='utf-8')
+        server = self.server()
+        (self.root / 'registrations' / 'new.json').write_text(json.dumps({'roots': [str(root)]}), encoding='utf-8')
+        args = {'project': str(root), 'scopes': [{'file': 'draft.tex', 'section': r'\section{Intro}'}]}
+        result = server.call('read_context', args)
+        self.assertFalse(result['initialized'])
+        span = result['context']['selections'][0]
+        disk = (root / 'draft.tex').read_bytes().decode('utf-8')
+        self.assertTrue(disk[span['start']:span['end']].startswith(r'\section{Intro}'))
+        self.assertIn('Author requirement', str(result['context']['author_comments']['global']))
+        self.assertEqual((root / 'draft.tex').read_text(encoding='utf-8'), source)
+        self.assertEqual([p.name for p in root.iterdir()], ['draft.tex'])
+
     def setUp(self):
         fixtures.NativeReview.setUp(self)
         data = scan_roles(self.root)
@@ -202,11 +297,11 @@ class MCP(unittest.TestCase):
             item = context['items'][first]
             self.assertEqual(item['options'], options)
             self.assertEqual(item['requests'][0]['text'], '保留这个限定。')
-            self.assertEqual(item['questions'][0]['quote'], 'Thank you.')
+            self.assertEqual(context['questions'][item['question_refs'][0]]['quote'], 'Thank you.')
             self.assertNotIn('versions', item)
             self.assertNotIn('cards', context)
-            self.assertIn('保留实验数值', '\n'.join(context['author_comments']['main.tex']))
-            self.assertIn('解释边界', '\n'.join(context['author_comments']['main.tex']))
+            self.assertIn('保留实验数值', '\n'.join(b['text'] for b in context['author_comments']['global']['main.tex']))
+            self.assertIn('解释边界', '\n'.join(b['text'] for b in context['author_comments']['local']['main.tex']))
             for file, spans in context['sources'].items():
                 text = self.review().read(file)
                 for span in spans:

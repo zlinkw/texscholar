@@ -1,5 +1,21 @@
 'use strict';
 const path = require('node:path');
+function selectedScope(editor, folder) {
+    if (editor.document.isDirty) throw new Error('请先保存当前 LaTeX 文件，再添加写作上下文；未自动保存或编译。');
+    const source = require('./review_positions').view(editor.document.getText());
+    if (!source) throw new Error('审核状态注释边界异常，请先核对。');
+    let start = editor.document.offsetAt(editor.selection.start), end = editor.document.offsetAt(editor.selection.end);
+    if (source.start !== undefined) {
+        if (start === end ? start >= source.start && start < source.end : start < source.end && end > source.start)
+            throw new Error('请选择正文位置；审核状态记录不作为写作上下文。');
+        if (start >= source.end) start -= source.end - source.start;
+        if (end >= source.end) end -= source.end - source.start;
+    }
+    const file = path.relative(folder.uri.fsPath, editor.document.uri.fsPath);
+    if (!file || path.isAbsolute(file) || file.split(path.sep).includes('..')) throw new Error('当前文件不在所选论文工作区内。');
+    return {project: folder.uri.fsPath, scopes: [{file: file.split(path.sep).join('/'), quote: source.body.slice(start, end),
+        left: source.body.slice(Math.max(0, start - 120), start), right: source.body.slice(end, end + 120)}]};
+}
 function activate(context, vscode = require('vscode')) {
     const onboarding = require('./ai_setup').activate(context, vscode);
     const guide = vscode.Uri.file(path.join(__dirname, 'writing-guide.md'));
@@ -14,12 +30,10 @@ function activate(context, vscode = require('vscode')) {
             const editor = vscode.window.activeTextEditor;
             if (!vscode.workspace.isTrusted || !editor || editor.document.uri.scheme !== 'file' || editor.document.languageId !== 'latex')
                 throw new Error('请先打开受信任的本地 LaTeX 正文或回复信。');
-            if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread'))
-                throw new Error('未找到 Codex 的添加上下文入口；可先打开内置写作指南，不会启动其他 AI。');
-            await vscode.commands.executeCommand('chatgpt.addFileToThread', guide);
-            await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(path.join(__dirname, 'collaboration-guide.md')));
-            await vscode.commands.executeCommand('chatgpt.addFileToThread', editor.document.uri);
-            vscode.window.showInformationMessage('写作规则与当前源文件已加入 Codex 输入区；请说明写作目标后自行发送。没有生成论文文件或自动接收修改。');
+            const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+            if (!folder) throw new Error('请先将当前 LaTeX 文件所在项目作为工作区打开。');
+            await vscode.commands.executeCommand('localLatex.startPaperTask', {readRequest: selectedScope(editor, folder),
+                keepCurrentChat: true, goal: '读取指定选区或光标位置及其必要上下文，按我随后提供的目标工作；仅添加上下文不授权改写。'});
         } catch (error) {vscode.window.showErrorMessage(error.message);}
     }));
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.interfaceGuide', async () => {
@@ -35,4 +49,4 @@ function activate(context, vscode = require('vscode')) {
     }));
     return onboarding;
 }
-module.exports = {activate};
+module.exports = {activate, selectedScope};
