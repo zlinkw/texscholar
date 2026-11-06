@@ -9,7 +9,7 @@ const math = globalThis.TeXScholarMath;
 const instance = crypto.randomUUID();
 let rendering = false, stateFrame, restoration, toolbarSize;
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate']);
-const actionNames = {save: '保存候选', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
+const actionNames = {save: '保存候选', saveAccept: '保存并接收候选', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
     next: '切换审核项', previous: '切换审核项', switch: '切换审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', related: '定位关联改动'};
 function fitToolbar() {
@@ -189,11 +189,17 @@ function renderOption(o) {
     if (!article) {article = document.createElement('article'); article.id = 'option-' + o.label; $('options').appendChild(article);}
     article.className = [preview === o.label ? 'selected' : '', focused === o.label ? 'focused' : focused ? 'folded' : ''].join(' ');
     if (!article.children.length) article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
-        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><details class="reason"><summary>推荐理由</summary><span></span></details>'
+        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><p class="tradeoff"></p><p class="scopeSummary"></p><details class="reason"><summary>详细取舍</summary><span></span></details>'
         + '<div class="detail"><div class="text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
-        + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><small>仅保存待审版本，其他备选保留。</small></div></div>';
+        + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><button data-action="saveAccept" data-write data-option="' + o.label + '">保存并接收 ' + o.label + '</button><small>仅保存待审版本，其他备选保留。</small></div></div>';
+    article.querySelector('.tradeoff').textContent = o.summary || o.reason;
     article.querySelector('.reason span').textContent = o.reason;
-    article.querySelector('.reason').hidden = !o.reason;
+    article.querySelector('.reason').hidden = !o.summary || o.summary === o.reason;
+    const count = o.scope;
+    article.querySelector('.scopeSummary').textContent = !count ? '' : count.error ? '修改范围暂无法统计：' + count.error
+        : `文字变动涉及：原文 ${count.old_sentences} 句 → 候选 ${count.new_sentences} 句`
+            + (count.old_environments || count.new_environments ? `；独立环境 ${count.old_environments} → ${count.new_environments}` : '');
+    article.querySelector('.scopeSummary').title = '按 TeX 结构统计涉及变化的句子，不是质量评分或修改上限；不含纯首尾空白变化。';
     if (translatedText.has(o.label) && translatedText.get(o.label).source !== o.after) {
         translatedText.delete(o.label); $('zh-' + o.label).textContent = ''; rendered.delete($('zh-' + o.label));
     }
@@ -334,13 +340,14 @@ document.addEventListener('click', event => {
     if (type === 'whole') {$('scopeChoice').value = 'group'; scope(); return;}
     if (type === 'optionNote') {if (!canChangeNote()) return; $('scopeChoice').value = option; scope(); openComposer(); $('note').focus(); return;}
     if (type === 'editToggle') {$('editor-' + option).hidden = !$('editor-' + option).hidden; if (!$('editor-' + option).hidden) $('edit-' + option).focus(); return;}
-    if (type === 'note') {
-        if (editingNote) {send('editNote', {request: editingNote.id, text: $('note').value, previousText: editingNote.previousText}); return;}
+    if (type === 'note' || type === 'noteHandoff') {
+        const handoff = type === 'noteHandoff';
+        if (editingNote) {send('editNote', {request: editingNote.id, text: $('note').value, previousText: editingNote.previousText, handoff}); return;}
         const value = $('scopeChoice').value;
-        send('note', {...(selected || {side: 'original', option: 'ABC'.includes(value) && value.length === 1 ? value : undefined}), text: $('note').value}); return;
+        send('note', {...(selected || {side: 'original', option: 'ABC'.includes(value) && value.length === 1 ? value : undefined}), text: $('note').value, handoff}); return;
     }
     send(type, {option, target: button.dataset.target, index: Number(button.dataset.index),
-        compare: $('compare').checked, ...(type === 'save' ? {value: $('edit-' + option).value} : {})});
+        compare: $('compare').checked, ...(['save', 'saveAccept'].includes(type) ? {value: $('edit-' + option).value} : {})});
 });
 window.addEventListener('message', ({data: message}) => {
     if (message.type === 'busy') {waiting = message.action; buttons(); return;}
@@ -407,6 +414,8 @@ window.addEventListener('message', ({data: message}) => {
             $('note').focus();
         }
         $('fewer').textContent = data.fewer_options_reason || '';
+        $('intent').hidden = !data.intent;
+        $('intent').textContent = data.intent ? '本项目标：' + data.intent.goal + '　保留：' + data.intent.preserve : '';
         rendering = false;
         dirty();
     }

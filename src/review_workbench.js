@@ -27,7 +27,7 @@ section{margin:0 0 var(--section-space)}#options{display:grid;grid-template-colu
 .zh{font-size:var(--translation-font-size,15px);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:var(--space);border-left:2px solid var(--vscode-panel-border);padding-left:.5em;color:var(--vscode-descriptionForeground)}
 textarea{width:100%;min-height:6em;resize:vertical;padding:.5em;white-space:pre-wrap;overflow-wrap:anywhere}textarea.edit{min-height:11em;font-family:var(--vscode-editor-font-family,monospace)}details{margin:var(--space) 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:var(--space) 0;font:inherit}.question,.note{border-top:1px solid var(--vscode-panel-border);padding:var(--space) 0}.note{font-size:.94em}.questionHeading{justify-content:space-between;flex-wrap:wrap}.questionHeading>div{display:flex;gap:.3em}#scope{overflow-wrap:anywhere}#translateStatus{font-size:.8em}[hidden]{display:none!important}#empty{padding:1em}
 .formula{display:inline;vertical-align:baseline}.math-preview{display:inline;vertical-align:baseline;white-space:normal;color:var(--unchanged,inherit);overflow-wrap:normal;word-break:normal}.display-formula{display:block;max-width:100%;overflow-x:auto;overflow-y:hidden;padding:.45em .2em}.display-formula>.math-preview{display:block}.math-preview .katex-display{margin:.3em 0}.math-error{font-size:.8em;color:var(--vscode-descriptionForeground)}
-.optionHeading{display:flex;align-items:center;justify-content:space-between;gap:.3em;flex-wrap:wrap}.optionHeading h4{white-space:nowrap;margin:0}.optionActions{flex-wrap:wrap;margin-left:auto}.reason{font-size:.85em;margin:var(--space) 0}.reason summary{cursor:pointer;color:var(--vscode-descriptionForeground)}
+.optionHeading{display:flex;align-items:center;justify-content:space-between;gap:.3em;flex-wrap:wrap}.optionHeading h4{white-space:nowrap;margin:0}.optionActions{flex-wrap:wrap;margin-left:auto}.tradeoff,.scopeSummary,.intent{font-size:.85em;overflow-wrap:anywhere;margin:.2em 0}.scopeSummary{color:var(--vscode-descriptionForeground)}.reason{font-size:.85em;margin:var(--space) 0}.reason summary{cursor:pointer;color:var(--vscode-descriptionForeground)}
 .more{position:relative;display:inline-block;margin:0}.more summary{list-style:none}.more summary::-webkit-details-marker{display:none}.more>.menu{position:absolute;right:0;top:100%;z-index:10;min-width:17em;max-width:calc(100vw - 1em);max-height:65vh;overflow-y:auto;padding:.5em;border:1px solid var(--vscode-panel-border);border-radius:.45em;background:var(--vscode-editor-background);box-shadow:0 3px 12px #0003;display:flex;flex-direction:column;gap:.3em;font-size:var(--control-font-size,13px)}.more>.menu button{text-align:left;white-space:normal}.more>.menu label{padding:.3em}#overflowActions:empty{display:none}#overflowActions{display:flex;flex-direction:column;gap:.3em;border-bottom:1px solid var(--vscode-panel-border);padding-bottom:.4em}
 dialog{background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);border:1px solid var(--vscode-panel-border);border-radius:.5em;padding:.8em;width:min(38em,calc(100vw - 1em));max-height:85vh;overflow:auto;font-size:var(--control-font-size,13px)}dialog::backdrop{background:#0005}.dialogHeading{justify-content:space-between;margin-bottom:.7em}.appearanceFields{display:grid;grid-template-columns:1fr 1fr;gap:.6em}.appearanceFields label{display:flex;flex-direction:column;gap:.2em}.appearanceFields label:first-child{grid-column:1/-1}.appearanceFields input,.appearanceFields select{width:100%;padding:.3em}dialog small{display:block;margin:.7em 0}.directoryFilters{display:flex;gap:.4em;flex-wrap:wrap;margin-bottom:.5em}#directoryQuery{flex:1;min-width:10em}.directoryFilters input,.directoryFilters select{padding:.3em}#directoryResults{display:flex;flex-direction:column;gap:.2em}#directoryResults button{text-align:left;white-space:normal}.note.editing>.text,.note.editing>details,.note.editing>button{display:none}#noteComposer{margin:var(--space) 0}#noteComposer button{margin:.2em .2em .2em 0}
 </style></head><body>
@@ -35,10 +35,10 @@ dialog{background:var(--vscode-editor-background);color:var(--vscode-editor-fore
 <dialog id="appearanceDialog" aria-labelledby="appearanceTitle"><form method="dialog"><div class="dialogHeading"><strong id="appearanceTitle">审核页外观</strong><button aria-label="关闭外观设置" class="secondary">关闭</button></div></form><div class="appearanceFields"><label>阅读字体<input id="style-fontFamily" data-style="fontFamily" placeholder="留空跟随 VS Code；如 Microsoft YaHei, sans-serif"></label><label>阅读字号<input type="number" id="style-candidateFontSize" data-style="candidateFontSize" min="10" max="32" step="1"></label><label>文字行高<input type="number" id="style-candidateLineHeight" data-style="candidateLineHeight" min="1" max="2.5" step="0.1"></label><label>按钮字号<input type="number" id="style-controlFontSize" data-style="controlFontSize" min="10" max="24" step="1"></label><label>中文字号<input type="number" id="style-translationFontSize" data-style="translationFontSize" min="10" max="32" step="1"></label><label>内容间距<select id="style-cardLayout" data-style="cardLayout"><option value="compact">紧凑</option><option value="comfortable">宽松</option></select></label></div><small>更改后即时生效并保存。仅影响审核页，不修改论文、PDF 字号或全局 SKILL。源码编辑保持等宽字体。</small><div><button data-action="resetAppearance" class="secondary">恢复默认外观</button><span id="appearanceStatus" role="status"></span></div></dialog>
 <dialog id="directoryDialog" aria-labelledby="directoryTitle"><form method="dialog"><div class="dialogHeading"><strong id="directoryTitle">跳转审核项</strong><button class="secondary">关闭</button></div></form><div class="directoryFilters"><input id="directoryQuery" aria-label="搜索审核项" placeholder="编号、位置、文件、R1-Q3…"><select id="directoryKind" aria-label="筛选文档"><option value="">全部文档</option><option value="manuscript">正文</option><option value="response">回复信</option></select><label><input id="directoryNotes" type="checkbox">有待处理批注</label></div><div id="directoryResults"></div></dialog>
 <div id="layout"><main><div id="empty" hidden>本批没有可操作的待审项。可用“Git 备份已接收修改”备份成果。</div><div id="review"><h3 id="title"></h3>
-<section><h4>原文</h4><div id="original" class="text" data-side="original"></div><div id="originalZh" class="zh"></div></section>
+<p id="intent" class="intent" hidden></p><section><h4>原文</h4><div id="original" class="text" data-side="original"></div><div id="originalZh" class="zh"></div></section>
 <div id="translateStatus"></div>
 <section id="options"></section><p id="fewer"></p><section><h4>关联原始审稿问题</h4><div id="questions"></div></section>
-<section><h4>返修批注</h4><button data-action="newNote" class="secondary">新增返修批注</button><button data-action="reject" data-write class="secondary">拒绝本项全部候选</button><div id="noteComposer" hidden><p id="noteMode">新增返修批注</p><div id="noteScopeControls"><label>范围 <select id="scopeChoice"><option value="group">本项全部方案（默认）</option><option value="original">完整原文</option></select></label><button data-action="whole" class="secondary">取消选区／整项批注</button></div><p id="scope">未划词时可以直接填写整项要求。</p><textarea id="note" placeholder="填写返修要求"></textarea><button id="saveNote" data-action="note" data-write>保存返修批注</button><button data-action="cancelNote" class="secondary">取消</button></div><div id="notes"></div></section></div><small id="operationStatus" role="status" aria-live="polite"></small><p id="status" role="status" aria-live="polite"></p></main></div>
+<section><h4>返修批注</h4><button data-action="newNote" class="secondary">新增返修批注</button><button data-action="reject" data-write class="secondary">拒绝本项全部候选</button><div id="noteComposer" hidden><p id="noteMode">新增返修批注</p><div id="noteScopeControls"><label>范围 <select id="scopeChoice"><option value="group">本项全部方案（默认）</option><option value="original">完整原文</option></select></label><button data-action="whole" class="secondary">取消选区／整项批注</button></div><p id="scope">未划词时可以直接填写整项要求。</p><textarea id="note" placeholder="填写返修要求"></textarea><button id="saveNote" data-action="note" data-write>保存返修批注</button><button data-action="noteHandoff" data-write title="先保存，再把本项待处理批注加入 Codex 输入区；不自动发送">保存并加入 Codex</button><button data-action="cancelNote" class="secondary">取消</button></div><div id="notes"></div></section></div><small id="operationStatus" role="status" aria-live="polite"></small><p id="status" role="status" aria-live="polite"></p></main></div>
 ${assets.script ? `<script nonce="${nonce}" src="${assets.script}"></script>` : ''}<script nonce="${nonce}">${math}</script><script nonce="${nonce}">${client}</script></body></html>`;
 }
 
@@ -68,12 +68,28 @@ function createWorkbench(vscode, context, services) {
     const directory = () => services.directory().filter(item => lastRecords.has(item.id));
     function packet() {
         const {file, kind, location, versions, requests, questions} = loaded.edit;
-        return {type: 'content', c: active, data: {original: loaded.original, edit: {file, kind, location, versions, requests, questions}, fewer_options_reason: loaded.fewer_options_reason},
+        return {type: 'content', c: active, data: {original: loaded.original, edit: {file, kind, location, versions, requests, questions}, intent: loaded.intent, fewer_options_reason: loaded.fewer_options_reason},
             options: options(loaded), directory: directory(), style: services.style(),
             sourceSelection, resume: uiState, reading, busy: handling,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }
     const valid = c => active && key(active) === key(c);
+    async function decideAndAdvance(c, action, option) {
+        const list = [...lastRecords.values()], index = list.findIndex(r => r.c.id === c.id);
+        await services[action]({...c, option, workbench: true});
+        const next = list.slice(index + 1).concat(list.slice(0, index)).find(r => lastRecords.has(r.c.id));
+        hasPending = false;
+        if (next) await show(lastRecords.get(next.c.id).c);
+        else post({type: 'unavailable', message: '本批可操作项目已处理。未自动提交 Git 或判定科学问题完成。'});
+    }
+    async function handoffSavedNote(c) {
+        try {
+            await services.handoff(c);
+            post({type: 'result', message: '批注已保存，本项待处理批注已加入 Codex 输入区；请自行发送。'});
+        } catch (error) {
+            throw new Error('批注已保存，但加入 Codex 失败：' + error.message + '；可用顶部“批注 → Codex”重试，无需重复保存。');
+        }
+    }
     function sendContent() {
         if (!ready || !panel?.visible) return;
         post(packet()); post({type: 'configuration', ...configuration.status()});
@@ -245,20 +261,32 @@ function createWorkbench(vscode, context, services) {
                 if (!await allowSwitch()) return;
                 const data = await services.read({...c, version: pending?.c.version || c.version});
                 active = {...c, version: data.version}; loaded = data; dirty = noteDirty = false; hasPending = false; uiState = notice = undefined; sendContent();
-            } else if (message.type === 'save') {
+            } else if (message.type === 'save' || message.type === 'saveAccept') {
                 const option = options(loaded).find(o => o.label === message.option);
                 if (!option || typeof message.value !== 'string') throw new Error('请选择现有候选方案。');
+                if (message.type === 'saveAccept' && (noteDirty || Object.entries(uiState?.drafts || {}).some(([label, value]) =>
+                    label !== message.option && options(loaded).some(o => o.label === label && o.after.replace(/\r\n/g, '\n') !== value)))) {
+                    throw new Error('请先保存其他方案草稿和返修批注，再保存并接收本方案。');
+                }
                 const value = option.after.includes('\r\n') ? message.value.replace(/\r?\n/g, '\r\n') : message.value;
-                loaded = await services.save(c, message.option, value);
-                active = {...c, version: loaded.version}; dirty = false;
-                post({...packet(), type: 'saved', option: message.option}); autoTranslate();
-                services.saved(active, message.option, !!message.compare);
+                if (message.type === 'save' || value !== option.after) {
+                    loaded = await services.save(c, message.option, value);
+                    active = {...c, version: loaded.version}; dirty = false;
+                    post({...packet(), type: 'saved', option: message.option});
+                }
+                if (message.type === 'saveAccept') {
+                    try {await decideAndAdvance({...active}, 'accept', message.option);}
+                    catch (error) {throw new Error('候选保存步骤已完成，接收或跳转返回错误：' + error.message + '；请核对当前状态，不要重复保存。');}
+                } else {
+                    autoTranslate(); services.saved(active, message.option, !!message.compare);
+                }
             } else if (message.type === 'editNote') {
                 const note = (loaded.edit.requests || []).find(n => n.id === message.request);
                 if (!note || note.status !== 'open' || note.version !== c.version) throw new Error('该批注已更新或不是当前版本的待处理批注，请核对新版。');
                 await services.editNote(c, note, message.text, message.previousText);
                 loaded = await services.read(c);
                 post({type: 'noteEdited', request: note.id, requests: loaded.edit.requests || [], message: '批注已修改；编号、选区与候选保持不变。'});
+                if (message.handoff) return await handoffSavedNote(c);
             } else if (message.type === 'note') {
                 if (dirty) throw new Error('请先保存候选编辑，再绑定返修选区。');
                 const option = options(loaded).find(o => o.label === message.option);
@@ -275,15 +303,11 @@ function createWorkbench(vscode, context, services) {
                 }
                 await services.note(c, selected, message.text); noteDirty = false; sourceSelection = undefined;
                 post({type: 'noteSaved', message: '返修要求已保存，可继续添加；未发送 AI。'});
+                if (message.handoff) return await handoffSavedNote(c);
             } else if (message.type === 'accept' || message.type === 'reject') {
                 if (dirty || noteDirty) throw new Error('请先保存候选和返修要求，再接收或拒绝。');
                 if (message.type === 'accept' && !options(loaded).some(o => o.label === message.option)) throw new Error('请选择具体接收方案。');
-                const list = [...lastRecords.values()], index = list.findIndex(r => r.c.id === c.id);
-                await services[message.type]({...c, option: message.option, workbench: true});
-                const next = list.slice(index + 1).concat(list.slice(0, index)).find(r => lastRecords.has(r.c.id));
-                hasPending = false;
-                if (next) await show(lastRecords.get(next.c.id).c);
-                else post({type: 'unavailable', message: '本批可操作项目已处理。未自动提交 Git 或判定科学问题完成。'});
+                await decideAndAdvance(c, message.type, message.option);
             } else if (message.type === 'preview' || message.type === 'pdf') {
                 if (dirty) throw new Error('请先保存候选编辑再预览 PDF。');
                 const option = message.option || services.selection(c);

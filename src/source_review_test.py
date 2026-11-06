@@ -18,6 +18,26 @@ ROOT.mkdir(parents=True)
 
 
 class Flow(unittest.TestCase):
+    def test_revision_intent_and_tradeoffs_are_metadata_only(self):
+        source = self.read('main.tex')
+        intent = {'goal': '限定性能结论', 'preserve': '效率句和实验数值保持原样'}
+        options = [{'label': label, 'after': text, 'summary': label + ' 的具体取舍', 'reason': '保留已证实的事实'}
+                   for label, text in zip('ABC', ['The model may improve performance.',
+                       'The model improves measured performance.', 'The model improves performance on this task.'])]
+        spec = {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model improves performance.',
+                'intent': intent, 'options': options}
+        id_ = self.runop('propose_options', spec)['id']
+        data = self.review().inspect(id_)
+        self.assertEqual(data['intent'], intent)
+        self.assertEqual(data['options'][1]['summary'], options[1]['summary'])
+        self.assertEqual(data['options'][0]['scope']['new_sentences'], 1)
+        self.assertEqual(self.read('main.tex'), source)
+        for bad in [{'goal': '', 'preserve': 'keep'}, {'goal': 'goal'}, 'wrong']:
+            with self.assertRaises(m.Conflict): m.Review.validate_options({**spec, 'intent': bad})
+        with self.assertRaises(m.Conflict):
+            m.Review.validate_options({**spec, 'options': [{**options[0], 'summary': ''}]})
+        self.check_index()
+
     def test_edit_feedback(self):
         id_ = self.edit('main.tex', 'The model improves performance.', 'The model reliably improves performance.', deferred=True)
         data = self.review().inspect(id_)
@@ -388,6 +408,22 @@ class Flow(unittest.TestCase):
         self.assertIn("The estimator is robust.", self.read("section.tex"))
         self.assertNotIn("transaction", self.review().state)
         self.check_index()
+
+
+class ChangeScope(unittest.TestCase):
+    def test_changed_sentences_and_environments_only(self):
+        def scope(a, b): return m.change_scope(a, b, m.word_changes(a, b))
+        a = r'We use 0.05, e.g., for $p<0.05$ and Fig.~\ref{fig:a}. It is robust. Other text stays.'
+        self.assertEqual(scope(a, a.replace('robust', 'reliable')),
+                         dict(old_sentences=1, new_sentences=1, old_environments=0, new_environments=0))
+        self.assertEqual(scope(a, a)['new_sentences'], 0)
+        self.assertEqual(scope(a, a + '\n')['new_sentences'], 0)
+        self.assertEqual(scope('', 'A new sentence.')['new_sentences'], 1)
+        self.assertEqual(scope('A removed sentence.', '')['old_sentences'], 1)
+        eq = r'\begin{equation}x=1.2\end{equation}'
+        self.assertEqual(scope(eq, eq.replace('1.2', '2.4')),
+                         dict(old_sentences=0, new_sentences=0, old_environments=1, new_environments=1))
+        self.assertIn('error', scope(r'\[broken', r'\[changed'))
 
 
 if __name__ == "__main__":

@@ -66,7 +66,11 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
             cards: Object.fromEntries(Object.entries(allCards).filter(([, item]) => ['pending', 'rework'].includes(item.edit.status))), sources: {[path.basename(file)]: value}});
         if (args.includes('inspect')) return JSON.stringify(allCards[args[args.indexOf('--id') + 1]]);
         if (args.includes('feedback')) {edit.requests.push({...input, status: 'open'}); return JSON.stringify({card: data, owner_text: 'fixture owner'});}
-        if (args.includes('feedback-context')) return JSON.stringify({items: [{id: '1', file: edit.file, version: 'v1', current_version: 'v1', original: data.original, candidate: data.candidate, requests: edit.requests}]});
+        if (args.includes('feedback-context')) return JSON.stringify({items: [
+            {id: '1', file: edit.file, version: 'v1', current_version: 'v1', original: data.original, candidate: data.candidate, options: data.options, requests: edit.requests},
+            {id: '1', file: edit.file, version: 'v1', current_version: 'v1', original: data.original, candidate: data.options[1].after, options: data.options,
+                requests: [{option: 'B', side: 'candidate', quote: 'Clearer', text: '同一版本另一个方案的要求'}]},
+            {id: 'other', file: edit.file, version: 'v9', current_version: 'v9', original: 'Other original', candidate: 'Other candidate', requests: [{text: 'other item'}]}]});
         if (args.includes('decide')) {edit.status = args.includes('--accept') ? 'accepted' : 'rejected';
             if (edit.status === 'accepted') value = value.replace(data.original, data.options.find(o => o.label === args.at(-1)).after);
             return '{}';}
@@ -111,6 +115,16 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert(!f.calls.some(c => /send|submit|paste/i.test(c[0])));
     const attachment = f.calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath;
     assert(fs.readFileSync(attachment, 'utf8').includes('请更准确。'));
+    const content = fs.readFileSync(attachment, 'utf8');
+    assert.equal(content.split('"after": "Better sentence."').length - 1, 1, 'same generation options appear once');
+    assert(content.includes('other item'));
+    await f.ui.addRequests(c);
+    const scoped = fs.readFileSync(f.calls.findLast(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
+    assert(scoped.includes('请更准确。') && scoped.includes('同一版本另一个方案的要求'));
+    assert(!scoped.includes('other item'), 'combined action must not export another item');
+    const sent = f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length;
+    await assert.rejects(f.ui.addRequests({...c, version: 'outdated'}), /候选已更新/);
+    assert.equal(f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length, sent);
     assert(!f.backendCalls.slice(0, before).some(c => c.args.some(a => String(a).endsWith('review_pdf.py'))));
     await f.ui.preview(c); await f.ui.preview(c);
     assert.equal(f.calls.filter(c => c[0] === 'workbench.action.moveEditorToNewWindow').length, 1);

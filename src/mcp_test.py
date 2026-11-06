@@ -41,8 +41,9 @@ class MCP(unittest.TestCase):
         self.assertIn('propose-options', context['protocol'])
         source = (self.root / 'main.tex').read_bytes()
         args = {'project': str(self.root), 'state': 'reply.tex', 'expected_sha256': context['context']['sha256'], 'spec': {
+            'intent': {'goal': '限定模型描述', 'preserve': '保留已知事实'},
             'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': [
-                {'label': label, 'after': 'The model is ' + word + '.', 'reason': label} for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]}}
+                {'label': label, 'after': 'The model is ' + word + '.', 'reason': label, 'summary': '突出 ' + word} for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]}}
         self.assertFalse(server.call('propose_options', {**args, 'apply': False})['applied'])
         self.assertEqual(self.review().state['edits'], {})
         result = server.call('propose_options', args)
@@ -50,6 +51,8 @@ class MCP(unittest.TestCase):
         self.assertEqual((self.root / 'main.tex').read_bytes(), source)
         data = self.review().inspect(result['id'])
         self.assertEqual(len(data['options']), 3)
+        self.assertEqual(data['intent'], args['spec']['intent'])
+        self.assertEqual(data['options'][0]['summary'], '突出 reliable')
         stale = server.message({'id': 2, 'method': 'tools/call', 'params': {'name': 'propose_options', 'arguments': args}})
         self.assertTrue(stale['result']['isError'])
         self.assertIn('State changed', stale['result']['content'][0]['text'])

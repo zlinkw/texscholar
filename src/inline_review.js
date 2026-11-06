@@ -685,12 +685,22 @@ function createInlineReview(vscode, context, execute = run) {
         await fs.access(file);
         await require('./pdf_navigation').openFloating(vscode, vscode.Uri.file(file));
     }
-    async function addRequests() {
-        const c = await discover(), state = await backend(c, ['feedback-context']);
-        const notes = state.items.map(item => `审阅框编号：${item.id}\n方案：${item.option || '整项原文／全部备选'}\n文件：${item.file}\n批注基于版本：${item.version}\n当前候选版本：${item.current_version}`
-            + `\n【原版完整内容】\n${item.original}\n【修改版完整内容】\n${item.candidate}\n【作者返修批注】\n`
+    async function addRequests(target) {
+        const c = target || await discover(), state = await backend(c, ['feedback-context']);
+        const items = target ? state.items.filter(item => item.id === target.id) : state.items;
+        if (target && items.some(item => item.current_version !== target.version)) throw new Error('候选已更新，请核对新版再交接。');
+        const generations = new Map();
+        for (const item of items) {
+            const key = JSON.stringify([item.id, item.version]);
+            if (generations.has(key)) generations.get(key).requests.push(...item.requests);
+            else generations.set(key, {...item, requests: [...item.requests]});
+        }
+        const notes = [...generations.values()].map(item => `审阅框编号：${item.id}\n方案：见每条批注范围\n文件：${item.file}\n批注基于版本：${item.version}\n当前候选版本：${item.current_version}`
+            + `\n【原版完整内容】\n${item.original}`
+            + (item.options ? '\n【本轮全部备选（本批注对应方案见上方）】\n' + JSON.stringify(item.options, null, 2) : '\n【修改版完整内容】\n' + item.candidate)
+            + '\n【作者返修批注】\n'
             + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.side === 'original' ? '原文' : '候选'}选区：${n.quote}\n返修要求：${n.text}`).join('\n\n')
-            + (item.options ? '\n【本轮全部备选】\n' + JSON.stringify(item.options, null, 2) : ''));
+        );
         if (!notes.length) return vscode.window.showInformationMessage('没有待处理的批注。');
         if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread')) throw new Error('当前 Codex 插件没有可用的添加上下文命令；批注仍保留，未发送。');
         const parent = path.join(c.repo, '.codex-review', 'requests');
@@ -700,7 +710,7 @@ function createInlineReview(vscode, context, execute = run) {
         const contract = await fs.readFile(path.join(__dirname, 'collaboration-guide.md'), 'utf8');
         await fs.writeFile(file, `${contract}\n\n请读取 ${c.owner} 中最新的唯一审核状态，再处理以下批注。此文件是请求快照，不是状态表。\n保留原文与编号，使用 rework-options 一次提交排序后的 A/B/C；接收后才替换正文，不自动接收。\n\n${notes.join('\n\n')}\n`, 'utf8');
         await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
-        vscode.window.showInformationMessage('全部批注已作为上下文加入 Codex 输入区，请检查后自行发送。');
+        vscode.window.showInformationMessage((target ? '本项待处理批注' : '全部批注') + '已作为上下文加入 Codex 输入区，请检查后自行发送。');
     }
     function command(name, handler, displayOnly = false) {
         context.subscriptions.push(vscode.commands.registerCommand(name, async (...args) => {
@@ -760,7 +770,7 @@ function createInlineReview(vscode, context, execute = run) {
         const selected = arg?.scheme ? arg : vscode.window.tabGroups.activeTabGroup.activeTab?.input?.uri;
         await require('./pdf_navigation').openFloating(vscode, selected, true);
     }, true);
-    command('localLatex.inlineAddRequests', addRequests);
+    command('localLatex.inlineAddRequests', () => addRequests());
     command('localLatex.inlineTranslate', arg => openWorkbench(contextFor(arg)), true);
     command('localLatex.inlineTranslationSource', async arg => {
         const c = contextFor(arg); trusted(c);

@@ -22,11 +22,13 @@ def schema(properties, required=()):
     return {'type': 'object', 'properties': properties, 'required': list(required), 'additionalProperties': False}
 
 STRING = {'type': 'string'}
-OPTION = schema({'label': {'type': 'string', 'enum': ['A', 'B', 'C']}, 'after': STRING, 'reason': STRING}, ['label', 'after', 'reason'])
+OPTION = schema({'label': {'type': 'string', 'enum': ['A', 'B', 'C']}, 'after': STRING, 'reason': STRING,
+                 'summary': {'type': 'string', 'description': 'One concise sentence naming the actual tradeoff versus the other options; not a quality score.'}}, ['label', 'after', 'reason'])
 QUESTION = schema({k: STRING for k in ('id', 'file', 'quote')}, ['id', 'file', 'quote'])
 BASE = {'project': STRING, 'state': STRING}
 WRITE = {**BASE, 'expected_sha256': STRING, 'apply': {'type': 'boolean', 'default': True}}
 SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'response']},
+        'intent': schema({'goal': STRING, 'preserve': STRING}, ['goal', 'preserve']),
         'before': STRING, 'left': STRING, 'right': STRING, 'location': STRING,
         'options': {'type': 'array', 'items': OPTION, 'minItems': 1, 'maxItems': 3},
         'fewer_options_reason': STRING, 'questions': {'type': 'array', 'items': QUESTION},
@@ -140,7 +142,7 @@ class Server:
         if method == 'initialize':
             requested = request.get('params', {}).get('protocolVersion')
             return {'jsonrpc': '2.0', 'id': id_, 'result': {'protocolVersion': requested if requested in {'2024-11-05', '2025-03-26', '2025-06-18'} else '2025-03-26',
-                    'serverInfo': {'name': 'texscholar', 'version': '0.9.17'}, 'capabilities': {'tools': {}}, 'instructions': INSTRUCTIONS}}
+                    'serverInfo': {'name': 'texscholar', 'version': '0.9.18'}, 'capabilities': {'tools': {}}, 'instructions': INSTRUCTIONS}}
         if method == 'ping':
             result = {}
         elif method == 'tools/list':

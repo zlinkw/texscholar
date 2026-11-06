@@ -85,6 +85,24 @@ def word_changes(before, after):
             if tag != "equal"]
 
 
+def change_scope(before, after, changes):
+    """Display-only counts using the PDF's TeX-aware boundaries; never a size gate."""
+    from review_pdf import _unit_spans
+    counts = {}
+    try:
+        for side, text in (('old', before), ('new', after)):
+            units = _unit_spans(text)
+            for kind, name in (('prose', 'sentences'), ('environment', 'environments')):
+                counts[side + '_' + name] = sum(
+                    1 for unit in units if unit['kind'] == kind and unit['text'].strip() and any(
+                        max(unit['start'], change[side + '_start']) < min(unit['end'], change[side + '_end'])
+                        and before[change['old_start']:change['old_end']].strip() != after[change['new_start']:change['new_end']].strip()
+                        for change in changes))
+    except ValueError as error:
+        return {'error': str(error)}
+    return counts
+
+
 def validate_review_unit(text):
     """A new decision cannot combine separate paragraphs or prose and TeX displays."""
     lines = []
@@ -401,6 +419,13 @@ class Review:
         for i, option in enumerate(options):
             if not isinstance(option, dict) or option.get('label') != 'ABC'[i] or not isinstance(option.get('after'), str) or not isinstance(option.get('reason'), str) or not option['reason'].strip():
                 raise Conflict('Each ranked option needs sequential label A/B/C, after text and a reason')
+            if 'summary' in option and (not isinstance(option['summary'], str) or not option['summary'].strip()):
+                raise Conflict('Option summary must describe the actual tradeoff in nonempty text')
+        if 'intent' in spec:
+            intent = spec['intent']
+            if not isinstance(intent, dict) or set(intent) != {'goal', 'preserve'} or any(
+                    not isinstance(intent[k], str) or not intent[k].strip() for k in ('goal', 'preserve')):
+                raise Conflict('Revision intent needs nonempty goal and preserve text')
         if len({o['after'] for o in options}) != len(options):
             raise Conflict('Options must contain distinct text, not duplicate candidates')
         return copy.deepcopy(options)
@@ -629,6 +654,8 @@ class Review:
         if options:
             item['options'] = options
             item['fewer_options_reason'] = spec.get('fewer_options_reason', '')
+        if 'intent' in spec:
+            item['intent'] = copy.deepcopy(spec['intent'])
         if self.storage == 'files':
             item['batch'] = self.state['session']
         commit = self.snapshot({"original.tex": original.encode("utf-8"), "candidate.tex": after.encode("utf-8"),
@@ -724,6 +751,9 @@ class Review:
         result['options'] = [{**o, 'changes': word_changes(result['original'], o['after'])} for o in
                              shown.get('options', [{'label': 'A', 'after': result['candidate'], 'reason': '已有单方案；可由 AI 重新生成三方案'}])]
         result['fewer_options_reason'] = shown.get('fewer_options_reason', '')
+        result['intent'] = shown.get('intent')
+        for option in result['options']:
+            option['scope'] = change_scope(result['original'], option['after'], option['changes'])
         if edit.get('accepted_option'):
             result['candidate'] = self.option(shown, edit['accepted_option'])['after']
         obj = self.payload(edit)
@@ -1067,6 +1097,8 @@ def dispatch(r, args):
                     raise Conflict('Manual edit needs an existing option and after text')
                 selected['after'] = spec['after']
                 spec = {'options': options, 'fewer_options_reason': (old.get('fewer_options_reason') or '手动编辑已有候选，不自动生成备选') if len(options) < 3 else ''}
+                if 'intent' in old:
+                    spec['intent'] = old['intent']
             if args.command in ('propose-options', 'rework-options'):
                 r.validate_options(spec, required=True)
             if args.command == 'propose-options':
