@@ -188,8 +188,8 @@ function createWorkbench(vscode, context, services) {
         }
     }
     async function show(c, restore) {
-        if (active && key(active) === key(c) && panel && !restore) {panel.reveal(); return;}
-        if (!await allowSwitch()) return;
+        if (active && key(active) === key(c) && panel && !restore) {panel.reveal(); await services.activeChanged?.(active); return;}
+        if (!await allowSwitch()) {if (active) await services.activeChanged?.(active); return;}
         const data = await services.read(c);
         active = {...c}; loaded = data; dirty = noteDirty = false; hasPending = false; sourceSelection = undefined;
         uiState = notice = handoffRetry = undefined;
@@ -204,6 +204,7 @@ function createWorkbench(vscode, context, services) {
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
+        await services.activeChanged?.(active);
     }
     function sync(records, scope) {
         if (!active || active.repo !== scope.repo || active.owner !== scope.owner) return;

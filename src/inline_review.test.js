@@ -32,7 +32,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     let value = tex ? '\\documentclass{article}\n😀 First sentence. Second sentence.' : 'const x = 1;';
     fs.writeFileSync(file, value, 'utf8');
     if (state) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n% CODEX-REVIEW-STATE-END', 'utf8');
-    const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [];
+    const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [], reveals = [];
     let receive, panels = 0, provider, fileChanged, configurationChanged, selectionHandler;
     const original = value, edit = {file: path.basename(file), kind: 'manuscript', deferred: true, status: 'pending', versions: ['v1'], requests: [], questions: []};
     const start = Array.from(original.slice(0, original.indexOf('First'))).length;
@@ -56,7 +56,8 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         get comments() {throw new Error('Retired native comments must not be created');},
         TextEditorRevealType: {InCenterIfOutsideViewport: 1}, ProgressLocation: {Notification: 15},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], tabGroups: {all: [pdfGroup], activeTabGroup: pdfGroup},
-            createTreeView(id, options) {provider = options.treeDataProvider; trees.push(id); return {dispose() {}, message: ''};},
+            createTreeView(id, options) {provider = options.treeDataProvider; trees.push(id); return {dispose() {}, message: '', selection: [],
+                async reveal(item, options) {assert(provider.getParent(item)); reveals.push({item, options}); this.selection = [item];}};},
             createWebviewPanel() {panels++; return {visible: true, onDidChangeViewState: disposable, webview: {html: '', cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}), postMessage: m => packets.push(m), onDidReceiveMessage: f => {receive = f;}}, reveal() {}, onDidDispose() {}, dispose() {}};},
             createTextEditorDecorationType: disposable, registerUriHandler: disposable, onDidChangeActiveTextEditor: disposable,
             onDidChangeTextEditorSelection: f => {selectionHandler = f; return disposable();},
@@ -100,7 +101,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         throw new Error('Unexpected backend operation: ' + args.join(' '));
     };
     const ui = createInlineReview(vscode, {subscriptions: []}, backend);
-    return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, ui,
+    return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
         get value() {return value;}, set value(text) {value = text;},
         rows: () => provider.getChildren(), receive: m => receive(m),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
@@ -195,13 +196,39 @@ test('same-line items have separate IDs and event-driven versions switch one pag
         const row = f.rows()[0].children.find(r => r.command.arguments[0].id === id);
         await f.handlers.get(row.command.command)(row.command.arguments[0]);
         assert.equal(f.ui.workbench.active.id, id);
+        assert.equal(f.reveals.at(-1)?.item.command.arguments[0].id, id);
+        assert.deepEqual(f.reveals.at(-1).options, {select: true, focus: false});
     }
+    await f.receive({type: 'previous', id: '2', version: 'v1'});
+    assert.equal(f.reveals.at(-1).item.command.arguments[0].id, '1');
+    await f.receive({type: 'next', id: '1', version: 'v1'});
+    assert.equal(f.reveals.at(-1).item.command.arguments[0].id, '2');
+    second.edit.requests = [{id: 'note-2', status: 'open', version: 'v1', option: 'B', text: '保留数值，缩小修改范围。'},
+        {id: 'note-closed', status: 'closed', version: 'v1', text: '旧批注'}];
+    await f.changed();
+    const noted = f.rows()[0].children.find(row => row.command.arguments[0].id === '2');
+    assert.equal(noted.description, '返修 · 1 条批注');
+    assert.equal(noted.children.length, 1);
+    assert.match(noted.children[0].label, /保留数值，缩小修改范围/);
+    assert.match(noted.children[0].tooltip, /方案 B/);
+    await f.handlers.get(noted.children[0].command.command)(noted.children[0].command.arguments[0]);
+    assert.equal(f.reveals.at(-1).item, noted);
     second.version = 'v2'; second.edit.versions.push('v2');
     await f.changed();
     assert.equal(f.ui.workbench.active.version, 'v2');
     assert.equal(f.panels, 1);
     assert(!f.calls.some(c => c[0] === 'showTextDocument'));
     assert(!f.backendCalls.some(c => c.args.some(a => String(a).endsWith('review_pdf.py'))));
+    await f.receive({type: 'dirty', id: '2', version: 'v2', dirty: true, noteDirty: false});
+    await f.ui.workbench.show(f.rows()[0].children[0].command.arguments[0]);
+    assert.equal(f.ui.workbench.active.id, '2', 'cancelled dirty switch retains the actual active item');
+    assert.equal(f.reveals.at(-1).item.command.arguments[0].id, '2');
+    await f.receive({type: 'dirty', id: '2', version: 'v2', dirty: false, noteDirty: false});
+    await f.receive({type: 'previous', id: '2', version: 'v2'});
+    await f.receive({type: 'accept', id: '1', version: 'v1', option: 'A'});
+    await f.ui.whenPDFIdle();
+    assert.equal(f.ui.workbench.active.id, '2');
+    assert.equal(f.reveals.at(-1).item.command.arguments[0].id, '2', 'automatic advance selects the remaining row');
 });
 
 test('review positions exclude the mechanical ledger and follow unsaved header edits without changing source', () => {

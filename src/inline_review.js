@@ -210,9 +210,11 @@ function createInlineReview(vscode, context, execute = run) {
     }
     const listEvents = new vscode.EventEmitter();
     let fileRows = [];
+    let listSelection = Promise.resolve(), pendingListSelection;
     const listProvider = {
         onDidChangeTreeData: listEvents.event,
         getTreeItem: item => item,
+        getParent: item => item.parent,
         getChildren: item => item ? item.children || [] : fileRows
     };
     const reviewList = vscode.window.createTreeView('texscholar.reviewList', {treeDataProvider: listProvider, showCollapseAll: true});
@@ -223,18 +225,48 @@ function createInlineReview(vscode, context, execute = run) {
             const {c, data} = record, file = data.edit.file;
             if (!files.has(file)) {
                 const group = new vscode.TreeItem(file, vscode.TreeItemCollapsibleState.Expanded);
+                group.id = JSON.stringify([c.repo, c.owner, batch, 'file', file]);
                 group.children = []; files.set(file, group);
             }
-            const item = new vscode.TreeItem(`${c.id} · ${data.edit.location || file}`, vscode.TreeItemCollapsibleState.None);
+            const notes = (data.edit.requests || []).filter(n => n.status === 'open');
+            const item = new vscode.TreeItem(`${c.id} · ${data.edit.location || file}`,
+                notes.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
             item.id = JSON.stringify([c.repo, c.owner, batch, c.id]);
-            item.description = record.displayConflict ? '原文位置待核对' : data.edit.status === 'rework' ? '返修' : '待审';
+            const state = notes.length || data.edit.status === 'rework' ? '返修' : '待审';
+            item.description = (record.displayConflict ? '原文位置待核对' : state) + (notes.length ? ` · ${notes.length} 条批注` : '');
             item.tooltip = `${c.id} · ${file} · 候选 v${data.edit.versions.length}`;
             item.command = {command: 'localLatex.reviewWorkbench', title: '打开论文审核页', arguments: [c]};
+            item.parent = files.get(file);
+            item.children = notes.map((note, index) => {
+                const child = new vscode.TreeItem(note.text.replace(/\s+/g, ' '), vscode.TreeItemCollapsibleState.None);
+                child.id = JSON.stringify([c.repo, c.owner, batch, c.id, 'note', note.id]);
+                child.description = note.option ? '方案 ' + note.option : '整项';
+                child.tooltip = `${c.id} · 批注 ${index + 1} · ${child.description}\n${note.text}`;
+                child.command = item.command; child.parent = item;
+                return child;
+            });
             files.get(file).children.push(item);
         }
         fileRows = [...files.values()];
         reviewList.message = records.size ? `${records.size} 项待审 · 点击编号在同一审核页切换` : '暂无待审候选；请先让 AI 按插件规则生成。';
         listEvents.fire();
+        if (workbench.active) selectReviewItem(workbench.active).catch(error => vscode.window.showErrorMessage('论文评论定位失败：' + error.message));
+    }
+    function selectReviewItem(c) {
+        pendingListSelection = c;
+        const revealLatest = async () => {
+            const target = pendingListSelection; pendingListSelection = undefined;
+            if (!target) return;
+            const item = fileRows.flatMap(group => group.children).find(row => {
+                const c = row.command.arguments[0];
+                return c.repo === target.repo && c.owner === target.owner && c.id === target.id;
+            });
+            if (item && reviewList.selection[0] !== item) await reviewList.reveal(item, {select: true, focus: false});
+        };
+        // Serialize reveals and coalesce queued events. A later request can also
+        // recover from a reported reveal failure without leaving the queue stuck.
+        listSelection = listSelection.then(revealLatest, revealLatest);
+        return listSelection;
     }
     async function showPanel(repo, explicit = false) {
         await vscode.commands.executeCommand('setContext', 'localLatex.hasTeXProject', true);
@@ -488,7 +520,7 @@ function createInlineReview(vscode, context, execute = run) {
         return saved?.version === c.version ? saved.option : 'A';
     }
     const workbench = require('./review_workbench').createWorkbench(vscode, context, {
-        style, read: readCurrent, selection: selectedOption,
+        style, read: readCurrent, selection: selectedOption, activeChanged: selectReviewItem,
         directory: () => Object.entries(latestReviewState?.edits || {}).map(([id, edit]) => ({id, file: edit.file, kind: edit.kind, status: edit.status,
             location: edit.location, summary: displayText(records.get(id)?.data?.options?.[0]?.after || '').replace(/\s+/g, ' ').slice(0, 140), questions: (edit.questions || []).map(q => q.id), requests: (edit.requests || []).filter(n => n.status === 'open').length})),
         pdfStatus: c => {
