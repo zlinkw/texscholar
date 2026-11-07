@@ -38,6 +38,27 @@ class Flow(unittest.TestCase):
             m.Review.validate_options({**spec, 'options': [{**options[0], 'summary': ''}]})
         self.check_index()
 
+    def test_state_only_saves_are_atomic_without_interrupted_intent(self):
+        from unittest.mock import patch
+        review = self.review()
+        original = self.read('main.tex')
+        updated, result = review.propose({'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model improves performance.',
+                                          'after': 'The model improves measured performance.', 'deferred': True})
+        self.assertEqual(updated, {})
+        before = review.state_path.read_bytes()
+        with patch.object(review, 'write', side_effect=PermissionError('state file busy')):
+            with self.assertRaises(PermissionError): review.persist(updated, m.digest(review.raw))
+        self.assertEqual(review.state_path.read_bytes(), before)
+        self.assertFalse(self.review().interrupted)
+        with patch.object(review, 'write', wraps=review.write) as write:
+            review.persist(updated, m.digest(review.raw))
+            self.assertEqual(write.call_count, 1)
+        fresh = self.review()
+        self.assertNotIn('transaction', fresh.state)
+        self.assertIn(result['id'], fresh.state['edits'])
+        self.assertEqual(self.read('main.tex'), original)
+        self.check_index()
+
     def test_edit_feedback(self):
         id_ = self.edit('main.tex', 'The model improves performance.', 'The model reliably improves performance.', deferred=True)
         data = self.review().inspect(id_)

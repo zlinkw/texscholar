@@ -905,6 +905,11 @@ class Review:
             raise Conflict("Concurrent source/state modification; no source writes")
         if any(self.question_source(p) != raw for p, raw in self.question_original.items()):
             raise Conflict('Concurrent reviewer-question source modification; no source writes')
+        if not updated:
+            # Candidate/annotation metadata has one authoritative file. Atomic
+            # replacement already commits it as a whole, with no partial source writes.
+            self.write(self.state_path, self.encode(self.embedded()))
+            return
         # Durable intent stored in the sole state block. Recovery verifies exact old/new bytes.
         intent_files = {}
         for i, (rel, raw) in enumerate(targets.items()):

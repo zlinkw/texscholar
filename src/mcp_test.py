@@ -255,6 +255,20 @@ class MCP(unittest.TestCase):
         self.assertNotIn('template.tex', categories['global'])
         self.assertIn('Template example', str(categories['reference']))
 
+    def test_interrupted_context_reports_actual_owner_without_guessing_or_recovery(self):
+        review = self.review()
+        review.state['transaction'] = {'commit': 'fixture-intent', 'files': [], 'owner': False}
+        raw = review.encode(review.embedded())
+        review.state_path.write_bytes(raw)
+        reply = self.server().message({'id': 8, 'method': 'tools/call', 'params': {
+            'name': 'read_context', 'arguments': {'project': str(self.root)}}})['result']
+        self.assertTrue(reply['isError'])
+        error = reply['structuredContent']
+        self.assertEqual(error['code'], 'interrupted_transaction')
+        self.assertEqual(error['recovery']['state'], 'reply.tex')
+        self.assertFalse(error['recovery']['automatic_retry'])
+        self.assertEqual(review.state_path.read_bytes(), raw)
+
     def test_questions_are_pooled_exactly_without_changing_ui_or_state(self):
         question = {'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you.'}
         options = [{'label': k, 'after': 'Alternative ' + k + '.', 'reason': '具体取舍 ' + k} for k in 'ABC']
@@ -292,6 +306,15 @@ class MCP(unittest.TestCase):
         self.assertIn('Author requirement', str(result['context']['author_comments']['global']))
         self.assertEqual((root / 'draft.tex').read_text(encoding='utf-8'), source)
         self.assertEqual([p.name for p in root.iterdir()], ['draft.tex'])
+        wrong = {**args, 'scopes': [{'file': 'draft.tex', 'section': r'\section{Introduction}'}]}
+        reply = server.message({'id': 7, 'method': 'tools/call', 'params': {'name': 'read_context', 'arguments': wrong}})['result']
+        self.assertTrue(reply['isError'])
+        error = reply['structuredContent']
+        self.assertEqual(error['code'], 'section_selector_invalid')
+        self.assertEqual(error['recovery']['files'], ['draft.tex'])
+        self.assertEqual(error['recovery']['available_sections'], [{'section': r'\section{Intro}', 'start': disk.index(r'\section{Intro}')}])
+        self.assertFalse(error['recovery']['reread_required'])
+        self.assertEqual((root / 'draft.tex').read_text(encoding='utf-8'), source)
 
     def setUp(self):
         fixtures.NativeReview.setUp(self)

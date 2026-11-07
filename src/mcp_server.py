@@ -7,7 +7,7 @@ import re
 import sys
 from source_review import Review, Conflict, FieldConflict, OverlapConflict, PENDING, body, digest, locate
 from document_roles import scan as scan_roles, relative_file
-from ai_context import paragraph_context, source_scope, comment_context
+from ai_context import paragraph_context, source_scope, comment_context, SectionSelectionConflict
 
 HERE = Path(__file__).resolve().parent
 VERSION = json.loads((HERE.parent / 'package.json').read_text(encoding='utf-8'))['version']
@@ -116,6 +116,14 @@ class ToolConflict(Conflict):
 
 def error_detail(error, args):
     # Only classified boundaries prescribe recovery. Unknown failures retain their cause.
+    if isinstance(error, SectionSelectionConflict):
+        return {'code': 'section_selector_invalid', 'message': str(error), 'id': None,
+                'recovery': {'action': 'correct_request', 'files': [error.file], 'requested_section': error.heading,
+                             'available_sections': error.available, 'reread_required': False, 'automatic_retry': False}}
+    if not isinstance(error, ToolConflict) and str(error) == 'Interrupted transaction: inspect status then explicitly recover':
+        return {'code': 'interrupted_transaction', 'message': str(error), 'id': args.get('id'),
+                'recovery': {'action': 'inspect_status_then_explicit_recover', 'project': args.get('project'),
+                             'state': args.get('state'), 'automatic_retry': False}}
     if isinstance(error, FieldConflict):
         return {'code': 'invalid_field', 'message': str(error), 'id': args.get('id'), 'field': error.field,
                 'recovery': {'action': 'correct_request', 'reread_required': False, 'automatic_retry': False}}
@@ -378,6 +386,10 @@ class Server:
                 raise Conflict('Reconcile multiple state owners; do not guess')
             state = owners[0]
         review = Review(root, state, git)
+        if review.interrupted:
+            raise ToolConflict('Interrupted transaction: inspect status then explicitly recover', 'interrupted_transaction',
+                               {'action': 'inspect_status_then_explicit_recover', 'project': str(root),
+                                'state': state, 'automatic_retry': False})
         if name == 'read_context':
             result = ai_context(review, roles, args.get('ids'), args.get('files'), args.get('scopes'), args.get('known_feedback')) if review.state else {**review.status(), **initial_source_context(root, roles, args)}
             rules = args if review.state else {**args, 'modules': [*args.get('modules', []), 'writing']}

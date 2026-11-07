@@ -4,6 +4,32 @@ from source_review import Conflict, locate
 from review_pdf import _command, _environment_end
 
 
+class SectionSelectionConflict(Conflict):
+    def __init__(self, heading, available):
+        super().__init__('Section selector is missing, ambiguous or inactive; choose an exact active heading from available_sections')
+        self.heading, self.available, self.file = heading, available, None
+
+
+def heading_end(text, start):
+    prefix = re.match(r'\\[A-Za-z]+\*?\s*(?:\[[\s\S]*?\]\s*)?\{', text[start:])
+    if not prefix:
+        raise Conflict('section must contain exactly one complete heading command')
+    cursor, depth = start + prefix.end(), 1
+    while cursor < len(text) and depth:
+        if text[cursor] == '\\':
+            _, cursor = _command(text, cursor)
+            continue
+        if text[cursor] == '%':
+            newline = text.find('\n', cursor)
+            cursor = len(text) if newline < 0 else newline + 1
+            continue
+        depth += (text[cursor] == '{') - (text[cursor] == '}')
+        cursor += 1
+    if depth:
+        raise Conflict('section must contain exactly one complete heading command')
+    return cursor
+
+
 def paragraph_context(text, start, end):
     gaps = list(re.finditer(r'\r?\n[ \t]*\r?\n', text))
     left = [gap.end() for gap in gaps if gap.end() <= start]
@@ -37,26 +63,15 @@ def section_span(text, heading, left='', right=''):
         elif char == '}':
             depth -= 1
         cursor += 1
-    start, selected_end = locate(text, heading, left, right)
+    available = [{'section': text[at:heading_end(text, at)], 'start': at} for at, _ in headings]
+    try:
+        start, selected_end = locate(text, heading, left, right)
+    except Conflict as error:
+        raise SectionSelectionConflict(heading, available) from error
     match = re.fullmatch(r'\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\s*(?:\[[\s\S]*?\]\s*)?\{[\s\S]*\}', heading)
     if not match or start not in {at for at, _ in headings}:
-        raise Conflict('section must be an exact active heading command, e.g. \\section{Introduction}; no guessed title or commented command')
-    prefix = re.match(r'\\[A-Za-z]+\*?\s*(?:\[[\s\S]*?\]\s*)?\{', heading)
-    cursor, depth = prefix.end(), 1
-    while cursor < len(heading) and depth:
-        if heading[cursor] == '\\':
-            _, cursor = _command(heading, cursor)
-            continue
-        if heading[cursor] == '%':
-            newline = heading.find('\n', cursor)
-            cursor = len(heading) if newline < 0 else newline + 1
-            continue
-        if heading[cursor] == '{':
-            depth += 1
-        elif heading[cursor] == '}':
-            depth -= 1
-        cursor += 1
-    if depth or cursor != len(heading):
+        raise SectionSelectionConflict(heading, available)
+    if heading_end(heading, 0) != len(heading):
         raise Conflict('section must contain exactly one complete heading command')
     level = next(level for at, level in headings if at == start)
     end = next((at for at, other in headings if at >= selected_end and other <= level), len(text))
@@ -67,7 +82,11 @@ def source_scope(text, spec):
     if ('quote' in spec) == ('section' in spec):
         raise Conflict('Each scope needs exactly one quote or section selector')
     if 'section' in spec:
-        start, end = section_span(text, spec['section'], spec.get('left', ''), spec.get('right', ''))
+        try:
+            start, end = section_span(text, spec['section'], spec.get('left', ''), spec.get('right', ''))
+        except SectionSelectionConflict as error:
+            error.file = spec['file']
+            raise
         return (start, end), paragraph_context(text, start, end)
     start, end = locate(text, spec['quote'], spec.get('left', ''), spec.get('right', ''))
     return (start, end), paragraph_context(text, start, end)

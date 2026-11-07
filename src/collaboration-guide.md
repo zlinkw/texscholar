@@ -32,6 +32,8 @@
 
 ## 界面与交付细节
 
+按章节读取时使用实际完整 TeX 标题命令，不从模块名推测标题。section_selector_invalid 会返回当前 available_sections，可据此修正 scopes；相同标题需结合真实 left/right 区分，不自动选择近似标题。source_changed 的写入冲突仍需重读受影响源码。interrupted_transaction 需先只读检查 status，再用当前摘要显式 recover，成功后重读受影响编号并继续未保存操作；不能重放已成功项或删除事务记录。
+
 作者可以保存草稿并切换审核项，也可在准备 Codex 交接时继续编辑；这些操作均不代表接收。批注附件只反映生成时的内容，AI 仍按核心流程核对当前状态与附件回执，不要求作者先处理可替换的旧批注。
 
 read_context 的 question_refs 指向本次 context.questions 中的完整原始意见，相同 id/file/quote 只返回一份。写入可传完整 questions，也可显式构造本次 question_pool 并引用，由工具展开并精确核验，不按编号猜配。重叠错误返回 existing 的真实编号、版本和文件；按 recovery.ids 补读该项，再判断是否返修，不自动合并或接收。
