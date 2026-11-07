@@ -33,7 +33,7 @@ header{position:sticky;top:0;z-index:2;background:var(--vscode-editor-background
 .navigation{flex:1;min-width:8em}#progress{overflow:hidden;text-overflow:ellipsis;max-width:24em}#toolbarExtras{flex:none}#pdfActions{gap:.1em}#pdfStatus{font-size:inherit;max-width:7em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #layout{display:grid;grid-template-columns:minmax(0,1fr)}main{min-width:0;padding:.4em .65em}h3,h4,p{margin:var(--space) 0}h3{font-size:1.05em}h4{font-size:1em}small,#status,#pdfStatus{color:var(--vscode-descriptionForeground)}#pdfError{padding:.3em .65em;font-size:var(--control-font-size,13px)}#pdfError,#status.error,#appearanceStatus.error{color:var(--vscode-errorForeground)}#pageFeedback:empty,#status:empty,#translateStatus:empty,#fewer:empty,.zh:empty{display:none}
 section{margin:0 0 var(--section-space)}#options{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,24em),1fr));gap:.55em}article{min-width:0;border:1px solid var(--vscode-panel-border);padding:var(--space);border-radius:.3em}article.selected{border-color:var(--vscode-focusBorder)}article.focused{grid-column:1/-1}article.focused>.optionHeading{position:sticky;top:var(--toolbar-height,2.5em);z-index:1;background:var(--vscode-editor-background);padding:.2em 0}article.folded .detail,article.folded .reason{display:none}
-.text{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}.text .old{color:var(--removed);text-decoration:var(--strike)}.text .new{color:var(--added)}.text .same{color:var(--unchanged,inherit)}
+.text{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}:is(.text,.zh) .old{color:var(--removed);text-decoration:var(--strike)}:is(.text,.zh) .new{color:var(--added)}:is(.text,.zh) .same{color:var(--unchanged,inherit)}
 ::highlight(review-location){background:var(--vscode-editor-findMatchHighlightBackground,#e5c07b66);text-decoration:underline}
 ::highlight(review-selection){background:var(--vscode-editor-selectionBackground);color:var(--vscode-editor-selectionForeground,inherit)}
 .zh{font-size:var(--translation-font-size,15px);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:var(--space);border-left:2px solid var(--vscode-panel-border);padding-left:.5em;color:var(--vscode-descriptionForeground)}
@@ -131,7 +131,7 @@ function createWorkbench(vscode, context, services) {
         if (notice?.message) post(notice);
         if (translations.size) for (const item of translationItems(loaded)) {
             const entry = translations.get(JSON.stringify([services.provider(), item.text]));
-            if (entry) post({type: 'translation', key: item.key, source: item.text, ...entry});
+            if (entry) post({type: 'translation', key: item.key, source: item.text, provider: services.provider(), ...entry});
         }
         autoTranslate();
     }
@@ -263,7 +263,7 @@ function createWorkbench(vscode, context, services) {
                 if (epoch !== translationEpoch) return;
                 translations.set(cacheKey, translated);
             }
-            if (valid(c)) post({type: 'translation', key: item.key, source: item.text, ...translated});
+            if (valid(c)) post({type: 'translation', key: item.key, source: item.text, provider, ...translated});
         }
         if (valid(c)) post({type: 'translationStatus', message: provider + '：本项翻译已处理，失败项可手动重试'});
     }

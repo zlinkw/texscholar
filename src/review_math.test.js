@@ -21,6 +21,22 @@ test('local draft and alternative diff preserves TeX, Unicode and unchanged word
     }
 });
 
+test('translated differences preserve common Chinese text, Unicode and TeX', () => {
+    for (const [before, after, removed, added] of [
+        ['模型结果准确。', '模型结果可靠。', '准确', '可靠'],
+        ['😀模型 $x_i$ 达到90\\%。', '😀模型 $x_i$ 达到95\\%。', '90', '95'],
+        ['仅删除多余文字。', '仅删除文字。', '多余', ''],
+        ['', '仅新增。', '', '仅新增。'],
+        ['整句删除。', '', '整句删除。', ''],
+    ]) {
+        const changes = math.wordChanges(before, after, true);
+        const extract = (text, side) => changes.map(c => Array.from(text).slice(c[side + '_start'], c[side + '_end']).join('')).join('');
+        assert.equal(extract(before, 'old'), removed);
+        assert.equal(extract(after, 'new'), added);
+    }
+    assert.deepEqual(math.wordChanges('相同内容。', '相同内容。', true), []);
+});
+
 test('math delimiters preserve exact source spans, nested equations and literal TeX', () => {
     const source = String.raw`Cost \$5; \verb|$literal$|. $x_i^2$ and \(\frac{a}{b}\).
 \[\sum_{i=1}^n x_i\]

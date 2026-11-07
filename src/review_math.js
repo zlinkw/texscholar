@@ -4,8 +4,11 @@
     else root.TeXScholarMath = factory(root.Diff);
 })(typeof globalThis === 'object' ? globalThis : this, function (diff) {
     'use strict';
-    function wordChanges(before, after) {
-        const tokens = text => text.match(/\\[A-Za-z@]+|[\p{L}\p{N}]+|_+|\s+|./gsu) || [];
+    function wordChanges(before, after, translated = false) {
+        // Chinese translation has no word spaces. Keep common characters unmarked.
+        const pattern = translated ? /\\[A-Za-z@]+|\p{Script=Han}|(?:(?!\p{Script=Han})[\p{L}\p{N}])+|_+|\s+|./gsu
+            : /\\[A-Za-z@]+|[\p{L}\p{N}]+|_+|\s+|./gsu;
+        const tokens = text => text.match(pattern) || [];
         let oldAt = 0, newAt = 0;
         const changes = [];
         for (const part of diff.diffArrays(tokens(before), tokens(after))) {

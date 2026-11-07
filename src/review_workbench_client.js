@@ -208,15 +208,32 @@ function renderText(node, raw, changes, side) {
 function translationSource(key) {
     return key === 'original' ? data.original : key.startsWith('question') ? data.edit.questions?.[Number(key.slice(8))]?.quote : options.find(o => o.label === key)?.after;
 }
+function translationComparison(key, entry, node) {
+    if (key.startsWith('question')) return {changes: [], side: 'readonly'};
+    const pair = comparison === 'original' ? [] : comparison.split(':');
+    const paired = pair.length === 2 && pair.every(label => options.some(o => o.label === label));
+    const oldKey = paired ? pair[0] : 'original';
+    const newKey = paired ? pair[1] : key === 'original' ? preview : key;
+    if (paired && !pair.includes(key)) return {changes: [], side: 'readonly'};
+    const before = translatedText.get(oldKey), after = translatedText.get(newKey);
+    const valid = (k, value) => value && !value.error && typeof value.text === 'string'
+        && value.source === translationSource(k) && value.provider === entry.provider
+        && !options.some(o => o.label === k && hasDraft(o));
+    if (!valid(oldKey, before) || !valid(newKey, after)) return {changes: [], side: 'readonly'};
+    return {changes: textChanges(node, before.text, after.text, true), side: key === oldKey ? 'original' : 'candidate'};
+}
 function renderTranslation(key, entry) {
     const node = key === 'original' ? $('originalZh') : $('zh-' + key);
     if (!node || entry.source !== translationSource(key)) return;
     if (options.some(o => o.label === key && hasDraft(o))) {node.hidden = true; return;}
-    const signature = JSON.stringify([entry.error, entry.text, sourceMode]);
+    const {changes, side} = translationComparison(key, entry, node);
+    const signature = JSON.stringify([entry.error, entry.text, sourceMode, changes, side]);
     if (rendered.get(node) === signature) {node.hidden = !chinese; return;}
     keepReading(() => {
         if (entry.error) node.textContent = '翻译未完成：' + entry.error;
-        else math.render(node, entry.text, [], 'readonly', sourceMode ? 'source' : 'preview', globalThis.katex);
+        else math.render(node, entry.text, changes, side, sourceMode ? 'source' : 'preview', globalThis.katex);
+        node.title = side === 'readonly' ? '中文阅读译文；对照译文尚未就绪时不标差异。'
+            : '中文译文之间的文字差异；翻译措辞变化也可能被标记，请结合原文审核。';
         node.hidden = !chinese;
     });
     rendered.set(node, signature);
@@ -229,7 +246,6 @@ function toggleMathMode() {
     if (!data || unavailable) return;
     renderReadings();
     renderQuestions(data.edit.questions || []);
-    for (const [key, entry] of translatedText) renderTranslation(key, entry);
     // Draft editors, note text, selected source coordinates and version stay intact.
 }
 function renderDirectory(items) {
@@ -291,10 +307,10 @@ function renderOption(o) {
 }
 function hasDraft(o) {return drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n');}
 function displayed(o) {return hasDraft(o) ? drafts.get(o.label) : o.after;}
-function textChanges(node, before, after) {
+function textChanges(node, before, after, translated = false) {
     const saved = differences.get(node);
     if (saved?.before === before && saved.after === after) return saved.changes;
-    const changes = math.wordChanges(before, after);
+    const changes = math.wordChanges(before, after, translated);
     differences.set(node, {before, after, changes});
     return changes;
 }
@@ -329,6 +345,7 @@ function renderReadings() {
     }
     highlightSelection();
     placeComposer();
+    for (const [key, entry] of translatedText) renderTranslation(key, entry);
 }
 function queueDraftPreview() {
     if (draftFrame !== undefined) return;
@@ -646,7 +663,9 @@ window.addEventListener('message', ({data: message}) => {
     if (message.type === 'translation') {
         if (message.source !== translationSource(message.key)) return;
         const entry = {...message};
-        translatedText.set(message.key, entry); renderTranslation(message.key, entry); return;
+        translatedText.set(message.key, entry);
+        for (const [key, value] of translatedText) renderTranslation(key, value);
+        return;
     }
     if (message.type === 'translationStatus') {$('translateStatus').textContent = message.message; return;}
     if (message.type === 'pdfStatus') {pdfStatus(message.message); return;}
