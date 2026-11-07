@@ -29,6 +29,25 @@ async function taskRequest(goal, roots, setup, connection, readRequest) {
 }
 function activate(context, vscode = require('vscode')) {
     let chain = Promise.resolve();
+    async function checkVersion(explicit = false) {
+        if (!vscode.workspace.isTrusted || !(await vscode.workspace.findFiles('**/*.tex', EXCLUDE, 1)).length) return {state: 'not_applicable'};
+        const version = require('./mcp_version');
+        const status = await version.inspect(context.globalStorageUri.fsPath);
+        version.publish(status);
+        const signature = JSON.stringify([status.expected, status.state, status.actual, status.pid]);
+        if (status.state === 'matched') {
+            if (explicit) vscode.window.showInformationMessage('最近活动的 TeXScholar MCP 与插件版本一致：' + status.expected + '。论文会话仍会在调用时核对版本。');
+        } else if (explicit || context.globalState.get('mcpVersionNotice') !== signature) {
+            await context.globalState.update('mcpVersionNotice', signature);
+            const message = status.state === 'mismatch' ? `TeXScholar 已更新到 ${status.expected}，活动 MCP 仍为 ${status.actual}，需要重启该服务。`
+                : `TeXScholar ${status.expected} 的 MCP 运行版本待核验。${status.reason}`;
+            Promise.resolve(vscode.window.showWarningMessage(message, '复制检查／恢复提示词', '重新检查')).then(async choice => {
+                if (choice === '复制检查／恢复提示词') await vscode.env.clipboard.writeText(version.prompt(status));
+                else if (choice === '重新检查') await checkVersion(true);
+            }).catch(error => vscode.window.showErrorMessage('MCP 版本检查失败：' + error.message));
+        }
+        return status;
+    }
     async function register(connect = false) {
         if (!vscode.workspace.isTrusted) throw new Error('请先信任本地 LaTeX 工作区。');
         const roots = [];
@@ -56,9 +75,16 @@ function activate(context, vscode = require('vscode')) {
         const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
         const result = JSON.parse(await run(python, ['-X', 'utf8', path.join(__dirname, 'mcp_config.py'), '--home', home, '--launcher', script, '--python', python, ...(connect ? ['--connect'] : [])], storage));
         await context.workspaceState.update('texscholarMCPConfigured', result.connected);
-        return result;
+        const runtime = await checkVersion();
+        return {...result, runtime};
     }
     const queued = connect => {const task = chain.then(() => register(connect)); chain = task.catch(() => {}); return task;};
+    context.subscriptions.push(vscode.commands.registerCommand('localLatex.checkMCPVersion', (explicit = true) => checkVersion(explicit)));
+    const runtimeWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(context.globalStorageUri.fsPath, 'mcp-runtime.json'));
+    context.subscriptions.push(runtimeWatcher,
+        runtimeWatcher.onDidCreate(() => checkVersion().catch(error => vscode.window.showErrorMessage(error.message))),
+        runtimeWatcher.onDidChange(() => checkVersion().catch(error => vscode.window.showErrorMessage(error.message))),
+        runtimeWatcher.onDidDelete(() => checkVersion().catch(error => vscode.window.showErrorMessage(error.message))));
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.connectCodex', () => queued(true).then(() =>
         vscode.window.showInformationMessage('TeXScholar MCP 连接配置已核对；首次或配置变化后请重启 Codex 并核对 texscholar。日常使用 AI 论文助手即可。')).catch(error => vscode.window.showErrorMessage(error.message))));
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.startPaperTask', async (options = {}) => {
@@ -79,6 +105,7 @@ function activate(context, vscode = require('vscode')) {
             try {connected = await queued(true);}
             catch (error) {connectionError = error.message;}
             const connection = connectionError ? 'MCP 尚未连接成功：' + JSON.stringify(connectionError) + '。请先诊断此问题，不覆盖其他服务或绕过安全检查；恢复连接后再执行论文任务。'
+                : connected.runtime.state === 'mismatch' ? require('./mcp_version').prompt(connected.runtime)
                 : connected.restart_required ? 'MCP 配置刚更新；首次连接或配置变化后需重启 Codex，再在新会话核对 texscholar。连接配置不等于当前会话已加载工具。' : undefined;
             const directory = path.join(context.globalStorageUri.fsPath, 'task-requests'); await fs.mkdir(directory, {recursive: true});
             const file = path.join(directory, 'first-message-' + crypto.randomUUID() + '.txt');

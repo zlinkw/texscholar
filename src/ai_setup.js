@@ -131,8 +131,15 @@ async function inspectConfiguration(context, vscode) {
             }
         } catch (error) {writingIssues.push('MCP／Python 检查失败：' + error.message);}
     }
+    let mcpRuntime;
+    if (context.globalStorageUri) {
+        try {
+            mcpRuntime = await require('./mcp_version').inspect(context.globalStorageUri.fsPath);
+            if (mcpRuntime.state === 'mismatch') writingIssues.push(`活动 MCP ${mcpRuntime.actual} 与插件 ${mcpRuntime.expected} 不一致，请重启 TeXScholar MCP`);
+        } catch (error) {writingIssues.push('MCP 运行版本检查失败：' + error.message);}
+    }
     const issues = [...writingIssues, ...compileIssues];
-    return {ready: !issues.length, issues, writingReady: !writingIssues.length, writingIssues, compileIssues};
+    return {ready: !issues.length, issues, writingReady: !writingIssues.length, writingIssues, compileIssues, mcpRuntime};
 }
 function activate(context, vscode) {
     let chain = Promise.resolve(), previous;
@@ -147,8 +154,9 @@ function activate(context, vscode) {
                 const message = result.ready ? '已配置：本地编译工具、Workshop、Codex 接口和 MCP 文件配置检查通过。尚未验证当前 AI 会话已加载 MCP、GitHub 登录或实际论文编译。'
                     : (result.writingReady ? '写作连接配置已就绪；编译配置不完整（不阻塞候选撰写）：' : '配置不完整：') + result.issues.join('；');
                 // Activation never waits for a notification decision.
-                vscode.window.showInformationMessage(message, ...(result.ready ? [] : ['补齐配置'])).then(choice => {
+                vscode.window.showInformationMessage(message, ...(result.ready ? [] : result.mcpRuntime?.state === 'mismatch' ? ['检查 MCP 运行版本'] : ['补齐配置'])).then(choice => {
                     if (choice === '补齐配置') return vscode.commands.executeCommand('localLatex.startPaperTask', {setup: true});
+                    if (choice === '检查 MCP 运行版本') return vscode.commands.executeCommand('localLatex.checkMCPVersion');
                 }).catch(error => vscode.window.showErrorMessage(error.message));
             }
             previous = signature; return result;
@@ -158,6 +166,7 @@ function activate(context, vscode) {
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.checkAIConfiguration', () => check(true)),
         vscode.commands.registerCommand('localLatex.aiSetupGuide', () => check(true)),
         vscode.commands.registerCommand('localLatex.copyAISetupPrompt', async () => vscode.env.clipboard.writeText(await buildPrompt())));
+    context.subscriptions.push(require('./mcp_version').subscribe(() => check(false)));
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
     const refresh = () => check(false);
     context.subscriptions.push(watcher, watcher.onDidCreate(file => {if (file.scheme === 'file' && !/(?:^|[\\/])(?:\.git|\.codex-review|\.latex-build|node_modules|clean_dir)(?:[\\/]|$)/.test(file.fsPath)) return refresh();}), vscode.workspace.onDidChangeWorkspaceFolders(refresh),

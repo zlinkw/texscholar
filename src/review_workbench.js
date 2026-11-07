@@ -349,7 +349,10 @@ function createWorkbench(vscode, context, services) {
                 else if (message.type === 'source') await services.source(c);
                 else if (message.type === 'translate') autoTranslate(true);
                 else if (message.type === 'handoff') await services.handoff();
-                else if (message.type === 'configuration') await vscode.commands.executeCommand('localLatex.checkAIConfiguration');
+                else if (message.type === 'configuration') {
+                    await vscode.commands.executeCommand('localLatex.checkAIConfiguration');
+                    await vscode.commands.executeCommand('localLatex.checkMCPVersion');
+                }
                 else if (message.type === 'start') await services.start();
                 else {
                     const q = loaded.edit.questions?.[message.index];

@@ -3,6 +3,58 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {activate} = require('./writing');
 const {activate: aiSetup, buildPrompt} = require('./ai_setup');
+
+test('actual MCP process reports its version; absent, outdated and exited reports are distinct', async () => {
+    const fs = require('node:fs/promises'), path = require('node:path'), cp = require('node:child_process');
+    const {once} = require('node:events'), {createInterface} = require('node:readline');
+    const version = require('./mcp_version');
+    const root = await fs.mkdtemp(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'mcp-runtime-'));
+    const registrations = path.join(root, 'registrations'); await fs.mkdir(registrations);
+    assert.equal((await version.inspect(root)).state, 'unknown');
+    const child = cp.spawn(process.env.LOCAL_LATEX_PYTHON, ['-X', 'utf8', path.join(__dirname, 'mcp_server.py'), '--registrations', registrations], {windowsHide: true});
+    const lines = createInterface({input: child.stdout})[Symbol.asyncIterator]();
+    let stderr = ''; child.stderr.on('data', data => {stderr += data;});
+    try {
+        child.stdin.write(JSON.stringify({jsonrpc: '2.0', id: 1, method: 'initialize', params: {protocolVersion: '2025-03-26'}}) + '\n');
+        const reply = JSON.parse((await lines.next()).value);
+        assert.equal(reply.result.serverInfo.version, require('../package.json').version);
+        assert.equal((await version.inspect(root)).state, 'matched');
+        const old = {pid: child.pid, version: '0.0.1', server: path.join(__dirname, 'mcp_server.py')};
+        await fs.writeFile(path.join(root, 'mcp-runtime.json'), JSON.stringify(old), 'utf8');
+        assert.equal((await version.inspect(root)).state, 'mismatch');
+        assert(version.prompt(await version.inspect(root)).includes('expected_plugin_version'));
+        assert.equal((await version.inspect(root, () => false)).state, 'unknown');
+        child.stdin.write(JSON.stringify({jsonrpc: '2.0', id: 2, method: 'tools/list'}) + '\n');
+        await lines.next();
+        assert.equal((await version.inspect(root)).state, 'matched');
+    } finally {
+        const closed = once(child, 'close'); child.stdin.end(); await closed;
+    }
+    assert.equal(stderr, '');
+    assert.equal((await version.inspect(root)).state, 'unknown');
+});
+
+test('hourly release checks notify once, honor disablement and copy installation plus MCP instructions', async () => {
+    const {activate, newer, prompt} = require('./updates');
+    const state = new Map(), subscriptions = [], copied = [], notices = [];
+    let callback, interval, enabled = true, requests = 0, cleared = false;
+    const ctx = {subscriptions, globalState: {get: (key, fallback) => state.get(key) ?? fallback, update: async (key, value) => state.set(key, value)}};
+    const vscode = {workspace: {getConfiguration: () => ({get: () => enabled})},
+        commands: {registerCommand: () => ({dispose() {}})},
+        window: {showInformationMessage: (text) => {notices.push(text); return '复制更新提示词（含 MCP）';}, showErrorMessage: text => {throw new Error(text);}},
+        env: {clipboard: {writeText: async text => copied.push(text)}}};
+    const ui = activate(ctx, vscode, {fetchRelease: async () => {requests++; return {tag_name: 'v99.0.0', html_url: 'https://github.com/zlinkw/texscholar/releases/tag/v99.0.0', draft: false, prerelease: false};},
+        setInterval: (fn, ms) => {callback = fn; interval = ms; return 1;}, clearInterval: () => {cleared = true;}});
+    await ui.ready; await Promise.resolve();
+    assert.equal(interval, 3600000); assert.equal(requests, 1); assert.equal(copied.length, 1);
+    assert(copied[0].includes('VSIX') && copied[0].includes('expected_plugin_version') && copied[0].includes('Restart'));
+    assert.equal(newer('v0.10.0', '0.9.31'), true); assert.equal(newer('v0.9.31', '0.9.31'), false);
+    await callback(); assert.equal(requests, 1, 'no duplicate request within the hour');
+    state.set('releaseCheckAt', 0); await callback(); assert.equal(requests, 2); assert.equal(notices.length, 1, 'same release notification is not repeated');
+    enabled = false; state.set('releaseCheckAt', 0); await callback(); assert.equal(requests, 2);
+    assert(prompt('v99.0.0').includes('不重放已成功项'));
+    for (const sub of subscriptions) sub.dispose(); assert.equal(cleared, true);
+});
 test('writing context delegates one precise source scope to the current Codex chat', async () => {
     const handlers = new Map(), calls = [], messages = [];
     const source = {scheme: 'file', fsPath: '/paper/new-paper.tex'};
@@ -98,7 +150,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
     const vscode = {extensions: {getExtension: () => ({}), onDidChange: () => ({dispose() {}})}, Uri: {file: fsPath => ({scheme: 'file', fsPath})}, RelativePattern: class {},
         workspace: {isTrusted: true, workspaceFolders: [folder], findFiles: async () => [path.join(paper, 'paper.tex')],
             getConfiguration: () => ({get: (key, fallback) => key === 'pythonPath' ? python : fallback}),
-            createFileSystemWatcher: () => ({dispose() {}, onDidCreate: () => ({dispose() {}})}),
+            createFileSystemWatcher: () => ({dispose() {}, onDidCreate: () => ({dispose() {}}), onDidChange: () => ({dispose() {}}), onDidDelete: () => ({dispose() {}})}),
             onDidChangeWorkspaceFolders: () => ({dispose() {}})},
         env: {clipboard: {writeText: async text => copied.push(text)}},
         window: {showInputBox: async () => goal, showInformationMessage: text => notices.push(text),
@@ -107,7 +159,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         commands: {registerCommand: (id, handler) => {handlers.set(id, handler); return {dispose() {}};},
             getCommands: async () => available, executeCommand: async (...args) => calls.push(args)}};
     const context = {subscriptions: [], globalStorageUri: {fsPath: storage},
-        globalState: {get: (key, fallback) => state.get(key) ?? fallback},
+        globalState: {get: (key, fallback) => state.get(key) ?? fallback, update: async (key, value) => state.set(key, value)},
         workspaceState: {get: key => workspaceState.get(key), update: async (key, value) => workspaceState.set(key, value)}};
     try {
         await require('./mcp_setup').activate(context, vscode).ready;
@@ -127,6 +179,18 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         assert(notices.at(-1).includes('首次连接需重启 Codex'));
         const configured = await fs.readFile(path.join(home, 'config.toml'), 'utf8');
         assert(configured.includes(unrelated.trim())); assert(configured.includes('[mcp_servers.texscholar]'));
+        const runtimeFile = path.join(storage, 'mcp-runtime.json');
+        await fs.writeFile(runtimeFile, JSON.stringify({pid: process.pid, version: '0.0.1', server: path.join(__dirname, 'mcp_server.py')}), 'utf8');
+        copyChoice = '复制检查／恢复提示词';
+        assert.equal((await handlers.get('localLatex.checkMCPVersion')(false)).state, 'mismatch');
+        await Promise.resolve();
+        assert(copied.at(-1).includes('expected_plugin_version'));
+        const warned = notices.length;
+        await handlers.get('localLatex.checkMCPVersion')(false);
+        assert.equal(notices.length, warned, 'unchanged stale process does not repeat its notice');
+        copied.length = 0; copyChoice = undefined;
+        await fs.writeFile(runtimeFile, JSON.stringify({pid: process.pid, version: require('../package.json').version, server: path.join(__dirname, 'mcp_server.py')}), 'utf8');
+        assert.equal((await handlers.get('localLatex.checkMCPVersion')(false)).state, 'matched');
         state.set('aiSetupConfigured', true); calls.length = 0; notices.length = 0;
         goal = '修改回复信'; await start();
         const everyday = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');

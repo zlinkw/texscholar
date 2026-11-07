@@ -424,6 +424,11 @@ class MCP(unittest.TestCase):
         self.assertEqual([r['id'] for r in replies], [1, 2, 3])
         self.assertEqual(len(replies[1]['result']['tools']), len(TOOLS))
         self.assertFalse(replies[2]['result']['isError'])
+        report = json.loads((registrations.parent / 'mcp-runtime.json').read_text(encoding='utf-8'))
+        self.assertEqual(report['version'], replies[0]['result']['serverInfo']['version'])
+        self.assertIsInstance(report['pid'], int)
+        self.assertEqual(report['server'], str(Path(__file__).with_name('mcp_server.py').resolve()))
+        self.assertEqual(set(report), {'version', 'pid', 'server'})
         for command in ('propose', 'rework'):
             retired = subprocess.run([sys.executable, '-X', 'utf8', str(Path(__file__).with_name('source_review.py')), '--project', str(self.root), '--state', 'reply.tex', command], capture_output=True)
             self.assertNotEqual(retired.returncode, 0)

@@ -716,6 +716,7 @@ function createInlineReview(vscode, context, execute = run) {
         await require('./pdf_navigation').openFloating(vscode, vscode.Uri.file(file));
     }
     async function addRequests(target) {
+        await vscode.commands.executeCommand('localLatex.checkMCPVersion', false);
         const c = target || await discover(), state = await backend(c, ['feedback-context']);
         const items = target ? state.items.filter(item => item.id === target.id) : state.items;
         if (target && items.some(item => item.current_version !== target.version)) throw new Error('候选已更新，请核对新版再交接。');

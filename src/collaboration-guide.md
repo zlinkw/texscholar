@@ -32,6 +32,8 @@
 
 ## 界面与交付细节
 
+插件更新与 MCP 进程更新分别核验。插件可更新启动配置并报告最近活动进程的实际版本，但不能替其他 Codex 客户端执行未公开的重启接口。遇到 plugin_version_mismatch，保留原任务，按插件复制的恢复提示词重启 texscholar MCP，再以当前实际安装版本调用 read_context 核对 plugin_version。旧版服务无报告时属于待核验。更新提示词包含从本仓库正式 Release 下载、摘要校验、安装、重载及 MCP 核验，不混用旧服务和新版 CLI，也不重放已成功的操作。
+
 按章节读取时使用实际完整 TeX 标题命令，不从模块名推测标题。section_selector_invalid 会返回当前 available_sections，可据此修正 scopes；相同标题需结合真实 left/right 区分，不自动选择近似标题。source_changed 的写入冲突仍需重读受影响源码。interrupted_transaction 需先只读检查 status，再用当前摘要显式 recover，成功后重读受影响编号并继续未保存操作；不能重放已成功项或删除事务记录。
 
 作者可以保存草稿并切换审核项，也可在准备 Codex 交接时继续编辑；这些操作均不代表接收。批注附件只反映生成时的内容，AI 仍按核心流程核对当前状态与附件回执，不要求作者先处理可替换的旧批注。

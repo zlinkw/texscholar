@@ -346,7 +346,8 @@ class Server:
             return {**rule_packet(args), 'version': VERSION}
         if args.get('expected_plugin_version', VERSION) != VERSION:
             raise ToolConflict(f'当前 MCP 服务版本为 {VERSION}，与插件任务版本不一致。请重启 Codex 的 TeXScholar MCP 后继续；不要混用旧 MCP 与新版 CLI 或重复保存。',
-                               'plugin_version_mismatch', {'action': 'restart_mcp', 'automatic_retry': False})
+                               'plugin_version_mismatch', {'action': 'restart_mcp', 'actual_version': VERSION,
+                                                           'expected_version': args['expected_plugin_version'], 'automatic_retry': False})
         if name == 'submit_options':
             return self.submit(args)
         root, git = self.project(args['project'])
@@ -528,6 +529,13 @@ def main():
     server = Server(args.registrations)
     for line in sys.stdin:
         try:
+            # The VS Code extension observes actual serving processes, not a probe
+            # process or the configured launcher path. This is event-driven.
+            try:
+                from mcp_runtime import report
+                report(args.registrations, VERSION, __file__)
+            except (OSError, ValueError) as error:
+                print('TeXScholar MCP version report failed: ' + str(error), file=sys.stderr, flush=True)
             reply = server.message(json.loads(line))
         except (ValueError, KeyError, TypeError) as error:
             reply = {'jsonrpc': '2.0', 'id': None, 'error': {'code': -32600, 'message': str(error)}}

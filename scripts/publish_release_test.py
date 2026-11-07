@@ -44,6 +44,8 @@ class Publish(unittest.TestCase):
         gh.return_value = subprocess.CompletedProcess([], 0, b'', b'')
         release.publish('example/paper', 'v1.0.0', self.files)
         gh.assert_called_once_with('release', 'upload', 'v1.0.0', 'texscholar-1.0.0-source.zip', '--repo', 'github.com/example/paper')
+        self.assertFalse(api.call_args_list[1].args[1]['prerelease'])
+        self.assertEqual(api.call_args_list[1].args[1]['make_latest'], 'true')
         self.assertEqual(sum(bool(c.kwargs.get('payload')) or len(c.args) > 1 for c in api.call_args_list), 1)
 
     @patch.object(release, 'gh')

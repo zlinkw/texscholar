@@ -58,8 +58,8 @@ def publish(repo, tag, files):
     if release is None:
         try:
             release = api(f'repos/{repo}/releases', {
-                'tag_name': tag, 'name': f'TeXScholar {tag} preview', 'prerelease': True,
-                'make_latest': 'false', 'body': 'Preview packages from the tested source tag ' + tag + '.'})
+                'tag_name': tag, 'name': f'TeXScholar {tag}', 'prerelease': False,
+                'make_latest': 'true', 'body': 'Packages from the tested source tag ' + tag + '.'})
         except RuntimeError:
             # A failed POST can have succeeded server-side. Reconcile before
             # any retry instead of creating another release or replacing assets.

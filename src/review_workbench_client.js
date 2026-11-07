@@ -699,7 +699,11 @@ window.addEventListener('message', ({data: message}) => {
         else {$('scopeChoice').value = 'group'; scope(); openComposer();}
         $('note').focus(); return;
     }
-    if (message.type === 'configuration') {$('configuration').textContent = message.ready ? '已配置' : '配置待完善'; $('configuration').title = message.ready ? '可检测配置已通过，点击重新检查；不代表 AI 会话已加载或论文已编译' : message.issues.join('；'); return;}
+    if (message.type === 'configuration') {
+        $('configuration').textContent = message.mcpRuntime?.state === 'mismatch' ? 'MCP 需更新'
+            : message.ready && message.mcpRuntime?.state === 'unknown' ? '已配置 · MCP 待核验' : message.ready ? '已配置' : '配置待完善';
+        $('configuration').title = message.ready ? '可检测配置已通过，点击重新检查；最近活动 MCP ' + (message.mcpRuntime?.actual || '尚未报告版本') + '；不代表论文已编译' : message.issues.join('；'); return;
+    }
     if (message.type === 'style') {style(message.style); return;}
     if (message.type === 'translation') {
         if (message.source !== translationSource(message.key)) return;

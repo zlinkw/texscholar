@@ -9,6 +9,7 @@ exports.activate = async context => {
     require('./questions').activate(context);
     await require('./document_roles').activate(context).ready;
     await require('./mcp_setup').activate(context).ready;
+    require('./updates').activate(context);
     await require('./writing').activate(context).ready;
     await require('./pdf_navigation').activate(context).ready;
     return require('./inline_review').activate(context);
