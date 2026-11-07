@@ -60,22 +60,23 @@ test('hourly release checks are throttled across activation, honor disablement a
 
 test('update buttons verify the downloaded bytes, invoke VS Code install and offer MCP reload; failures never install', async () => {
     const fs = require('node:fs/promises'), path = require('node:path'), crypto = require('node:crypto');
-    for (const mode of ['success', 'changed', 'download-failed', 'install-failed']) {
+    for (const mode of ['success', 'prepare-restart', 'changed', 'download-failed', 'install-failed']) {
         const root = await fs.mkdtemp(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'updater-'));
         const calls = [], errors = [], state = new Map();
         let complete; const finished = new Promise(resolve => {complete = resolve;});
         const context = {subscriptions: [], globalStorageUri: {fsPath: root}, globalState: {get: (key, fallback) => state.get(key) ?? fallback, update: async (key, value) => state.set(key, value)}};
         const vscode = {workspace: {getConfiguration: () => ({get: () => true})}, ProgressLocation: {Notification: 15}, Uri: {file: fsPath => ({fsPath})},
-            window: {withProgress: async (_, fn) => fn(), showInformationMessage: async (text, ...actions) => actions.includes('下载并安装') ? '下载并安装' : '保存文件并重载 VS Code', showErrorMessage: text => {errors.push(text); complete();}},
+            window: {withProgress: async (_, fn) => fn(), showInformationMessage: async (text, ...actions) => actions.includes('下载并安装') ? '下载并安装' : mode === 'prepare-restart' ? '保存文件，准备完整重启' : '保存文件并重载 VS Code', showErrorMessage: text => {errors.push(text); complete();}},
             commands: {registerCommand: () => ({dispose() {}}), executeCommand: async (...args) => {calls.push(args); if (args[0] === 'workbench.extensions.installExtension' && mode === 'install-failed') throw Error('installer refused'); if (args[0] === 'localLatex.reloadForMCP') complete();}}};
         const ui = require('./updates').activate(context, vscode, {
             fetchRelease: async () => ({tag_name: 'v99.0.0', html_url: 'https://github.com/zlinkw/texscholar/releases/tag/v99.0.0', draft: false, prerelease: false}),
             downloadRelease: async (_, folder) => {if (mode === 'download-failed') throw Error('download failed'); const file = path.join(folder, 'pending.vsix'), raw = Buffer.from('verified fixture'); await fs.writeFile(file, mode === 'changed' ? 'changed' : raw); return {path: file, version: '99.0.0', sha256: crypto.createHash('sha256').update(raw).digest('hex')};},
             setInterval: () => 1, clearInterval: () => {}});
         await ui.ready; await finished;
-        if (mode === 'success') {
+        if (mode === 'success' || mode === 'prepare-restart') {
             assert.deepEqual(calls.map(c => c[0]), ['workbench.extensions.installExtension', 'localLatex.reloadForMCP']);
             assert.equal(calls[0][1].fsPath, path.join(root, 'update-download', 'pending.vsix')); assert.equal(errors.length, 0);
+            if (mode === 'prepare-restart') assert.deepEqual(calls[1][1], {saveOnly: true});
         } else {assert.equal(errors.length, 1); assert(!calls.some(c => c[0] === 'localLatex.reloadForMCP')); if (mode !== 'install-failed') assert.equal(calls.length, 0);}
         for (const sub of context.subscriptions) sub.dispose();
     }
@@ -220,6 +221,13 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
             await fs.writeFile(runtimeFile, JSON.stringify({pid: process.pid, version: require('../package.json').version, server: path.join(__dirname, 'mcp_server.py').toUpperCase()}), 'utf8');
             assert.equal((await handlers.get('localLatex.checkMCPVersion')(false)).state, 'matched', 'Windows path case must not report a false version mismatch');
         }
+        available.push('localLatex.checkReviewBeforeReload');
+        const runCommand = vscode.commands.executeCommand;
+        vscode.commands.executeCommand = async (...args) => {if (args[0] === 'localLatex.checkReviewBeforeReload') throw Error('审核页有未保存的候选编辑或返修批注'); return runCommand(...args);};
+        calls.length = 0;
+        await assert.rejects(handlers.get('localLatex.reloadForMCP')(), /未保存的候选/);
+        assert.equal(calls.length, 0, 'draft protection runs before saving files or reloading');
+        vscode.commands.executeCommand = runCommand;
         calls.length = 0;
         vscode.workspace.saveAll = async () => {calls.push(['saveAll']); return false;};
         await assert.rejects(handlers.get('localLatex.reloadForMCP')(), /未保存文件/);
@@ -232,6 +240,20 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         vscode.workspace.textDocuments = [];
         calls.length = 0; await handlers.get('localLatex.reloadForMCP')();
         assert(calls.findIndex(c => c[0] === 'saveAll') < calls.findIndex(c => c[0] === 'workbench.action.reloadWindow'));
+        let draftDuringSave = false;
+        vscode.workspace.saveAll = async () => {calls.push(['saveAll']); draftDuringSave = true; return true;};
+        vscode.commands.executeCommand = async (...args) => {if (args[0] === 'localLatex.checkReviewBeforeReload' && draftDuringSave) throw Error('保存期间新增未保存批注'); return runCommand(...args);};
+        calls.length = 0;
+        await assert.rejects(handlers.get('localLatex.reloadForMCP')(), /保存期间新增/);
+        assert(calls.some(c => c[0] === 'saveAll'));
+        assert(!calls.some(c => c[0] === 'workbench.action.reloadWindow'));
+        vscode.commands.executeCommand = runCommand;
+        vscode.workspace.saveAll = async () => {calls.push(['saveAll']); return true;};
+        calls.length = 0;
+        await handlers.get('localLatex.reloadForMCP')({saveOnly: true});
+        assert(calls.some(c => c[0] === 'saveAll'));
+        assert(!calls.some(c => c[0] === 'workbench.action.reloadWindow'), 'full-restart preparation never closes or reloads the window');
+        assert(notices.at(-1).includes('正常退出所有 VS Code 窗口'));
         state.set('aiSetupConfigured', true); calls.length = 0; notices.length = 0;
         goal = '修改回复信'; await start();
         const everyday = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');

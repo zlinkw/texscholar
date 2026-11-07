@@ -40,8 +40,9 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
                         throw new Error('安装前 VSIX 校验失败。');
                     await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(target));
                 });
-                const choice = await vscode.window.showInformationMessage('新版 TeXScholar 已安装。请等待当前 AI 操作结束，保留未发送的聊天输入后保存并重载 VS Code；重载后会核对 MCP 实际版本。', '保存文件并重载 VS Code');
-                if (choice === '保存文件并重载 VS Code') await vscode.commands.executeCommand('localLatex.reloadForMCP');
+                const choice = await vscode.window.showInformationMessage('新版 TeXScholar 已安装。请等待当前 AI 操作结束并保留未发送输入，再保存并重启；重启后核对 MCP 实际版本。若窗口重载曾使 Codex 界面启动失败，请完整退出 VS Code 后重开。', '保存文件，准备完整重启', '保存文件并重载 VS Code');
+                if (choice === '保存文件，准备完整重启') await vscode.commands.executeCommand('localLatex.reloadForMCP', {saveOnly: true});
+                else if (choice === '保存文件并重载 VS Code') await vscode.commands.executeCommand('localLatex.reloadForMCP');
             } catch (error) {await vscode.window.showErrorMessage('TeXScholar 更新安装失败：' + error.message);}
         })().finally(() => {installing = undefined;});
         return installing;

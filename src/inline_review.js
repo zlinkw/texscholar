@@ -769,6 +769,7 @@ function createInlineReview(vscode, context, execute = run) {
     }
     command('localLatex.inlineReview', () => select());
     command('localLatex.reviewWorkbench', openWorkbench, true);
+    context.subscriptions.push(vscode.commands.registerCommand('localLatex.checkReviewBeforeReload', () => workbench.assertReloadSafe()));
     command('localLatex.inlineReviewAt', c => open(c));
     command('localLatex.inlineNext', arg => select(true, arg), true);
     command('localLatex.inlineSelectCard', openWorkbench, true);

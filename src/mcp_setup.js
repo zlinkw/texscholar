@@ -41,8 +41,9 @@ function activate(context, vscode = require('vscode')) {
             await context.globalState.update('mcpVersionNotice', signature);
             const message = status.state === 'mismatch' ? `TeXScholar 已更新到 ${status.expected}，活动 MCP 仍为 ${status.actual}，需要重启该服务。`
                 : `TeXScholar ${status.expected} 的 MCP 运行版本待核验。${status.reason}`;
-            Promise.resolve(vscode.window.showWarningMessage(message + ' 请等待当前 AI 操作结束，并保留未发送输入后再重载。', '保存文件并重载 VS Code', '重新检查')).then(async choice => {
-                if (choice === '保存文件并重载 VS Code') await vscode.commands.executeCommand('localLatex.reloadForMCP');
+            Promise.resolve(vscode.window.showWarningMessage(message + ' 请等待当前 AI 操作结束并保留未发送输入。窗口重载后若 Codex 界面无法启动，需完整退出 VS Code 后重开。', '保存文件，准备完整重启', '保存文件并重载 VS Code', '重新检查')).then(async choice => {
+                if (choice === '保存文件，准备完整重启') await vscode.commands.executeCommand('localLatex.reloadForMCP', {saveOnly: true});
+                else if (choice === '保存文件并重载 VS Code') await vscode.commands.executeCommand('localLatex.reloadForMCP');
                 else if (choice === '重新检查') await checkVersion(true);
             }).catch(error => vscode.window.showErrorMessage('MCP 版本检查失败：' + error.message));
         }
@@ -79,11 +80,21 @@ function activate(context, vscode = require('vscode')) {
         return {...result, runtime};
     }
     const queued = connect => {const task = chain.then(() => register(connect)); chain = task.catch(() => {}); return task;};
-    context.subscriptions.push(vscode.commands.registerCommand('localLatex.reloadForMCP', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('localLatex.reloadForMCP', async (options = {}) => {
         try {
+            const checkReview = async () => {
+                if ((await vscode.commands.getCommands(true)).includes('localLatex.checkReviewBeforeReload'))
+                    await vscode.commands.executeCommand('localLatex.checkReviewBeforeReload');
+            };
+            await checkReview();
             const saved = await vscode.workspace.saveAll(false);
             if (!saved || vscode.workspace.textDocuments.some(doc => doc.isDirty))
                 throw new Error('仍有未保存文件，已停止重载。请先保存或处理这些文件，再重新执行。');
+            await checkReview();
+            if (options.saveOnly) {
+                vscode.window.showInformationMessage('文件已保存。请保留未发送的聊天输入，正常退出所有 VS Code 窗口后重新打开；此按钮未关闭窗口，也未代为完成重启或 MCP 版本核验。');
+                return;
+            }
             await vscode.commands.executeCommand('workbench.action.reloadWindow');
         } catch (error) {vscode.window.showErrorMessage('MCP 窗口重载未完成：' + error.message);}
     }));

@@ -92,6 +92,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     services.save = async (...args) => {await new Promise(resolve => {finishSave = resolve;}); return originalSave(...args);};
     const cachedRequests = translations;
     const saving = send('save', {option: 'B', value: 'Saved B'});
+    assert.throws(() => view.assertReloadSafe(), /正在进行/, 'running writes block window reload');
     await send('reopen'); assert.equal(events.at(-1).type, 'reopen', 'PDF window remains usable during a candidate save');
     await send('accept', {option: 'A'});
     assert(messages.at(-1).error, 'a second review mutation cannot bypass the writer guard');

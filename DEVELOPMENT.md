@@ -287,3 +287,14 @@ Windows 上已经执行的测试结果必须与 macOS 状态分开。macOS 的�
 验证：首次回归在旧实现失败（v1 未跟进 v2，D:/latex-writing-checks/0934/repro-c121fcd14c1b40269d08dc44f60354db，退出 1），修复后定向 17 项通过（D:/latex-writing-checks/0934/target-22e3901b5c5f479c9c4ac28e38e71e76，退出 0）。用户确认沿用单人最多 100 项、每次 1～5 项范围；隔离界面记录耗时，无硬性性能门槛。真实论文只读卡片剖析 9 项约 0.766 秒，未写入论文或审核决定，该后端耗时不能解释端到端等待。Mac 未实机验证。
 
 最终 Windows editor 90 项通过（D:/latex-writing-checks/0934/editor-5845552da414440b93c35fff3f0a9517，退出 0）。ℹ Isolated UI host, 100 items / 5 updates: 9.2 ms; excludes Python, editor disk synchronization and translation。该隔离宿主耗时不代表真实 VS Code 端到端保证。复用本轮同一源码本地打包、安装和正式发布，无新增后端、PDF、翻译或科研规则改动。
+
+
+0.9.35 连续刷新及安全重启验证。隔离宿主在卡片读取中暂停旧快照，期间连续更新同一项及另一项，再排空真实文件事件队列，核对最终版本；分别覆盖无草稿、候选草稿、批注草稿、两者都有。未保存输入留在原版视图，其余审核项继续更新；明确确认放弃后载入最终版，无审核写入或自动接收。读卡快照冻结后的首次测试 3 项失败是夹具未对放弃草稿弹窗作确认，修正交互后定向 31 项通过（D:/latex-writing-checks/0935/target-340e5828c4bb48919579e120ec7097f6，退出 0）；首次失败保留于 target-ec5790e6b7074bf2a18506e8b7375f94。
+
+真实 Codex 日志两次 renderer_ready_timeout 约 30 秒，后端 initialize 已成功；入口资源与已缓存官方 VSIX 一致。作者确认新标签也失败，完整退出 VS Code 后重开恢复。证据仅定位至重载后的 Webview 初始化，不断言更底层原因。保留标准窗口重载入口，并增加仅保存、由用户完整退出重开的通知按钮；不修改 Codex 源码或缓存，不强关进程。保存前后均检查审核页未保存输入和运行中的操作，防止 saveAll 不覆盖 Webview 草稿的缺口。
+
+原生文件事件验证使用单独 profile、CODEX_HOME 和 100 项样例。首次原生启动因夹具缺少 LaTeX Workshop 依赖未激活（原生 CLI 返回 0，未生成结果，不算通过）；补齐同版本依赖并关闭样例自动编译后重跑。只读真实论文及系统日志，不修改论文、SKILL 或 Typst。Mac 未实机验证。
+
+最终验证：Windows editor 94 项通过（D:/latex-writing-checks/0935/editor-3489be8925884359a911390ab0dbcf14，退出 0）；追加运行中阻止重载、保存期间产生草稿再核验及仅保存按钮断言后，受影响 writing/workbench 11 项通过（final-target-71f34f5994c748579d1dbf08503245c4，退出 0），其余实现未变覆盖沿用。
+原生验证成功：独立 VS Code profile 的实际 FileSystemWatcher，100 项中连续 rework 5 项，最终记录全部跟进，未变 6/50/100 项身份保持；从启动五项写入到列表数据更新约 597.64 ms。原生 CLI 退出 0 且 result.json 为 passed=true（D:/latex-writing-checks/0935/native-event）。该测量不包含审核页最终绘制，未宣称真实长论文的固定延迟。
+原生准备失败补记：仅手工复制扩展目录仍未登记依赖，第二次未激活；将无 .vsix 后缀的缓存传给安装 CLI 被当作扩展 ID，退出 1。复制同一缓存至隔离 workshop.vsix，经正常安装登记后完成验证；没有修改作者扩展安装或清理缓存。

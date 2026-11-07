@@ -80,9 +80,12 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     const backend = async (_, args, cwd, input) => {
         backendCalls.push({args, input});
         if (args.some(x => String(x).endsWith('document_roles.py'))) return JSON.stringify({status: 'unconfirmed'});
-        if (args.includes('cards') && cardsHook) await cardsHook();
-        if (args.includes('cards')) return JSON.stringify({session: 'batch', sha256: 'fresh', edits: Object.fromEntries(Object.entries(allCards).map(([id, item]) => [id, item.edit])),
-            cards: Object.fromEntries(Object.entries(allCards).filter(([, item]) => ['pending', 'rework'].includes(item.edit.status))), sources: {[path.basename(file)]: sourceValue ?? value}});
+        if (args.includes('cards')) {
+            const snapshot = JSON.stringify({session: 'batch', sha256: 'fresh', edits: Object.fromEntries(Object.entries(allCards).map(([id, item]) => [id, item.edit])),
+                cards: Object.fromEntries(Object.entries(allCards).filter(([, item]) => ['pending', 'rework'].includes(item.edit.status))), sources: {[path.basename(file)]: sourceValue ?? value}});
+            if (cardsHook) await cardsHook();
+            return snapshot;
+        }
         if (args.includes('inspect')) return JSON.stringify(allCards[args[args.indexOf('--id') + 1]]);
         if (args.includes('feedback')) {edit.requests.push({...input, status: 'open'}); return JSON.stringify({card: data, owner_text: 'fixture owner'});}
         if (args.includes('feedback-context')) return JSON.stringify({items: [
@@ -299,6 +302,44 @@ test('personal-use 100-item host refresh keeps changes to five items event-drive
     for (const id of ['1', '2', '3', '4', '5']) assert.equal(f.ui.records.get(id).c.version, 'v2');
     assert.equal(f.ui.workbench.active.version, 'v2');
     assert(!f.backendCalls.some(c => c.args.some(a => String(a).endsWith('review_pdf.py'))));
+});
+
+for (const protectedInput of ['none', 'candidate', 'note', 'both']) test(`continuous AI updates drain the latest event and protect ${protectedInput} drafts`, async () => {
+    const f = hostFixture(); await f.ui.ready;
+    const second = structuredClone(f.data);
+    second.original = 'Second sentence.'; second.source.start = Array.from(f.original.slice(0, f.original.indexOf('Second'))).length;
+    second.source.end = second.source.start + second.original.length;
+    f.allCards['2'] = second;
+    await f.ui.refresh({repo: f.root, owner: 'reply.tex'});
+    await f.handlers.get('localLatex.reviewWorkbench')(f.rows()[0].children[0].command.arguments[0]); await f.receive({type: 'ready'});
+    const draft = 'My unsaved candidate', note = '我的未保存批注';
+    const dirty = ['candidate', 'both'].includes(protectedInput), noteDirty = ['note', 'both'].includes(protectedInput);
+    if (dirty || noteDirty) await f.receive({type: 'dirty', id: '1', version: 'v1', dirty, noteDirty,
+        state: {drafts: dirty ? {A: draft} : {}, note: noteDirty ? note : '', composer: noteDirty}});
+    let started, release;
+    const entered = new Promise(resolve => {started = resolve;});
+    const waiting = new Promise(resolve => {release = resolve;});
+    f.cardsHook = async () => {f.cardsHook = undefined; started(); await waiting;};
+    f.data.version = 'v2'; f.edit.versions.push('v2');
+    const first = f.changed(); await entered;
+    f.data.version = 'v3'; f.edit.versions.push('v3');
+    second.version = 'v2'; second.edit.versions.push('v2');
+    const next = f.changed(); release(); await Promise.all([first, next]);
+    assert.equal(f.ui.records.get('1').c.version, 'v3');
+    assert.equal(f.ui.records.get('2').c.version, 'v2');
+    assert.equal(f.ui.workbench.active.version, dirty || noteDirty ? 'v1' : 'v3');
+    assert.equal(f.panels, 1);
+    if (dirty || noteDirty) {
+        assert(f.packets.some(m => m.type === 'conflict'));
+        assert(!f.packets.some(m => m.type === 'content' && m.c.version !== 'v1'), 'new candidates never replace the draft display');
+        assert.throws(() => f.handlers.get('localLatex.checkReviewBeforeReload')(), /未保存/);
+        f.vscode.window.showWarningMessage = async () => '放弃未保存内容并切换';
+        await f.receive({type: 'latest', id: '1', version: 'v1'});
+        assert.equal(f.ui.workbench.active.version, 'v3', 'explicit discard loads the latest generation, not an intermediate one');
+    }
+    assert.equal(f.value, f.original);
+    assert(!f.backendCalls.some(c => c.args.includes('decide') || c.args.includes('feedback') || c.args.includes('edit-option')));
+    assert.deepEqual(f.notices, []);
 });
 
 test('review positions exclude the mechanical ledger and follow unsaved header edits without changing source', () => {

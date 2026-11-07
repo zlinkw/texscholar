@@ -470,6 +470,10 @@ function createWorkbench(vscode, context, services) {
     }
     context.subscriptions.push({dispose() {panel?.dispose();}});
     return {show, sync, setRecords(records) {lastRecords = records; trimTranslations();},
+        assertReloadSafe() {
+            if (handling) throw new Error('审核操作正在进行，已停止重载；请等该操作完成。');
+            if (dirty || noteDirty) throw new Error('审核页有未保存的候选编辑或返修批注，已停止重载；请先保存或明确放弃。');
+        },
         async annotate(c, selected) {
             await show(c);
             if (!valid(c)) return;
