@@ -67,7 +67,9 @@ test('CRLF, hidden author comments and Unicode map to exact original source, nev
 
 test('the bundled engine handles fractions, matrices and alignment offline; unsupported TeX remains detectable', () => {
     for (const tex of [String.raw`\frac{a_i^2}{\sum_{j=1}^{n}b_j}`, String.raw`\begin{bmatrix}1&0\\0&1\end{bmatrix}`,
-        String.raw`\begin{aligned}x&=y+1\\z&=x^2\end{aligned}`]) {
+        String.raw`\begin{aligned}x&=y+1\\z&=x^2\end{aligned}`,
+        String.raw`\text{S}_\text{sample}`, String.raw`x_{\text{sample}}`,
+        String.raw`\mathrm{S}_{\text{sample}}`, String.raw`\text{S}_{\text{sample}}^\text{target}`]) {
         const html = katex.renderToString(tex, {throwOnError: true, trust: false});
         assert(html.includes('katex-mathml')); assert(html.includes('katex-html'));
     }

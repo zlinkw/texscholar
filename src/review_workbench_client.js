@@ -55,7 +55,7 @@ function keepReading(update) {
     // No timer, deferred scroll or focus changes can fight subsequent user input.
     const y = document.querySelector('header').getBoundingClientRect().bottom + 10;
     const range = document.caretRangeFromPoint?.(Math.min(120, innerWidth / 3), y);
-    const anchor = range && range.startContainer.parentElement?.closest('main .text, main .zh') ? range : undefined;
+    const anchor = range && range.startContainer.parentElement?.closest('main .review-text, main .zh') ? range : undefined;
     const anchorNode = anchor?.startContainer;
     const before = anchor?.getBoundingClientRect().top;
     update();
@@ -66,7 +66,7 @@ function keepReading(update) {
 }
 function readingAnchor() {
     const y = document.querySelector('header').getBoundingClientRect().bottom + 24;
-    const node = [...document.querySelectorAll('main .text[id], main .zh[id]')].find(n => {
+    const node = [...document.querySelectorAll('main .review-text[id], main .zh[id]')].find(n => {
         const r = n.getBoundingClientRect(); return r.height && r.top <= y && r.bottom > y;
     });
     return node ? {id: node.id, top: node.getBoundingClientRect().top} : undefined;
@@ -291,7 +291,7 @@ function renderOption(o) {
     article.className = [preview === o.label ? 'selected' : '', focused === o.label ? 'focused' : focused ? 'folded' : ''].join(' ');
     if (!article.children.length) article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
         + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small><p class="tradeoff"></p><p class="scopeSummary"></p><details class="reason"><summary>详细取舍</summary><span></span></details>'
-        + '<div class="detail"><div class="text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
+        + '<div class="detail"><div class="review-text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
         + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" title="保存此候选（Ctrl/Cmd+Enter）" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><button data-action="saveAccept" data-write data-option="' + o.label + '">保存并接收 ' + o.label + '</button><small>“保存”只更新待审版本；“保存并接收”替换正文并进入下一项。</small></div></div>';
     article.querySelector('.tradeoff').textContent = o.summary || o.reason;
     article.querySelector('.reason span').textContent = o.reason;
@@ -369,13 +369,13 @@ function renderQuestions(questions) {
         let node = existing.get(key);
         if (!node) {
             node = document.createElement('div'); node.className = 'question'; node.dataset.key = key;
-            node.innerHTML = '<div class="questionHeading"><strong></strong><div><button class="secondary" data-action="question" title="跳转到原始审稿意见文件位置">原始位置</button><button class="secondary" data-action="related" title="查看本问题关联的全部改动">全部改动</button></div></div><div class="text"></div><div class="zh"></div>';
+            node.innerHTML = '<div class="questionHeading"><strong></strong><div><button class="secondary" data-action="question" title="跳转到原始审稿意见文件位置">原始位置</button><button class="secondary" data-action="related" title="查看本问题关联的全部改动">全部改动</button></div></div><div class="review-text"></div><div class="zh"></div>';
             node.querySelector('strong').textContent = q.id;
         }
         if (container.children[index] !== node) container.insertBefore(node, container.children[index] || null);
         node.dataset.index = String(index);
         for (const b of node.querySelectorAll('button')) b.dataset.index = String(index);
-        const text = node.querySelector('.text'), zh = node.querySelector('.zh');
+        const text = node.querySelector('.review-text'), zh = node.querySelector('.zh');
         text.id = 'question-text-' + index; zh.id = 'zh-question' + index; zh.hidden = !chinese;
         text.dataset.question = String(index);
         renderText(text, q.quote, [], 'readonly');
@@ -400,7 +400,7 @@ function renderNotes(requests) {
         if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
         const context = n.display_context;
         const origin = context ? (context.question ? context.question.id : n.option ? '方案 ' + n.option : '原文') + (context.kind === 'translation' ? '译文' : '审稿问题') : n.option || '整项';
-        node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + '</strong><div class="text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
+        node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + '</strong><div class="review-text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
             (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '');
     }
     placeComposer();
@@ -508,7 +508,7 @@ function locateNote(id) {
 }
 function jumpChange(direction) {
     const targets = [];
-    for (const node of document.querySelectorAll('.text[data-side]')) {
+    for (const node of document.querySelectorAll('.review-text[data-side]')) {
         if (!node.getClientRects().length) continue;
         const entry = displayedChanges.get(node), model = models.get(node);
         if (!entry || !model) continue;
@@ -535,7 +535,7 @@ function selectionChanged(event) {
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed || !selection.rangeCount) return;
         const range = selection.getRangeAt(0), ancestor = range.commonAncestorContainer;
-        const selector = '.text[data-side], .text[data-question], .zh[data-translation]';
+        const selector = '.review-text[data-side], .review-text[data-question], .zh[data-translation]';
         const node = (ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement).closest(selector);
         if (!node || !node.contains(range.startContainer) || !node.contains(range.endContainer)) {
             const touchesReview = [range.startContainer, range.endContainer].some(n => (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement)?.closest(selector));
