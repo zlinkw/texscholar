@@ -19,6 +19,13 @@ test('actual MCP process reports its version; absent, outdated and exited report
         const reply = JSON.parse((await lines.next()).value);
         assert.equal(reply.result.serverInfo.version, require('../package.json').version);
         assert.equal((await version.inspect(root)).state, 'matched');
+        const peers = {available: true, clients: [{pid: child.pid, client: 'vscode'}, {pid: child.pid + 1, client: 'desktop'}]};
+        const mixed = await version.inspect(root, undefined, peers);
+        assert.equal(mixed.state, 'unknown', 'a current IDE process cannot certify an independent desktop connection');
+        assert(mixed.reason.includes('仅重启 VS Code')); assert.equal(mixed.desktop, true);
+        assert.equal((await version.inspect(root, undefined, {available: true, clients: [peers.clients[0]]})).state, 'matched');
+        assert.equal((await version.inspect(root, undefined, {available: false, reason: 'unavailable fixture'})).state, 'unknown');
+
         const old = {pid: child.pid, version: '0.0.1', server: path.join(__dirname, 'mcp_server.py')};
         await fs.writeFile(path.join(root, 'mcp-runtime.json'), JSON.stringify(old), 'utf8');
         assert.equal((await version.inspect(root)).state, 'mismatch');
@@ -171,6 +178,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
     await fs.writeFile(path.join(home, 'config.toml'), unrelated, 'utf8');
     const previousHome = process.env.CODEX_HOME; process.env.CODEX_HOME = home;
     const handlers = new Map(), state = new Map(), workspaceState = new Map(), calls = [], notices = [], copied = [];
+    let desktopClient = false, warningActions = [];
     let goal, available = ['chatgpt.newChat', 'chatgpt.addFileToThread'], copyChoice, python = process.env.LOCAL_LATEX_PYTHON;
     const folder = {uri: {scheme: 'file', fsPath: paper}};
     const vscode = {extensions: {getExtension: () => ({}), onDidChange: () => ({dispose() {}})}, Uri: {file: fsPath => ({scheme: 'file', fsPath})}, RelativePattern: class {},
@@ -180,7 +188,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
             onDidChangeWorkspaceFolders: () => ({dispose() {}})},
         env: {clipboard: {writeText: async text => copied.push(text)}},
         window: {showInputBox: async () => goal, showInformationMessage: text => notices.push(text),
-            showWarningMessage: async text => {notices.push(text); return copyChoice;},
+            showWarningMessage: async (text, ...actions) => {notices.push(text); warningActions = actions; return copyChoice;},
             showErrorMessage: text => {throw new Error(text);}},
         commands: {registerCommand: (id, handler) => {handlers.set(id, handler); return {dispose() {}};},
             getCommands: async () => available, executeCommand: async (...args) => calls.push(args)}};
@@ -188,7 +196,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         globalState: {get: (key, fallback) => state.get(key) ?? fallback, update: async (key, value) => state.set(key, value)},
         workspaceState: {get: key => workspaceState.get(key), update: async (key, value) => workspaceState.set(key, value)}};
     try {
-        await require('./mcp_setup').activate(context, vscode).ready;
+        await require('./mcp_setup').activate(context, vscode, {scanClients: async () => ({available: true, clients: [{pid: process.pid, client: desktopClient ? 'desktop' : 'vscode'}]})}).ready;
         const start = handlers.get('localLatex.startPaperTask');
         await start();
         assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), unrelated, 'cancel before connecting');
@@ -214,6 +222,12 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         const warned = notices.length;
         await handlers.get('localLatex.checkMCPVersion')(false);
         assert.equal(notices.length, warned, 'unchanged stale process does not repeat its notice');
+        desktopClient = true; copyChoice = '查看桌面端重启步骤';
+        await handlers.get('localLatex.checkMCPVersion')(true); await Promise.resolve();
+        assert.deepEqual(warningActions, ['查看桌面端重启步骤', '重新检查']);
+        assert(notices.at(-1).includes('仅关闭 VS Code 不会重启桌面端连接'));
+        desktopClient = false;
+
         copied.length = 0; copyChoice = undefined;
         await fs.writeFile(runtimeFile, JSON.stringify({pid: process.pid, version: require('../package.json').version, server: path.join(__dirname, 'mcp_server.py')}), 'utf8');
         assert.equal((await handlers.get('localLatex.checkMCPVersion')(false)).state, 'matched');

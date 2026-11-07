@@ -303,3 +303,10 @@ Windows 上已经执行的测试结果必须与 macOS 状态分开。macOS 的�
 0.9.36：审核页更多菜单加入“检查插件更新”按钮，直接执行现有 localLatex.checkForUpdates 手动入口，不新建下载或定时检查链。全局被动动作不依赖当前候选版本，也不阻塞／保存候选和批注。README 说明菜单及命令面板两种入口。定向覆盖按钮存在及未保存输入期间仍可执行。复用现有本地打包、安装与正式发布流程，不改论文、SKILL 或 Typst。Mac 未实机验证。
 
 本轮验证：workbench/inline/writing 31 项通过（D:/latex-writing-checks/0936/target-13aa04ab6e8c4062a17dd32b3535d5f9，退出 0），客户端脚本 node --check 通过，其他未改后端与下载校验沿用既有覆盖。无额外性能测量或独立包后验收。
+
+
+0.9.37 MCP 连接归属核验：只读原论文会话确认其 expected 0.9.36 仍返回 0.9.33；实际稳定启动器已指向 0.9.36，但六个 Python MCP 均由未重启的 Codex 桌面 app-server 拥有，而非 VS Code。旧单一最近进程报告不足以证明多个客户端／聊天均已更新。新增按检查事件运行的只读 Windows/macOS 进程归属识别，仅匹配当前 storage 启动器，不枚举论文；多连接使“最近匹配”降为当前会话待核验，版本拦截不放宽。桌面端通知只提供对应重启步骤，MCP 版本冲突返回服务与父进程 PID 供精确诊断。无定时轮询、进程终止、强制客户端重启或论文修改。Windows 归属识别依赖 PowerShell 7，缺少时明确待核验；Mac 未实机验证。
+
+补齐升级后旧附件路径：当服务版本已新于任务标注版本，返回 task_version_outdated/refresh_plugin_task，要求从当前插件重新准备任务或批注包，不再错误地要求重启已经更新的服务；版本不一致仍完全停止写入，不自动降低 expected_plugin_version。
+
+本轮验证：Windows editor 94 项通过（D:/latex-writing-checks/0937/editor-0a0643f32d2042cd8aa08b7bcc0cc3f1，退出 0）；最后文案微调的 writing 9 项通过（writing-final，退出 0）。MCP 首轮 2 项失败为 Mac 应用名大小写分类与旧文本断言：修复大小写分类、将版本冲突改为结构字段断言后，最终 MCP 24 项通过（D:/latex-writing-checks/0937/mcp-final2，退出 0），首轮失败保留于 mcp/stderr.log。实际本机只读识别六条桌面端连接，新核验正确显示当前会话待核验而非因另一个报告误称全部匹配；没有停止进程或修改论文。Mac 分类使用隔离输入验证，未实机验证。原会话实际切换需作者重启桌面应用后调用当前版本核验，不以本轮安装成功代替。

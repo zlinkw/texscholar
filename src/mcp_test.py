@@ -7,7 +7,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
-from mcp_server import Server, TOOLS
+from mcp_server import Server, TOOLS, ToolConflict
 from mcp_config import configure, check
 import native_review_test as fixtures
 from source_review import digest
@@ -15,6 +15,21 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_managed_client_ownership_is_platform_aware_and_excludes_other_mcp_services(self):
+        from mcp_clients import classify
+        windows = [
+            {'pid': 1, 'parent': 0, 'executable': 'C:/WindowsApps/OpenAI.Codex_build/app/codex.exe', 'command': 'codex app-server'},
+            {'pid': 2, 'parent': 1, 'command': 'python -X utf8 C:/Store/texscholar-mcp.py'},
+            {'pid': 3, 'parent': 4, 'command': 'python -X utf8 C:/Store/texscholar-mcp.py'},
+            {'pid': 4, 'parent': 0, 'executable': 'C:/Users/u/.vscode/extensions/openai.chatgpt-build/bin/codex.exe', 'command': 'codex app-server'},
+            {'pid': 5, 'parent': 1, 'command': 'python C:/Other/texscholar-mcp.py'}]
+        self.assertEqual(classify(windows, 'c:/store', True)['clients'],
+                         [{'pid': 2, 'parent_pid': 1, 'client': 'desktop'}, {'pid': 3, 'parent_pid': 4, 'client': 'vscode'}])
+        mac = [{'pid': 6, 'parent': 7, 'command': 'python /Users/u/store/texscholar-mcp.py'},
+               {'pid': 7, 'parent': 0, 'command': '/Applications/ChatGPT.app/Contents/MacOS/ChatGPT'},
+               {'pid': 8, 'parent': 7, 'command': 'python /users/u/store/texscholar-mcp.py'}]
+        self.assertEqual(classify(mac, '/Users/u/store', False)['clients'], [{'pid': 6, 'parent_pid': 7, 'client': 'desktop'}])
+
     def test_explicit_reference_lookup_preserves_exact_source_and_reports_ambiguity(self):
         tex = ('% \\label{ignored}\r\n\\begin{verbatim}\r\n\\label{ignored}\r\n\\end{verbatim}\r\n'
                '\\newcommand{\\methodname}[1]["a]{Model {#1}}\r\n'
@@ -363,8 +378,17 @@ class MCP(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'stale'):
                 server.call('rework_options', rework)
         state = self.review().raw
-        with self.assertRaisesRegex(ValueError, '重启 Codex'):
+        with self.assertRaises(ToolConflict) as mismatch:
             server.call('propose_options', {**args, 'expected_plugin_version': 'old-fixture'})
+        self.assertEqual(mismatch.exception.code, 'plugin_version_mismatch')
+        self.assertEqual(mismatch.exception.recovery['server_pid'], os.getpid())
+        self.assertEqual(mismatch.exception.recovery['parent_pid'], os.getppid())
+        self.assertFalse(mismatch.exception.recovery['automatic_retry'])
+        with self.assertRaises(ToolConflict) as stale_task:
+            server.call('read_context', {**base, 'expected_plugin_version': '0.0.1'})
+        self.assertEqual(stale_task.exception.code, 'task_version_outdated')
+        self.assertEqual(stale_task.exception.recovery['action'], 'refresh_plugin_task')
+
         self.assertEqual(self.review().raw, state)
         self.assertEqual((self.root / 'main.tex').read_bytes(), source)
         linked = server.call('link_questions', {**base, 'id': second['id'], 'version': second['version'],

@@ -345,9 +345,15 @@ class Server:
         if name == 'get_instructions':
             return {**rule_packet(args), 'version': VERSION}
         if args.get('expected_plugin_version', VERSION) != VERSION:
-            raise ToolConflict(f'当前 MCP 服务版本为 {VERSION}，与插件任务版本不一致。请重启 Codex 的 TeXScholar MCP 后继续；不要混用旧 MCP 与新版 CLI 或重复保存。',
+            expected = args['expected_plugin_version']
+            if re.fullmatch(r'\d+\.\d+\.\d+', expected) and tuple(map(int, expected.split('.'))) < tuple(map(int, VERSION.split('.'))):
+                raise ToolConflict(f'当前 MCP 为 {VERSION}，新于任务标注的 {expected}。请从插件重新加入本批批注或准备任务，核实当前插件版本后再调用；不要为旧附件反复重启，也不要自行降低版本要求。',
+                                   'task_version_outdated', {'action': 'refresh_plugin_task', 'actual_version': VERSION,
+                                                             'expected_version': expected, 'automatic_retry': False})
+            raise ToolConflict(f'当前 MCP 服务版本为 {VERSION}，与插件任务版本不一致。请重启拥有这条连接的 Codex 客户端的 TeXScholar MCP；仅重启 VS Code 不会刷新桌面应用的连接。不要混用旧 MCP 与新版 CLI 或重复保存。',
                                'plugin_version_mismatch', {'action': 'restart_mcp', 'actual_version': VERSION,
-                                                           'expected_version': args['expected_plugin_version'], 'automatic_retry': False})
+                                                           'expected_version': args['expected_plugin_version'], 'server_pid': os.getpid(),
+                                                           'parent_pid': os.getppid(), 'automatic_retry': False})
         if name == 'submit_options':
             return self.submit(args)
         root, git = self.project(args['project'])
