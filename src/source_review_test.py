@@ -60,6 +60,38 @@ class Flow(unittest.TestCase):
             self.assertEqual(self.review().raw, before)
         self.check_index()
 
+    def test_question_and_translation_feedback_snapshots(self):
+        id_ = self.edit('main.tex', 'The model improves performance.', 'The model reliably improves performance.', deferred=True)
+        data = self.review().inspect(id_)
+        question = {'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you for the comment.'}
+        self.runop('update_questions', id_, data['version'], [question], True)
+        source = self.read('main.tex')
+        contexts = [
+            {'kind': 'translation', 'source_side': 'original', 'source': data['original'], 'text': '模型提高性能。', 'provider': 'bing'},
+            {'kind': 'translation', 'source_side': 'candidate', 'source': data['candidate'], 'text': '模型可靠地提高性能。', 'provider': 'bing'},
+            {'kind': 'question', 'source_side': 'question', 'source': question['quote'], 'text': question['quote'], 'question': question},
+            {'kind': 'translation', 'source_side': 'question', 'source': question['quote'], 'text': '感谢您的意见。', 'provider': 'bing', 'question': question},
+        ]
+        for ctx in contexts:
+            ctx.update(start=0, end=2, quote=ctx['text'][:2])
+            side = 'candidate' if ctx['source_side'] == 'candidate' else 'original'
+            anchor = data[side]
+            spec = {'id': id_, 'version': data['version'], 'side': side, 'start': 0, 'end': len(anchor), 'quote': anchor,
+                    'text': '请按选区明确说明。', 'display_context': ctx}
+            request = self.runop('feedback', spec)['request']
+            self.assertEqual(request['display_context'], ctx)
+            update = {**spec, 'request_id': request['id'], 'previous_text': request['text'], 'text': '调整后的要求'}
+            self.runop('feedback', update)
+            before = self.review().raw
+            for bad in [{**spec, 'display_context': {**ctx, 'quote': 'wrong'}},
+                        {**spec, 'display_context': {**ctx, 'source': 'changed'}},
+                        {**spec, 'version': 'stale'}, update]:
+                with self.assertRaises(m.Conflict): self.runop('feedback', bad)
+                self.assertEqual(self.review().raw, before)
+        self.assertEqual(self.read('main.tex'), source)
+        self.assertEqual(self.review().state['edits'][id_]['versions'], [data['version']])
+        self.check_index()
+
     def setUp(self):
         self.root = ROOT / self._testMethodName
         self.root.mkdir()

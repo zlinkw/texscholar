@@ -104,7 +104,7 @@ function restoreInputs(state) {
     placeComposer();
     if (editingNote) $('scope').textContent = '原批注范围保持不变';
     else if (selected) $('scope').textContent = selectionStale ? '所选文字已变化：请重新划词，或明确改为整项批注；已写要求保留。'
-        : (selected.option ? '方案 ' + selected.option : '原文') + '选区：' + selected.value.slice(selected.start, selected.end);
+        : selectionLabel(selected) + '选区：' + selected.value.slice(selected.start, selected.end);
     else scope();
     $('compare').checked = state.compare;
     for (const label of state.editors) if (options.some(o => o.label === label)) $('editor-' + label).hidden = false;
@@ -230,13 +230,15 @@ function renderTranslation(key, entry) {
     const signature = JSON.stringify([entry.error, entry.text, sourceMode, changes, side]);
     if (rendered.get(node) === signature) {node.hidden = !chinese; return;}
     keepReading(() => {
-        if (entry.error) node.textContent = '翻译未完成：' + entry.error;
-        else math.render(node, entry.text, changes, side, sourceMode ? 'source' : 'preview', globalThis.katex);
+        if (entry.error) {node.textContent = '翻译未完成：' + entry.error; models.delete(node);}
+        else models.set(node, math.render(node, entry.text, changes, side, sourceMode ? 'source' : 'preview', globalThis.katex, models.get(node)));
+        node.dataset.translation = key;
         node.title = side === 'readonly' ? '中文阅读译文；对照译文尚未就绪时不标差异。'
             : '中文译文之间的文字差异；翻译措辞变化也可能被标记，请结合原文审核。';
         node.hidden = !chinese;
     });
     rendered.set(node, signature);
+    highlightSelection();
 }
 function toggleMathMode() {
     sourceMode = !sourceMode;
@@ -356,8 +358,11 @@ function renderQuestions(questions) {
     const entries = new Map([...existing].map(([key, node]) => [key, translatedText.get('question' + node.dataset.index)]));
     for (const key of translatedText.keys()) if (key.startsWith('question')) translatedText.delete(key);
     const keys = new Set(questions.map(q => JSON.stringify([q.id, q.file, q.quote])));
-    for (const [key, node] of existing) if (!keys.has(key)) node.remove();
-    if (!questions.length) {container.textContent = '当前未关联审稿问题；新论文撰写可以不关联。'; return;}
+    for (const [key, node] of existing) if (!keys.has(key)) {
+        if (node.contains($('noteComposer'))) $('composerDock').appendChild($('noteComposer'));
+        node.remove();
+    }
+    if (!questions.length) {container.textContent = '当前未关联审稿问题；新论文撰写可以不关联。'; highlightSelection(); return;}
     if (!container.children.length) container.textContent = '';
     for (const [index, q] of questions.entries()) {
         const key = JSON.stringify([q.id, q.file, q.quote]);
@@ -372,11 +377,13 @@ function renderQuestions(questions) {
         for (const b of node.querySelectorAll('button')) b.dataset.index = String(index);
         const text = node.querySelector('.text'), zh = node.querySelector('.zh');
         text.id = 'question-text-' + index; zh.id = 'zh-question' + index; zh.hidden = !chinese;
+        text.dataset.question = String(index);
         renderText(text, q.quote, [], 'readonly');
         const entry = entries.get(key);
         if (entry && entry.source === q.quote) translatedText.set('question' + index, entry);
     }
     for (const [key, entry] of translatedText) if (key.startsWith('question')) renderTranslation(key, entry);
+    highlightSelection();
 }
 function renderNotes(requests) {
     const container = $('notes');
@@ -391,7 +398,9 @@ function renderNotes(requests) {
         if (node.dataset.signature === signature) continue;
         node.dataset.signature = signature;
         if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
-        node.innerHTML = '<strong>' + esc(n.option || '整项') + ' · ' + esc(n.status) + '</strong><div class="text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(n.quote) + '</button></details>' +
+        const context = n.display_context;
+        const origin = context ? (context.question ? context.question.id : n.option ? '方案 ' + n.option : '原文') + (context.kind === 'translation' ? '译文' : '审稿问题') : n.option || '整项';
+        node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + '</strong><div class="text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
             (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '');
     }
     placeComposer();
@@ -406,7 +415,7 @@ function placeComposer() {
     else {
         const side = selected?.side || ($('scopeChoice').value === 'original' ? 'original' : 'candidate');
         const label = selected?.option || $('scopeChoice').value;
-        const content = side === 'original' ? $('originalZh') : $('zh-' + label);
+        const content = selected && ['question', 'translation'].includes(side) ? selectionNode(selected) : side === 'original' ? $('originalZh') : $('zh-' + label);
         const article = content?.closest('article');
         const obscured = article && (article.hidden || article.classList.contains('folded'));
         if (content && !composer.hidden && obscured) {if (composer.parentElement !== $('composerDock')) $('composerDock').appendChild(composer);}
@@ -435,13 +444,28 @@ function highlightSelection() {
     if (!globalThis.CSS?.highlights) return;
     CSS.highlights.delete('review-selection');
     if (!selected || selectionStale) return;
-    const node = $(selected.side === 'original' ? 'original' : 'text-' + selected.option), model = models.get(node);
-    if (!model || model.raw.replace(/\r\n/g, '\n') !== selected.value) return;
+    const node = selectionNode(selected), model = models.get(node);
+    if (!model) {
+        if (!node || selected.side === 'translation' && translatedText.get(node.dataset.translation)?.error) {selectionStale = true; buttons();}
+        return;
+    }
+    if (model.raw.replace(/\r\n/g, '\n') !== selected.value) {selectionStale = true; buttons(); return;}
     CSS.highlights.set('review-selection', new Highlight(...math.selectionRanges(model, selected.start, selected.end)));
+}
+function selectionNode(value) {
+    const index = value.question && (data.edit.questions || []).findIndex(q => q.id === value.question.id && q.file === value.question.file && q.quote === value.question.quote);
+    if (value.question && index < 0) return;
+    if (value.side === 'question') return $('question-text-' + index);
+    if (value.side === 'translation') return value.question ? $('zh-question' + index) : value.option ? $('zh-' + value.option) : $('originalZh');
+    return $(value.side === 'original' ? 'original' : 'text-' + value.option);
+}
+function selectionLabel(value) {
+    return (value.question ? value.question.id : value.option ? '方案 ' + value.option : '原文')
+        + (value.side === 'translation' ? '中文译文' : value.side === 'question' ? '审稿问题' : '');
 }
 function bindSelection(value) {
     selected = value; pendingSelection = undefined; selectionStale = false; openComposer();
-    $('scope').textContent = (selected.option ? '方案 ' + selected.option : '原文') + '选区：' + selected.value.slice(selected.start, selected.end) + (selected.wholeMath ? '（整式；细部请切换源码）' : '');
+    $('scope').textContent = selectionLabel(selected) + '选区：' + selected.value.slice(selected.start, selected.end) + (selected.wholeMath ? '（整式；细部请切换源码）' : '');
     highlightSelection(); buttons(); remember();
 }
 
@@ -463,6 +487,15 @@ function revealCandidate(label) {
 function locateNote(id) {
     const note = data.edit.requests.find(n => n.id === id);
     if (!note || note.version !== current.version) {status('该批注属于其他候选版本，未猜测当前位置。', true); return;}
+    if (note.display_context) {
+        const ctx = note.display_context, value = {side: ctx.kind, question: ctx.question, option: note.option};
+        if (note.option) revealCandidate(note.option);
+        const node = selectionNode(value), model = models.get(node);
+        if (!model || model.raw !== ctx.text) {status('所选问题或译文已变化／尚未就绪，批注快照仍保留，请核对后重新选择。', true); return;}
+        if (ctx.kind === 'translation') {chinese = true; node.hidden = false;}
+        const offset = n => Array.from(ctx.text).slice(0, n).join('').replace(/\r\n/g, '\n').length;
+        locateRanges(math.selectionRanges(model, offset(ctx.start), offset(ctx.end))); return;
+    }
     const raw = note.side === 'candidate' ? options.find(o => o.label === note.option)?.after : data.original;
     if (raw === undefined || !Number.isInteger(note.start) || !Number.isInteger(note.end) || note.start < 0 || note.end <= note.start
         || Array.from(raw).slice(note.start, note.end).join('') !== note.quote) {status('批注摘录与当前准确范围不一致，未猜测位置。', true); return;}
@@ -502,9 +535,10 @@ function selectionChanged(event) {
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed || !selection.rangeCount) return;
         const range = selection.getRangeAt(0), ancestor = range.commonAncestorContainer;
-        const node = (ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement).closest('.text[data-side]');
+        const selector = '.text[data-side], .text[data-question], .zh[data-translation]';
+        const node = (ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement).closest(selector);
         if (!node || !node.contains(range.startContainer) || !node.contains(range.endContainer)) {
-            const touchesReview = [range.startContainer, range.endContainer].some(n => (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement)?.closest('.text[data-side]'));
+            const touchesReview = [range.startContainer, range.endContainer].some(n => (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement)?.closest(selector));
             if (touchesReview) status('不能跨原文与候选绑定批注；请在同一内容区内选取。现有范围保持不变。', true);
             return;
         }
@@ -515,6 +549,13 @@ function selectionChanged(event) {
         next = {side: node.dataset.side, option: node.dataset.option, value: model.raw.replace(/\r\n/g, '\n'),
             start: model.raw.slice(0, bounds.start).replace(/\r\n/g, '\n').length,
             end: model.raw.slice(0, bounds.end).replace(/\r\n/g, '\n').length, wholeMath: bounds.wholeMath};
+        if (node.dataset.translation !== undefined) {
+            const key = node.dataset.translation, entry = translatedText.get(key);
+            if (!entry || entry.error) return;
+            next.side = 'translation'; next.provider = entry.provider;
+            if (key.startsWith('question')) next.question = data.edit.questions[Number(key.slice(8))];
+            else if (key !== 'original') next.option = key;
+        } else if (node.dataset.question !== undefined) {next.side = 'question'; next.question = data.edit.questions[Number(node.dataset.question)];}
     }
     if ($('note').value.trim()) {
         pendingSelection = next; highlightSelection();

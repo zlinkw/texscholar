@@ -101,6 +101,32 @@ function createWorkbench(vscode, context, services) {
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }
     const valid = c => active && key(active) === key(c);
+    function annotationSelection(value) {
+        if (!['question', 'translation'].includes(value.side)) {
+            const text = value.side === 'candidate' ? options(loaded).find(o => o.label === value.option)?.after : loaded.original;
+            if (text === undefined) throw new Error('批注方案不存在。');
+            return {...selection(text, value.value, value.start, value.end), side: value.side, option: value.option};
+        }
+        const question = value.question && (loaded.edit.questions || []).find(q =>
+            q.id === value.question.id && q.file === value.question.file && q.quote === value.question.quote);
+        if (value.question && !question) throw new Error('关联问题已变化，请重新选择。');
+        const option = value.option && options(loaded).find(o => o.label === value.option);
+        if (value.option && !option || value.side === 'question' && !question) throw new Error('批注来源不存在，请重新选择。');
+        const source = question ? question.quote : option ? option.after : loaded.original;
+        let text = source;
+        if (value.side === 'translation') {
+            const entry = translations.get(JSON.stringify([value.provider, source]));
+            if (value.provider !== services.provider() || !entry || entry.error) throw new Error('译文已变化或未就绪，请重新翻译并选择。');
+            text = entry.text;
+        }
+        const span = selection(text, value.value, value.start, value.end);
+        const side = option && !question ? 'candidate' : 'original';
+        const anchor = side === 'candidate' ? option.after : loaded.original;
+        return {side, option: side === 'candidate' ? option.label : undefined, start: 0, end: Array.from(anchor).length, quote: anchor,
+            display_context: {kind: value.side, source_side: question ? 'question' : side, source, text,
+                start: span.start, end: span.end, quote: span.quote,
+                ...(question ? {question} : {}), ...(value.side === 'translation' ? {provider: value.provider} : {})}};
+    }
     async function decideAndAdvance(c, action, option) {
         const list = filterItems(directory(), navigationFilter), index = list.findIndex(r => r.id === c.id);
         await services[action]({...c, option, workbench: true});
@@ -160,9 +186,7 @@ function createWorkbench(vscode, context, services) {
                     let selected;
                     const chosen = state.selected;
                     if (chosen) {
-                        const text = chosen.side === 'candidate' ? options(loaded).find(o => o.label === chosen.option)?.after : loaded.original;
-                        if (text === undefined) throw new Error('批注方案不存在。');
-                        selected = {...selection(text, chosen.value, chosen.start, chosen.end), side: chosen.side, option: chosen.option};
+                        selected = annotationSelection(chosen);
                     } else selected = {side: 'original', start: 0, end: Array.from(loaded.original).length, quote: loaded.original,
                         option: /^[ABC]$/.test(state.scope) ? state.scope : undefined};
                     await services.note({...active}, selected, state.note);
@@ -400,7 +424,8 @@ function createWorkbench(vscode, context, services) {
                 if (dirty) throw new Error('请先保存候选编辑，再绑定返修选区。');
                 const option = options(loaded).find(o => o.label === message.option);
                 let selected;
-                if (message.side === 'candidate') {
+                if (['question', 'translation'].includes(message.side)) selected = annotationSelection(message);
+                else if (message.side === 'candidate') {
                     if (!option) throw new Error('候选方案不存在。');
                     selected = selection(option.after, message.value, message.start, message.end);
                     selected.option = option.label;

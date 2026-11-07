@@ -820,6 +820,33 @@ class Review:
             raise Conflict("Invalid Unicode code-point selection offsets")
         if selected[start:end] != spec["quote"]:
             raise Conflict("Selection does not match the immutable excerpt")
+        context = spec.get('display_context')
+        if context is not None:
+            if not isinstance(context, dict) or context.get('kind') not in ('question', 'translation'):
+                raise Conflict('Invalid annotation display context')
+            source_side = context.get('source_side')
+            if source_side == 'question':
+                question = context.get('question')
+                if question not in edit.get('questions', []):
+                    raise Conflict('Annotation reviewer question is no longer linked')
+                self.question_links([question])
+                source = question['quote']
+            elif source_side in ('original', 'candidate') and source_side == side:
+                source = selected
+            else:
+                raise Conflict('Invalid annotation source context')
+            if context.get('source') != source:
+                raise Conflict('Annotation context source changed')
+            display = context.get('text')
+            a, b = context.get('start'), context.get('end')
+            if not isinstance(display, str) or type(a) is not int or type(b) is not int or not 0 <= a < b <= len(display):
+                raise Conflict('Invalid display selection offsets')
+            if display[a:b] != context.get('quote'):
+                raise Conflict('Display selection does not match its snapshot')
+            if context['kind'] == 'question' and (source_side != 'question' or display != source):
+                raise Conflict('Question annotation must select the exact reviewer excerpt')
+            if context['kind'] == 'translation' and (not isinstance(context.get('provider'), str) or not context['provider'].strip()):
+                raise Conflict('Translation annotation requires its provider')
         text = spec["text"]
         if not isinstance(text, str) or not text.strip():
             raise Conflict("A nonempty revision request is required")
@@ -835,7 +862,7 @@ class Review:
                 raise Conflict('Only open feedback on the current candidate can be edited')
             if request['text'] != spec.get('previous_text'):
                 raise Conflict('Feedback changed concurrently; reread before editing')
-            if any(request.get(key) != spec.get(key) for key in ('side', 'start', 'end', 'quote', 'option')):
+            if any(request.get(key) != spec.get(key) for key in ('side', 'start', 'end', 'quote', 'option', 'display_context')):
                 raise Conflict('Editing feedback must preserve its exact selection')
             request['text'] = text.strip()
             return {}, {'id': id_, 'request': request, 'rewritten': False}
@@ -844,6 +871,8 @@ class Review:
         if option:
             self.option(payload, option)
             request['option'] = option
+        if context is not None:
+            request['display_context'] = context
         edit.setdefault("requests", []).append(request)
         edit["status"] = "rework"
         return {}, {"id": id_, "request": request, "rewritten": False}
