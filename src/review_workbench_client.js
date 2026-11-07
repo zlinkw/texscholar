@@ -26,9 +26,9 @@ function fitToolbar() {
     const size = JSON.stringify([header.clientWidth, appearance?.controlFontSize, $('mathMode').textContent, $('progress').textContent, $('pdfStatus').textContent, $('backRelated').hidden, $('backRelated').textContent]);
     if (toolbarSize === size) return;
     toolbarSize = size;
-    const nodes = ['mathMode', 'pdfActions', 'pdfStatus'].map($);
+    const nodes = ['sourceLocation', 'mathMode', 'pdfActions', 'pdfStatus'].map($);
     for (const node of nodes) home.appendChild(node);
-    for (const id of ['mathMode', 'pdfStatus', 'pdfActions']) {
+    for (const id of ['mathMode', 'pdfStatus', 'pdfActions', 'sourceLocation']) {
         if (header.scrollWidth <= header.clientWidth) break;
         $('overflowActions').appendChild($(id));
     }

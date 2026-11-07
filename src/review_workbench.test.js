@@ -24,6 +24,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
         save: async (c, label, after) => {const r = records.get(c.id); r.data.options.find(o => o.label === label).after = after;
             r.c.version = r.data.version = 'v2'; r.data.edit.versions.push('v2'); view.sync(records, c); return structuredClone(r.data);},
         saved() {}, accept: async c => {events.push({type: 'accept', c}); records.delete(c.id); view.sync(records, c);},
+        source: async c => events.push({type: 'source', c}),
         reopen: async () => events.push({type: 'reopen'}), start: async () => events.push({type: 'start'}), copy: async () => events.push({type: 'copy'}), handoff: async () => events.push({type: 'handoff'}), finish() {}};
     const view = createWorkbench(vscode, {subscriptions: []}, services);
     view.setRecords(records); await view.show(records.get('1').c); await receive({type: 'ready'});
@@ -49,6 +50,9 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert.equal(records.get('1').data.edit.requests[0].text, '修正后的要求');
     assert(messages.some(m => m.type === 'noteEdited'));
     await send('dirty', {dirty: true, noteDirty: true});
+    await send('source');
+    assert.deepEqual(events.pop(), {type: 'source', c: view.active}, 'source navigation remains read-only with unsaved candidate and note inputs');
+    assert.equal(view.active.id, '1'); assert.equal(view.active.version, 'v1');
     await send('checkUpdates'); assert.equal(events.pop().type, 'checkUpdates', 'manual update check remains usable with unsaved review inputs');
     await send('switch', {target: 'a'}); assert.equal(view.active.id, '1', 'unconfirmed draft cannot disappear');
     await send('dirty', {dirty: false, noteDirty: false});
@@ -74,6 +78,8 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert(page.includes('id="configuration"'));
     assert(page.includes('data-action="checkUpdates"'));
     const header = page.slice(page.indexOf('<header>'), page.indexOf('</header>'));
+    assert(header.split('<details class="more">')[0].includes('id="sourceLocation" data-action="source"'), 'real source navigation has a direct top toolbar entry');
+    assert.equal((header.match(/data-action="source"/g) || []).length, 1, 'one source button moves into the overflow menu on narrow windows');
     assert(header.split('<details class="more">')[0].includes('data-action="handoff"'));
     assert(!header.split('<details class="more">')[1].includes('data-action="handoff"'));
     assert(!page.includes('data-action="connect"')); assert(!page.includes('data-action="copy"'));

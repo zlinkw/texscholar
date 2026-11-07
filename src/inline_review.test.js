@@ -125,6 +125,15 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert.equal(f.panels, 1, 'legacy entry opens the same fixed page, not an inline box');
     assert.equal(f.selectionHandler, undefined, 'tree commands do not bounce through a source-editor selection');
     const at = f.original.indexOf('First');
+    const beforeLocate = f.backendCalls.length;
+    await f.receive({type: 'source', id: c.id, version: c.version});
+    const located = f.calls.findLast(call => call[0] === 'showTextDocument');
+    assert.equal(located[1], f.document, 'source action opens the actual manuscript document');
+    assert.deepEqual(located[2], {preview: false, viewColumn: 1});
+    assert.equal(f.editor.selection.start, at, 'backend code point offsets map to the correct editor position after an emoji');
+    assert.equal(f.editor.selection.end, at);
+    assert(f.backendCalls.slice(beforeLocate).every(call => call.args.includes('inspect')), 'locating source performs only read-only inspection, no review write or PDF build');
+    assert.equal(f.value, f.original); assert.equal(f.edit.status, 'pending');
     f.editor.selection = {start: at, end: at + 5, isEmpty: false};
     await f.ui.annotate(c);
     const selection = f.packets.findLast(m => m.type === 'sourceSelection').selection;
