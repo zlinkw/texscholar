@@ -8,7 +8,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
         candidate: 'The model is reliable.', fewer_options_reason: 'fixture explanation', source: {text: 'private full source with machine state'}, edit: {file: 'main.tex', kind: 'manuscript', versions: ['v1'], requests: []},
         options: [...'ABC'].map((label, i) => ({label, after: ['The model is reliable.', 'The model is compact.', 'The model is efficient.'][i], reason: label, changes: []}))}});
     const records = new Map(['1', '2', 'a'].map(id => [id, make(id)]));
-    const vscode = {Uri: {file: fsPath => ({fsPath})}, ViewColumn: {One: 1}, window: {showWarningMessage: async () => confirmation,
+    const vscode = {commands: {executeCommand: async command => {assert.equal(command, 'localLatex.checkForUpdates'); events.push({type: 'checkUpdates'});}}, Uri: {file: fsPath => ({fsPath})}, ViewColumn: {One: 1}, window: {showWarningMessage: async () => confirmation,
         createWebviewPanel: (_, __, ___, settings) => {creations++; assert.equal(settings.retainContextWhenHidden, false); return panel = {visible: true,
             reveal() {panel.visible = true;}, onDidChangeViewState(fn) {changed = fn;}, dispose() {}, onDidDispose(fn) {disposed = fn;}, webview: {
             cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}),
@@ -49,6 +49,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert.equal(records.get('1').data.edit.requests[0].text, '修正后的要求');
     assert(messages.some(m => m.type === 'noteEdited'));
     await send('dirty', {dirty: true, noteDirty: true});
+    await send('checkUpdates'); assert.equal(events.pop().type, 'checkUpdates', 'manual update check remains usable with unsaved review inputs');
     await send('switch', {target: 'a'}); assert.equal(view.active.id, '1', 'unconfirmed draft cannot disappear');
     await send('dirty', {dirty: false, noteDirty: false});
     await send('save', {option: 'B', value: 'The model is compact and fast.'});
@@ -71,6 +72,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     assert(!page.includes('id="originalSource"'), 'full source is available through the mode button, not a second source block');
     assert(page.includes('data-action="start">AI 论文助手'));
     assert(page.includes('id="configuration"'));
+    assert(page.includes('data-action="checkUpdates"'));
     const header = page.slice(page.indexOf('<header>'), page.indexOf('</header>'));
     assert(header.split('<details class="more">')[0].includes('data-action="handoff"'));
     assert(!header.split('<details class="more">')[1].includes('data-action="handoff"'));

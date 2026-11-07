@@ -298,3 +298,8 @@ Windows 上已经执行的测试结果必须与 macOS 状态分开。macOS 的�
 最终验证：Windows editor 94 项通过（D:/latex-writing-checks/0935/editor-3489be8925884359a911390ab0dbcf14，退出 0）；追加运行中阻止重载、保存期间产生草稿再核验及仅保存按钮断言后，受影响 writing/workbench 11 项通过（final-target-71f34f5994c748579d1dbf08503245c4，退出 0），其余实现未变覆盖沿用。
 原生验证成功：独立 VS Code profile 的实际 FileSystemWatcher，100 项中连续 rework 5 项，最终记录全部跟进，未变 6/50/100 项身份保持；从启动五项写入到列表数据更新约 597.64 ms。原生 CLI 退出 0 且 result.json 为 passed=true（D:/latex-writing-checks/0935/native-event）。该测量不包含审核页最终绘制，未宣称真实长论文的固定延迟。
 原生准备失败补记：仅手工复制扩展目录仍未登记依赖，第二次未激活；将无 .vsix 后缀的缓存传给安装 CLI 被当作扩展 ID，退出 1。复制同一缓存至隔离 workshop.vsix，经正常安装登记后完成验证；没有修改作者扩展安装或清理缓存。
+
+
+0.9.36：审核页更多菜单加入“检查插件更新”按钮，直接执行现有 localLatex.checkForUpdates 手动入口，不新建下载或定时检查链。全局被动动作不依赖当前候选版本，也不阻塞／保存候选和批注。README 说明菜单及命令面板两种入口。定向覆盖按钮存在及未保存输入期间仍可执行。复用现有本地打包、安装与正式发布流程，不改论文、SKILL 或 Typst。Mac 未实机验证。
+
+本轮验证：workbench/inline/writing 31 项通过（D:/latex-writing-checks/0936/target-13aa04ab6e8c4062a17dd32b3535d5f9，退出 0），客户端脚本 node --check 通过，其他未改后端与下载校验沿用既有覆盖。无额外性能测量或独立包后验收。
