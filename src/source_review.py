@@ -747,7 +747,15 @@ class Review:
                     updated[rel] = text[:a] + item["after"] + text[b:]
                 # Only the explicitly accepted change enters this projection. Later manual edits stay separate.
                 base = accepted.get(rel, self.contents(self.state["accepted"], rel))
-                x, y = locate(base, item["before"], item["left"], item["right"])
+                try:
+                    x, y = locate(base, item["before"], item["left"], item["right"])
+                except Conflict:
+                    # Live source was anchored above. Its manual context need not
+                    # exist in the accepted-only snapshot; the full original must
+                    # still match exactly once there. Never infer insertion points.
+                    if not item["before"].strip():
+                        raise
+                    x, y = locate(base, item["before"])
                 accepted[rel] = base[:x] + item["after"] + base[y:]
                 edit["status"] = "accepted"
             for request in edit.get("requests", []):

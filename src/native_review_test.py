@@ -385,6 +385,56 @@ class NativeReview(unittest.TestCase):
             self.apply('decide', [id_], [])
         self.assertIn('author-edited', source.read_text(encoding='utf-8'))
 
+    def test_accept_projection_keeps_manual_context_outside_unique_original(self):
+        for rel, kind, before in [('main.tex', 'manuscript', 'The model is strong and fast.'),
+                                  ('reply.tex', 'response', 'Thank you.')]:
+            with self.subTest(file=rel):
+                source = self.root / rel
+                text = source.read_text(encoding='utf-8')
+                changed = text.replace('\\begin{document}', '\\begin{document}\nAuthor changed the opening context.')
+                changed = changed.replace('\\end{document}', 'Author changed the closing context.\n\\end{document}')
+                source.write_text(changed, encoding='utf-8', newline='')
+                options = [{'label': label, 'after': word + ' accepted text.', 'reason': label}
+                           for label, word in zip('ABC', ['First', 'Second', 'Third'])]
+                id_ = self.apply('propose_options', {'file': rel, 'kind': kind, 'before': before, 'options': options})['id']
+                r = self.review()
+                data = r.inspect(id_, source=True)
+                self.assertTrue(data['source_match'])
+                projection = r.contents(r.state['accepted'], rel)
+                self.assertEqual(projection.count(before), 1)
+                from source_review import locate
+                item = r.payload(r.state['edits'][id_])
+                with self.assertRaises(Conflict):
+                    locate(projection, before, item['left'], item['right'])
+                self.apply('decide', [id_], [], {id_: data['version']}, 'B')
+                r = self.review()
+                self.assertEqual(r.state['edits'][id_]['accepted_option'], 'B')
+                self.assertEqual(r.contents(r.state['accepted'], rel), projection.replace(before, options[1]['after']))
+                self.assertEqual(body(source.read_text(encoding='utf-8')), body(changed).replace(before, options[1]['after']))
+
+    def test_projection_without_unique_substantive_original_still_blocks_acceptance(self):
+        source = self.root / 'main.tex'
+        for label, baseline, current, before in [
+            ('duplicate', 'Old context.\nTarget sentence.\nOther.\nTarget sentence.\nOld end.',
+             'New context.\nTarget sentence.\nNew end.', 'Target sentence.'),
+            ('missing', 'Old context.\nOld target.\nOld end.',
+             'New context.\nTarget sentence.\nNew end.', 'Target sentence.'),
+            ('insertion', 'Old context.\nOld end.', 'New context.\nNew end.', ''),
+            ('whitespace', 'Old context.\n \nOld end.', 'New context.\n \nNew end.', ' \n'),
+        ]:
+            with self.subTest(case=label):
+                source.write_text(baseline, encoding='utf-8', newline='')
+                self.apply('begin', label, ['main.tex', 'reply.tex'])
+                source.write_text(current, encoding='utf-8', newline='')
+                id_ = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': before,
+                    'left': 'New context.\n' if not before else '', 'after': 'Proposed sentence.'})['id']
+                old_source, old_state = source.read_bytes(), (self.root / 'reply.tex').read_bytes()
+                with self.assertRaises(Conflict):
+                    self.apply('decide', [id_], [])
+                self.assertEqual(source.read_bytes(), old_source)
+                self.assertEqual((self.root / 'reply.tex').read_bytes(), old_state)
+                self.assertEqual(self.review().state['edits'][id_]['status'], 'pending')
+
     def test_state_owner_offsets_include_header_and_unicode(self):
         self.apply('propose', {'file': 'reply.tex', 'kind': 'response', 'before': 'Thank you.', 'after': 'Thank you for the suggestion.', 'deferred': True})
         data = self.review().inspect('a', source=True)
