@@ -33,7 +33,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     fs.writeFileSync(file, value, 'utf8');
     if (state) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n% CODEX-REVIEW-STATE-END', 'utf8');
     const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [], reveals = [];
-    let receive, panels = 0, provider, fileChanged, configurationChanged, selectionHandler;
+    let receive, panels = 0, provider, fileChanged, configurationChanged, selectionHandler, sourceValue, cardsHook;
     const original = value, edit = {file: path.basename(file), kind: 'manuscript', deferred: true, status: 'pending', versions: ['v1'], requests: [], questions: []};
     const start = Array.from(original.slice(0, original.indexOf('First'))).length;
     const data = {version: 'v1', edit, original: 'First sentence.', candidate: 'Better sentence.', options: [
@@ -80,8 +80,9 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     const backend = async (_, args, cwd, input) => {
         backendCalls.push({args, input});
         if (args.some(x => String(x).endsWith('document_roles.py'))) return JSON.stringify({status: 'unconfirmed'});
+        if (args.includes('cards') && cardsHook) await cardsHook();
         if (args.includes('cards')) return JSON.stringify({session: 'batch', sha256: 'fresh', edits: Object.fromEntries(Object.entries(allCards).map(([id, item]) => [id, item.edit])),
-            cards: Object.fromEntries(Object.entries(allCards).filter(([, item]) => ['pending', 'rework'].includes(item.edit.status))), sources: {[path.basename(file)]: value}});
+            cards: Object.fromEntries(Object.entries(allCards).filter(([, item]) => ['pending', 'rework'].includes(item.edit.status))), sources: {[path.basename(file)]: sourceValue ?? value}});
         if (args.includes('inspect')) return JSON.stringify(allCards[args[args.indexOf('--id') + 1]]);
         if (args.includes('feedback')) {edit.requests.push({...input, status: 'open'}); return JSON.stringify({card: data, owner_text: 'fixture owner'});}
         if (args.includes('feedback-context')) return JSON.stringify({items: [
@@ -102,7 +103,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     };
     const ui = createInlineReview(vscode, {subscriptions: []}, backend);
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
-        get value() {return value;}, set value(text) {value = text;},
+        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;},
         rows: () => provider.getChildren(), receive: m => receive(m),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
         changed: () => fileChanged(uri(owner)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
@@ -229,6 +230,75 @@ test('same-line items have separate IDs and event-driven versions switch one pag
     await f.ui.whenPDFIdle();
     assert.equal(f.ui.workbench.active.id, '2');
     assert.equal(f.reveals.at(-1).item.command.arguments[0].id, '2', 'automatic advance selects the remaining row');
+});
+
+test('AI candidate refresh is independent of editor synchronization of machine-only headers', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    const c = f.rows()[0].children[0].command.arguments[0];
+    await f.handlers.get('localLatex.reviewWorkbench')(c); await f.receive({type: 'ready'});
+    const header = '% CODEX-REVIEW-STATE-BEGIN\n% new machine state\n% CODEX-REVIEW-STATE-END\n';
+    const newer = header + f.value;
+    f.sourceValue = newer;
+    f.data.version = 'v2'; f.edit.versions.push('v2');
+    f.data.source.text = newer; f.data.source.start += header.length; f.data.source.end += header.length;
+    await f.changed();
+    assert.equal(f.ui.workbench.active.version, 'v2', 'new candidate must not wait for editor metadata synchronization');
+    assert.equal(f.ui.records.get('1').range.start, f.original.indexOf('First'), 'gutter uses actual editor coordinates');
+    assert.equal(f.value, f.original, 'author buffer is never rewritten');
+    assert(!f.notices.length);
+    f.document.isDirty = true;
+    f.data.version = 'v3'; f.edit.versions.push('v3');
+    await f.changed();
+    assert.equal(f.ui.workbench.active.version, 'v2', 'dirty source remains protected');
+    f.document.isDirty = false;
+    await f.receive({type: 'dirty', id: '1', version: 'v2', dirty: false, noteDirty: true});
+    await f.changed();
+    assert.equal(f.ui.workbench.active.version, 'v2', 'unsaved review input remains protected');
+    assert(f.packets.some(m => m.type === 'conflict'));
+});
+
+test('a file event received during a superseded card read is drained without a stale error or timer', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    await f.handlers.get('localLatex.reviewWorkbench')(f.rows()[0].children[0].command.arguments[0]);
+    await f.receive({type: 'ready'});
+    f.cardsHook = () => {
+        f.cardsHook = undefined;
+        f.data.version = 'v2'; f.edit.versions.push('v2');
+        f.changed();
+        throw Error('审核卡片读取期间原文发生变化，请重新打开；未修改正文或决定。');
+    };
+    await f.changed();
+    assert.equal(f.ui.workbench.active.version, 'v2');
+    assert.deepEqual(f.notices, []);
+    f.cardsHook = () => {throw Error('independent read failure');};
+    await f.changed();
+    assert(f.notices.some(m => m.includes('independent read failure')), 'real failures remain visible');
+});
+
+test('personal-use 100-item host refresh keeps changes to five items event-driven', async t => {
+    const f = hostFixture();
+    const sentences = Array.from({length: 99}, (_, i) => `Additional sentence number ${i + 2}.`);
+    f.value += '\n' + sentences.join(' ');
+    f.data.source.text = f.value;
+    for (let i = 0; i < sentences.length; i++) {
+        const data = structuredClone(f.data), original = sentences[i];
+        data.original = original; data.candidate = 'Revised ' + original;
+        data.options = data.options.map(o => ({...o, after: o.label + ' ' + original}));
+        data.source.start = Array.from(f.value.slice(0, f.value.indexOf(original))).length;
+        data.source.end = data.source.start + original.length;
+        f.allCards[String(i + 2)] = data;
+    }
+    await f.ui.ready;
+    await f.handlers.get('localLatex.reviewWorkbench')(f.rows()[0].children[0].command.arguments[0]);
+    await f.receive({type: 'ready'});
+    const started = performance.now();
+    for (const id of ['1', '2', '3', '4', '5']) {f.allCards[id].version = 'v2'; f.allCards[id].edit.versions.push('v2');}
+    await Promise.all(Array.from({length: 5}, () => f.changed()));
+    t.diagnostic(`Isolated UI host, 100 items / 5 updates: ${(performance.now() - started).toFixed(1)} ms; excludes Python, editor disk synchronization and translation`);
+    assert.equal(f.ui.records.size, 100);
+    for (const id of ['1', '2', '3', '4', '5']) assert.equal(f.ui.records.get(id).c.version, 'v2');
+    assert.equal(f.ui.workbench.active.version, 'v2');
+    assert(!f.backendCalls.some(c => c.args.some(a => String(a).endsWith('review_pdf.py'))));
 });
 
 test('review positions exclude the mechanical ledger and follow unsaved header edits without changing source', () => {

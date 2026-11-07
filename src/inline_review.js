@@ -316,7 +316,13 @@ function createInlineReview(vscode, context, execute = run) {
         autoRefresh = (async () => {
             while (changedFiles.size && !busy) {
                 const files = [...changedFiles]; changedFiles.clear();
-                if (await changedSinceRender(files)) await refresh(watchedScope);
+                try {
+                    if (await changedSinceRender(files)) await refresh(watchedScope);
+                } catch (error) {
+                    // A queued file event already supplies a newer read target.
+                    // Drain that event instead of reporting a superseded packet.
+                    if (!changedFiles.size) throw error;
+                }
             }
         })().catch(error => vscode.window.showErrorMessage(error.message)).finally(() => {
             autoRefresh = undefined;
@@ -350,13 +356,18 @@ function createInlineReview(vscode, context, execute = run) {
             records.clear();
         }
         batch = state.session;
-        const documents = new Map();
+        const documents = new Map(), documentViews = new Map();
         const oldRecords = new Map(records);
         const blocked = new Set();
         for (const [file, text] of Object.entries(state.sources)) {
             const doc = await vscode.workspace.openTextDocument(uri(c, file));
             documents.set(file, doc);
-            if (doc.isDirty || doc.getText() !== text) {blocked.add(file); deferredFiles.add(path.join(c.repo, file));}
+            const view = positions.view(doc.getText()); documentViews.set(file, view);
+            // State comments can reach disk before VS Code synchronizes its
+            // buffer. They must not hold back a new, read-only candidate.
+            if (doc.isDirty || doc.getText() !== text && (!view || view.body !== positions.view(text)?.body)) {
+                blocked.add(file); deferredFiles.add(path.join(c.repo, file));
+            }
         }
         records.clear();
         for (const [id, record] of oldRecords) if (blocked.has(record.data.edit.file) && state.cards[id]) records.set(id, record);
@@ -368,8 +379,10 @@ function createInlineReview(vscode, context, execute = run) {
             data.source.text = state.sources[edit.file];
             if (!documents.has(edit.file)) documents.set(edit.file, await vscode.workspace.openTextDocument(uri(c, edit.file)));
             const doc = documents.get(edit.file);
-            if (doc.isDirty || doc.getText() !== data.source.text) continue;
-            const at = range(doc, data);
+            if (blocked.has(edit.file) || doc.isDirty) continue;
+            const span = doc.getText() !== data.source.text && positions.locateDisplay(data, documentViews.get(edit.file));
+            if (doc.getText() !== data.source.text && !span) continue;
+            const at = span ? new vscode.Range(doc.positionAt(span.start), doc.positionAt(span.end)) : range(doc, data);
             records.set(id, {c: selected, data, range: at});
         }
         updateList();

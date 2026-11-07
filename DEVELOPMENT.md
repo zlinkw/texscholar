@@ -280,3 +280,10 @@ Windows 上已经执行的测试结果必须与 macOS 状态分开。macOS 的�
 本轮规定验证：editor 组覆盖通知频率、关闭／手动检查、失败不连续重试、安装按钮与失败路径、保存及实际 MCP 版本报告；release 测试覆盖下载摘要、身份、正式版跳转、系统代理选择及发布清单。复用同一最终源码本地打包、安装和正式发布。不改真实论文、全局 SKILL 或 Typst；无性能压测。Mac 仅实现适配和隔离接口验证，未实机测试。
 
 本轮结果：Windows editor 87 项通过（D:/latex-writing-checks/0933/editor-dc96cb063e4d4c9b9f649bdc7b8df6ec，退出 0）；release/download 12 项通过（D:/latex-writing-checks/0933/release-37ac3a0abf6d43cc8ded0db998573b9f，退出 0）。包含真实 MCP 子进程版本报告、保存失败阻止重载、下载内容变化及安装器失败路径。安装 API 使用隔离替身验证，未自动重载作者窗口；Mac 未实机验证。
+
+
+0.9.34 修复事件驱动刷新：隔离复现 cards 来源仅增加状态注释、编辑器仍保持旧缓冲时，新版本被 blocked 文件判断整体挡住。仅在缓冲未脏且去除唯一状态块后的正文完全一致时采用新版卡片，行标用 locateDisplay 映射到当前缓冲；保留未保存正文和审核输入保护。读卡期间遇到失败且已有更新文件事件排队时处理新事件，不报被取代快照的错误；无新事件的真实失败继续可见。没有轮询、自动接收或 PDF 编译。
+
+验证：首次回归在旧实现失败（v1 未跟进 v2，D:/latex-writing-checks/0934/repro-c121fcd14c1b40269d08dc44f60354db，退出 1），修复后定向 17 项通过（D:/latex-writing-checks/0934/target-22e3901b5c5f479c9c4ac28e38e71e76，退出 0）。用户确认沿用单人最多 100 项、每次 1～5 项范围；隔离界面记录耗时，无硬性性能门槛。真实论文只读卡片剖析 9 项约 0.766 秒，未写入论文或审核决定，该后端耗时不能解释端到端等待。Mac 未实机验证。
+
+最终 Windows editor 90 项通过（D:/latex-writing-checks/0934/editor-5845552da414440b93c35fff3f0a9517，退出 0）。ℹ Isolated UI host, 100 items / 5 updates: 9.2 ms; excludes Python, editor disk synchronization and translation。该隔离宿主耗时不代表真实 VS Code 端到端保证。复用本轮同一源码本地打包、安装和正式发布，无新增后端、PDF、翻译或科研规则改动。
