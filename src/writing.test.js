@@ -22,7 +22,6 @@ test('actual MCP process reports its version; absent, outdated and exited report
         const old = {pid: child.pid, version: '0.0.1', server: path.join(__dirname, 'mcp_server.py')};
         await fs.writeFile(path.join(root, 'mcp-runtime.json'), JSON.stringify(old), 'utf8');
         assert.equal((await version.inspect(root)).state, 'mismatch');
-        assert(version.prompt(await version.inspect(root)).includes('expected_plugin_version'));
         assert.equal((await version.inspect(root, () => false)).state, 'unknown');
         child.stdin.write(JSON.stringify({jsonrpc: '2.0', id: 2, method: 'tools/list'}) + '\n');
         await lines.next();
@@ -34,26 +33,52 @@ test('actual MCP process reports its version; absent, outdated and exited report
     assert.equal((await version.inspect(root)).state, 'unknown');
 });
 
-test('hourly release checks notify once, honor disablement and copy installation plus MCP instructions', async () => {
-    const {activate, newer, prompt} = require('./updates');
-    const state = new Map(), subscriptions = [], copied = [], notices = [];
-    let callback, interval, enabled = true, requests = 0, cleared = false;
+test('hourly release checks are throttled across activation, honor disablement and keep manual checks available', async () => {
+    const {activate, newer} = require('./updates');
+    const state = new Map(), subscriptions = [], notices = [], errors = [];
+    let callback, interval, enabled = true, requests = 0, cleared = false, failure = false, prerelease = false;
     const ctx = {subscriptions, globalState: {get: (key, fallback) => state.get(key) ?? fallback, update: async (key, value) => state.set(key, value)}};
     const vscode = {workspace: {getConfiguration: () => ({get: () => enabled})},
         commands: {registerCommand: () => ({dispose() {}})},
-        window: {showInformationMessage: (text) => {notices.push(text); return '复制更新提示词（含 MCP）';}, showErrorMessage: text => {throw new Error(text);}},
-        env: {clipboard: {writeText: async text => copied.push(text)}}};
-    const ui = activate(ctx, vscode, {fetchRelease: async () => {requests++; return {tag_name: 'v99.0.0', html_url: 'https://github.com/zlinkw/texscholar/releases/tag/v99.0.0', draft: false, prerelease: false};},
+        window: {showInformationMessage: (text, ...actions) => {notices.push({text, actions});}, showErrorMessage: text => errors.push(text)}};
+    const ui = activate(ctx, vscode, {fetchRelease: async () => {requests++; if (failure) throw Error('HTTP 429'); return {tag_name: 'v99.0.0', html_url: 'https://github.com/zlinkw/texscholar/releases/tag/v99.0.0', draft: false, prerelease};},
         setInterval: (fn, ms) => {callback = fn; interval = ms; return 1;}, clearInterval: () => {cleared = true;}});
-    await ui.ready; await Promise.resolve();
-    assert.equal(interval, 3600000); assert.equal(requests, 1); assert.equal(copied.length, 1);
-    assert(copied[0].includes('VSIX') && copied[0].includes('expected_plugin_version') && copied[0].includes('Restart'));
+    await ui.ready;
+    assert.equal(interval, 3600000); assert.equal(requests, 1);
+    assert.deepEqual(notices[0].actions, ['下载并安装', '打开发布页']);
     assert.equal(newer('v0.10.0', '0.9.31'), true); assert.equal(newer('v0.9.31', '0.9.31'), false);
     await callback(); assert.equal(requests, 1, 'no duplicate request within the hour');
     state.set('releaseCheckAt', 0); await callback(); assert.equal(requests, 2); assert.equal(notices.length, 1, 'same release notification is not repeated');
     enabled = false; state.set('releaseCheckAt', 0); await callback(); assert.equal(requests, 2);
-    assert(prompt('v99.0.0').includes('不重放已成功项'));
+    await ui.check(true); assert.equal(requests, 3, 'manual check works while hourly checks disabled');
+    failure = true; enabled = true; state.set('releaseCheckAt', 0); await callback();
+    assert.equal(errors.length, 1); assert(errors[0].includes('429'));
+    await callback(); assert.equal(requests, 4, 'failed checks do not immediately retry');
+    failure = false; prerelease = true; await ui.check(true); assert.equal(notices.length, 2); assert.equal(errors.length, 2);
     for (const sub of subscriptions) sub.dispose(); assert.equal(cleared, true);
+});
+
+test('update buttons verify the downloaded bytes, invoke VS Code install and offer MCP reload; failures never install', async () => {
+    const fs = require('node:fs/promises'), path = require('node:path'), crypto = require('node:crypto');
+    for (const mode of ['success', 'changed', 'download-failed', 'install-failed']) {
+        const root = await fs.mkdtemp(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'updater-'));
+        const calls = [], errors = [], state = new Map();
+        let complete; const finished = new Promise(resolve => {complete = resolve;});
+        const context = {subscriptions: [], globalStorageUri: {fsPath: root}, globalState: {get: (key, fallback) => state.get(key) ?? fallback, update: async (key, value) => state.set(key, value)}};
+        const vscode = {workspace: {getConfiguration: () => ({get: () => true})}, ProgressLocation: {Notification: 15}, Uri: {file: fsPath => ({fsPath})},
+            window: {withProgress: async (_, fn) => fn(), showInformationMessage: async (text, ...actions) => actions.includes('下载并安装') ? '下载并安装' : '保存文件并重载 VS Code', showErrorMessage: text => {errors.push(text); complete();}},
+            commands: {registerCommand: () => ({dispose() {}}), executeCommand: async (...args) => {calls.push(args); if (args[0] === 'workbench.extensions.installExtension' && mode === 'install-failed') throw Error('installer refused'); if (args[0] === 'localLatex.reloadForMCP') complete();}}};
+        const ui = require('./updates').activate(context, vscode, {
+            fetchRelease: async () => ({tag_name: 'v99.0.0', html_url: 'https://github.com/zlinkw/texscholar/releases/tag/v99.0.0', draft: false, prerelease: false}),
+            downloadRelease: async (_, folder) => {if (mode === 'download-failed') throw Error('download failed'); const file = path.join(folder, 'pending.vsix'), raw = Buffer.from('verified fixture'); await fs.writeFile(file, mode === 'changed' ? 'changed' : raw); return {path: file, version: '99.0.0', sha256: crypto.createHash('sha256').update(raw).digest('hex')};},
+            setInterval: () => 1, clearInterval: () => {}});
+        await ui.ready; await finished;
+        if (mode === 'success') {
+            assert.deepEqual(calls.map(c => c[0]), ['workbench.extensions.installExtension', 'localLatex.reloadForMCP']);
+            assert.equal(calls[0][1].fsPath, path.join(root, 'update-download', 'pending.vsix')); assert.equal(errors.length, 0);
+        } else {assert.equal(errors.length, 1); assert(!calls.some(c => c[0] === 'localLatex.reloadForMCP')); if (mode !== 'install-failed') assert.equal(calls.length, 0);}
+        for (const sub of context.subscriptions) sub.dispose();
+    }
 });
 test('writing context delegates one precise source scope to the current Codex chat', async () => {
     const handlers = new Map(), calls = [], messages = [];
@@ -148,7 +173,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
     let goal, available = ['chatgpt.newChat', 'chatgpt.addFileToThread'], copyChoice, python = process.env.LOCAL_LATEX_PYTHON;
     const folder = {uri: {scheme: 'file', fsPath: paper}};
     const vscode = {extensions: {getExtension: () => ({}), onDidChange: () => ({dispose() {}})}, Uri: {file: fsPath => ({scheme: 'file', fsPath})}, RelativePattern: class {},
-        workspace: {isTrusted: true, workspaceFolders: [folder], findFiles: async () => [path.join(paper, 'paper.tex')],
+        workspace: {isTrusted: true, workspaceFolders: [folder], textDocuments: [], saveAll: async () => true, findFiles: async () => [path.join(paper, 'paper.tex')],
             getConfiguration: () => ({get: (key, fallback) => key === 'pythonPath' ? python : fallback}),
             createFileSystemWatcher: () => ({dispose() {}, onDidCreate: () => ({dispose() {}}), onDidChange: () => ({dispose() {}}), onDidDelete: () => ({dispose() {}})}),
             onDidChangeWorkspaceFolders: () => ({dispose() {}})},
@@ -181,16 +206,32 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         assert(configured.includes(unrelated.trim())); assert(configured.includes('[mcp_servers.texscholar]'));
         const runtimeFile = path.join(storage, 'mcp-runtime.json');
         await fs.writeFile(runtimeFile, JSON.stringify({pid: process.pid, version: '0.0.1', server: path.join(__dirname, 'mcp_server.py')}), 'utf8');
-        copyChoice = '复制检查／恢复提示词';
+        copyChoice = undefined;
         assert.equal((await handlers.get('localLatex.checkMCPVersion')(false)).state, 'mismatch');
         await Promise.resolve();
-        assert(copied.at(-1).includes('expected_plugin_version'));
+        assert.equal(copied.length, 0, 'MCP recovery uses plugin buttons, not copied prompts');
         const warned = notices.length;
         await handlers.get('localLatex.checkMCPVersion')(false);
         assert.equal(notices.length, warned, 'unchanged stale process does not repeat its notice');
         copied.length = 0; copyChoice = undefined;
         await fs.writeFile(runtimeFile, JSON.stringify({pid: process.pid, version: require('../package.json').version, server: path.join(__dirname, 'mcp_server.py')}), 'utf8');
         assert.equal((await handlers.get('localLatex.checkMCPVersion')(false)).state, 'matched');
+        if (process.platform === 'win32') {
+            await fs.writeFile(runtimeFile, JSON.stringify({pid: process.pid, version: require('../package.json').version, server: path.join(__dirname, 'mcp_server.py').toUpperCase()}), 'utf8');
+            assert.equal((await handlers.get('localLatex.checkMCPVersion')(false)).state, 'matched', 'Windows path case must not report a false version mismatch');
+        }
+        calls.length = 0;
+        vscode.workspace.saveAll = async () => {calls.push(['saveAll']); return false;};
+        await assert.rejects(handlers.get('localLatex.reloadForMCP')(), /未保存文件/);
+        assert(!calls.some(c => c[0] === 'workbench.action.reloadWindow'));
+        calls.length = 0;
+        vscode.workspace.saveAll = async () => {calls.push(['saveAll']); return true;};
+        vscode.workspace.textDocuments = [{isDirty: true}];
+        await assert.rejects(handlers.get('localLatex.reloadForMCP')(), /未保存文件/);
+        assert(!calls.some(c => c[0] === 'workbench.action.reloadWindow'));
+        vscode.workspace.textDocuments = [];
+        calls.length = 0; await handlers.get('localLatex.reloadForMCP')();
+        assert(calls.findIndex(c => c[0] === 'saveAll') < calls.findIndex(c => c[0] === 'workbench.action.reloadWindow'));
         state.set('aiSetupConfigured', true); calls.length = 0; notices.length = 0;
         goal = '修改回复信'; await start();
         const everyday = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');

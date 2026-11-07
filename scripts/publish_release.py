@@ -49,6 +49,11 @@ def verify_artifacts(root, directory, tag):
         if not expected or actual != expected[1]:
             raise ValueError(f'{name} does not match the tested artifact digest in the annotated tag.')
         files[artifact] = 'sha256:' + actual
+    checksum = directory / 'SHA256SUMS.txt'
+    wanted = ''.join(digest.removeprefix('sha256:') + '  ' + artifact.name + '\n' for artifact, digest in files.items())
+    if checksum.read_text(encoding='utf-8') != wanted:
+        raise ValueError('Release checksum file differs from tested artifact digests')
+    files[checksum] = 'sha256:' + hashlib.sha256(checksum.read_bytes()).hexdigest()
     return files
 
 

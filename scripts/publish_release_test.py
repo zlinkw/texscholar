@@ -5,6 +5,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,6 +13,8 @@ import zipfile
 
 import publish_release as release
 from build import archive_bytes
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+import update_check
 
 
 class Publish(unittest.TestCase):
@@ -77,8 +80,11 @@ class Publish(unittest.TestCase):
         for label, name in [('VSIX', 'texscholar-1.0.0.vsix'), ('SOURCE', 'texscholar-1.0.0-source.zip')]:
             (root / name).write_bytes(canonical)
             note += label + '-SHA256: ' + hashlib.sha256(canonical).hexdigest() + '\n'
+        (root / 'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(canonical).hexdigest() + '  ' + name + '\n'
+            for name in ('texscholar-1.0.0.vsix', 'texscholar-1.0.0-source.zip')), encoding='utf-8')
         with patch.object(release.subprocess, 'check_output', return_value=note.encode('utf-8')):
-            self.assertEqual(len(release.verify_artifacts(root, root, 'v1.0.0')), 2)
+            self.assertEqual({p.name for p in release.verify_artifacts(root, root, 'v1.0.0')},
+                             {'texscholar-1.0.0.vsix', 'texscholar-1.0.0-source.zip', 'SHA256SUMS.txt'})
             (root / 'texscholar-1.0.0.vsix').write_bytes(b'changed')
             with self.assertRaisesRegex(ValueError, 'tested artifact digest'):
                 release.verify_artifacts(root, root, 'v1.0.0')
@@ -117,6 +123,52 @@ class Publish(unittest.TestCase):
             release.api('example', {'tag_name': 'v1.0.0'})
         gh.assert_called_once()
         sleep.assert_not_called()
+
+    def test_update_download_checks_digest_and_vsix_identity_before_replacing_pending(self):
+        root = Path(tempfile.mkdtemp(prefix='download-', dir=os.environ['LOCAL_LATEX_TEST_ROOT']))
+        target = root / 'pending.vsix'
+        class Response(io.BytesIO):
+            def geturl(self):
+                return 'https://release-assets.githubusercontent.com/fixture'
+        for mode in ('success', 'digest', 'identity', 'network'):
+            with self.subTest(mode=mode):
+                target.write_bytes(b'previous')
+                manifest = {'name': 'latex-writing-tools', 'publisher': 'local-research', 'version': '1.0.0' if mode != 'identity' else '2.0.0'}
+                raw = archive_bytes({'extension/package.json': json.dumps(manifest).encode('utf-8')})
+                digest = hashlib.sha256(raw).hexdigest() if mode != 'digest' else '0' * 64
+                checksums = (digest + '  texscholar-1.0.0.vsix\n').encode('utf-8')
+                with patch.object(update_check, 'opener') as mocked:
+                    mocked.return_value.open.side_effect = OSError('HTTP 429') if mode == 'network' else [Response(checksums), Response(raw)]
+                    if mode == 'success':
+                        result = update_check.download('v1.0.0', root)
+                        self.assertEqual(target.read_bytes(), raw)
+                        self.assertEqual(result['sha256'], digest)
+                        self.assertEqual(result['version'], '1.0.0')
+                        self.assertTrue(all(call.args[0].full_url.startswith('https://github.com/zlinkw/texscholar/releases/download/v1.0.0/') for call in mocked.return_value.open.call_args_list))
+                    else:
+                        with self.assertRaises((OSError, ValueError)):
+                            update_check.download('v1.0.0', root)
+                        self.assertEqual(target.read_bytes(), b'previous')
+
+    def test_update_channel_redirect_and_system_proxy_selection(self):
+        class Response(io.BytesIO):
+            url = 'https://github.com/zlinkw/texscholar/releases/tag/v1.0.0'
+            def geturl(self):
+                return self.url
+        with patch.object(update_check, 'opener') as mocked:
+            mocked.return_value.open.side_effect = [Response(), Response()]
+            self.assertEqual(update_check.latest()['tag_name'], 'v1.0.0')
+            Response.url = 'https://example.com/releases/tag/v1.0.0'
+            with self.assertRaises(ValueError):
+                update_check.latest()
+        for platform, method in [('win32', 'getproxies_registry'), ('darwin', 'getproxies_macosx')]:
+            with self.subTest(platform=platform), patch.object(update_check.sys, 'platform', platform), \
+                 patch.object(update_check.urllib.request, method, create=True, return_value={'https': 'http://proxy.test:8080'}) as proxies, \
+                 patch.object(update_check.urllib.request, 'ProxyHandler') as handler, \
+                 patch.object(update_check.urllib.request, 'build_opener'):
+                update_check.opener()
+                proxies.assert_called_once()
+                handler.assert_called_once_with({'https': 'http://proxy.test:8080'})
 
 
 if __name__ == '__main__':

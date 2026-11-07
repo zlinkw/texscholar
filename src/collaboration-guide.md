@@ -32,7 +32,9 @@
 
 ## 界面与交付细节
 
-插件更新与 MCP 进程更新分别核验。插件可更新启动配置并报告最近活动进程的实际版本，但不能替其他 Codex 客户端执行未公开的重启接口。遇到 plugin_version_mismatch，保留原任务，按插件复制的恢复提示词重启 texscholar MCP，再以当前实际安装版本调用 read_context 核对 plugin_version。旧版服务无报告时属于待核验。更新提示词包含从本仓库正式 Release 下载、摘要校验、安装、重载及 MCP 核验，不混用旧服务和新版 CLI，也不重放已成功的操作。
+插件更新与 MCP 进程更新分别核验。正式版更新由插件每小时检查或用户手动触发，下载、发布摘要和 VSIX 身份校验、安装均由插件按钮完成，不需要 AI 更新提示词。遇到 plugin_version_mismatch，保留原任务，使用插件的“保存文件并重载 VS Code”后核对活动服务版本，再以当前实际安装版本调用 read_context 核对 plugin_version。请先等待当前 AI 操作结束并保留未发送输入；旧版服务无报告时属于待核验。插件不能替其他独立 Codex 客户端重启服务，其他客户端仍需在自身 MCP 设置中重启或正常重启客户端。不混用旧服务和新版 CLI，也不重放已成功的操作。
+
+VS Code 内的 Codex 可通过“保存文件并重载 VS Code（刷新 MCP）”调用公开的文件保存接口和窗口重载命令；作者先保留未发送的聊天输入，保存失败或仍有未保存文件时停止。稳定启动器的 -X、utf8 与脚本路径通常不需要随版本调整，实际实现由 connection.json 指向。重载后继续核验 MCP 返回版本，不能直接宣布已更新。其他独立 Codex 客户端使用自身的重启入口。
 
 按章节读取时使用实际完整 TeX 标题命令，不从模块名推测标题。section_selector_invalid 会返回当前 available_sections，可据此修正 scopes；相同标题需结合真实 left/right 区分，不自动选择近似标题。source_changed 的写入冲突仍需重读受影响源码。interrupted_transaction 需先只读检查 status，再用当前摘要显式 recover，成功后重读受影响编号并继续未保存操作；不能重放已成功项或删除事务记录。
 

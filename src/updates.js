@@ -1,5 +1,7 @@
 'use strict';
 const path = require('node:path');
+const fs = require('node:fs/promises');
+const crypto = require('node:crypto');
 const CURRENT = require('../package.json').version;
 const RELEASES = 'https://github.com/zlinkw/texscholar/releases';
 const HOUR = 60 * 60 * 1000;
@@ -10,26 +12,40 @@ function newer(tag, installed = CURRENT) {
     for (let i = 1; i <= 3; i++) {if (+a[i] !== +b[i]) return +a[i] > +b[i];}
     return false;
 }
-function prompt(tag) {
-    return ['# 更新 TeXScholar VS Code 插件及 MCP',
-        '本机当前版本：' + CURRENT, '目标 GitHub Release：' + tag, '发布地址：' + RELEASES,
-        '仅使用该公开仓库的最新正式 Release。下载适合本机 Windows 或 macOS 的 VSIX；本插件通用包同时用于两种平台。',
-        '核对仓库、版本和 Release 提供的 SHA256／资产摘要，再用本机 VS Code CLI 安装下载的 VSIX。保留真实失败信息，不从其他网站下载，也不触发云端打包。',
-        '先保存用户输入，再提示正常重载 VS Code。插件激活后会更新自身的 MCP 启动指向。',
-        '执行“TeXScholar：检查 Codex MCP 运行版本（复制恢复提示词）”。仅更新 VSIX 或配置文件不足以确认正在运行的 MCP 已升级。',
-        '若活动 MCP 版本不一致或尚未核实，在当前 Codex 客户端的 MCP 设置里对 texscholar 执行 Restart；没有此入口时保存输入并正常重启该 Codex 客户端。保留原聊天。',
-        '重启后先调用 texscholar.read_context，expected_plugin_version 使用实际安装的新版本，沿用原任务的 project、state、ids/scopes，核对返回 plugin_version 一致后继续。',
-        '当前会话工具仍为旧版本时停止写入并说明，不用旧 CLI 绕过，不重放已成功项。',
-        '保护论文、候选、批注、审核状态、暂存选择及全局 SKILL。更新不表示接收候选，不清理项目缓存，不改其他插件、代理或凭据。'].join('\n');
-}
 function activate(context, vscode = require('vscode'), dependencies = {}) {
-    let running, timer;
-    const fetchRelease = dependencies.fetchRelease || (async () => {
+    let running, installing, timer;
+    async function invoke(args = []) {
         const cfg = vscode.workspace.getConfiguration('localLatex');
         const python = require('./tools').discover(key => cfg.get(key)).found.pythonPath;
         if (!python) throw new Error('更新检查需要可用的 Python 3.12+。');
-        return JSON.parse(await require('./backup').run(python, ['-X', 'utf8', path.join(__dirname, 'update_check.py')], __dirname));
-    });
+        return JSON.parse(await require('./backup').run(python, ['-X', 'utf8', path.join(__dirname, 'update_check.py'), ...args], __dirname));
+    }
+    const fetchRelease = dependencies.fetchRelease || (() => invoke());
+    const downloadRelease = dependencies.downloadRelease || ((tag, directory) => invoke(['--download', tag, '--directory', directory]));
+    async function install(release) {
+        if (installing) return installing;
+        installing = (async () => {
+            try {
+                await vscode.window.withProgress({location: vscode.ProgressLocation.Notification, title: 'TeXScholar：下载并安装 ' + release.tag_name}, async () => {
+                    const directory = path.join(context.globalStorageUri.fsPath, 'update-download');
+                    await fs.mkdir(directory, {recursive: true});
+                    const stat = await fs.lstat(directory);
+                    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('更新下载目录不是普通目录。');
+                    const result = await downloadRelease(release.tag_name, directory);
+                    const target = path.join(directory, 'pending.vsix');
+                    if (!require('./tools').samePath(path.resolve(result.path), target) || result.version !== release.tag_name.replace(/^v/, '') || !/^[0-9a-f]{64}$/.test(result.sha256))
+                        throw new Error('更新下载结果与目标版本不符。');
+                    const info = await fs.lstat(target);
+                    if (!info.isFile() || info.isSymbolicLink() || crypto.createHash('sha256').update(await fs.readFile(target)).digest('hex') !== result.sha256)
+                        throw new Error('安装前 VSIX 校验失败。');
+                    await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(target));
+                });
+                const choice = await vscode.window.showInformationMessage('新版 TeXScholar 已安装。请等待当前 AI 操作结束，保留未发送的聊天输入后保存并重载 VS Code；重载后会核对 MCP 实际版本。', '保存文件并重载 VS Code');
+                if (choice === '保存文件并重载 VS Code') await vscode.commands.executeCommand('localLatex.reloadForMCP');
+            } catch (error) {await vscode.window.showErrorMessage('TeXScholar 更新安装失败：' + error.message);}
+        })().finally(() => {installing = undefined;});
+        return installing;
+    }
     async function check(explicit = false) {
         if (running) return running;
         running = (async () => {
@@ -53,10 +69,10 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
                 if (!explicit && context.globalState.get('releaseNotified') === release.tag_name) return release;
                 await context.globalState.update('releaseNotified', release.tag_name);
                 Promise.resolve(vscode.window.showInformationMessage(`TeXScholar 有新版 ${release.tag_name}（当前 ${CURRENT}）。`,
-                    '复制更新提示词（含 MCP）', '打开发布页')).then(async choice => {
-                    if (choice === '复制更新提示词（含 MCP）') await vscode.env.clipboard.writeText(prompt(release.tag_name));
+                    '下载并安装', '打开发布页')).then(async choice => {
+                    if (choice === '下载并安装') await install(release);
                     else if (choice === '打开发布页') await vscode.env.openExternal(vscode.Uri.parse(release.html_url));
-                }).catch(error => vscode.window.showErrorMessage('更新提示处理失败：' + error.message));
+                }).catch(error => vscode.window.showErrorMessage('更新操作失败：' + error.message));
                 return release;
             } catch (error) {
                 const previousError = context.globalState.get('releaseCheckError');
@@ -73,4 +89,4 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
     context.subscriptions.push({dispose() {(dependencies.clearInterval || clearInterval)(timer);}});
     return {ready: check(), check};
 }
-module.exports = {activate, newer, prompt};
+module.exports = {activate, newer};

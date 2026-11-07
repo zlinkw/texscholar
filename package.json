@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.9.31",
+  "version": "0.9.33",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -311,12 +311,17 @@
       },
       {
         "command": "localLatex.checkMCPVersion",
-        "title": "检查 Codex MCP 运行版本（复制恢复提示词）",
+        "title": "检查 Codex MCP 运行版本",
+        "category": "TeXScholar"
+      },
+      {
+        "command": "localLatex.reloadForMCP",
+        "title": "保存文件并重载 VS Code（刷新 MCP）",
         "category": "TeXScholar"
       },
       {
         "command": "localLatex.checkForUpdates",
-        "title": "检查插件更新（复制安装与 MCP 更新提示词）",
+        "title": "检查插件更新（下载并安装正式版）",
         "category": "TeXScholar"
       },
       {
@@ -731,7 +736,7 @@
         "localLatex.updates.checkHourly": {
           "type": "boolean",
           "default": true,
-          "description": "VS Code 运行期间每小时检查 TeXScholar 官方 GitHub Releases。发现新版后提供含 MCP 版本核验的更新提示词，不自动安装。使用系统代理，仅查询公开发布元数据。"
+          "description": "VS Code 运行期间每小时检查 TeXScholar 官方 GitHub 正式版，发现新版后提供下载并安装按钮。使用系统代理，安装前校验发布的 SHA256，安装后由用户选择保存并重载。"
         },
         "localLatex.reviewPDF.followPreview": {
           "type": "boolean",

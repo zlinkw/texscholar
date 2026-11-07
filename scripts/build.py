@@ -96,6 +96,9 @@ def build(output):
     sources['scripts/publish_release_test.py'] = (ROOT / 'scripts/publish_release_test.py').read_bytes()
     sources['.github/workflows/release.yml'] = (ROOT / '.github/workflows/release.yml').read_bytes()
     write_product(output / ('texscholar-' + metadata['version'] + '-source.zip'), archive_bytes(sources))
+    names = ['texscholar-' + metadata['version'] + suffix for suffix in ('.vsix', '-source.zip')]
+    checksums = ''.join(hashlib.sha256((output / name).read_bytes()).hexdigest() + '  ' + name + '\n' for name in names)
+    write_product(output / 'SHA256SUMS.txt', checksums.encode('utf-8'))
 
 
 if __name__ == '__main__':

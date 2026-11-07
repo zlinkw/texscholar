@@ -41,8 +41,8 @@ function activate(context, vscode = require('vscode')) {
             await context.globalState.update('mcpVersionNotice', signature);
             const message = status.state === 'mismatch' ? `TeXScholar 已更新到 ${status.expected}，活动 MCP 仍为 ${status.actual}，需要重启该服务。`
                 : `TeXScholar ${status.expected} 的 MCP 运行版本待核验。${status.reason}`;
-            Promise.resolve(vscode.window.showWarningMessage(message, '复制检查／恢复提示词', '重新检查')).then(async choice => {
-                if (choice === '复制检查／恢复提示词') await vscode.env.clipboard.writeText(version.prompt(status));
+            Promise.resolve(vscode.window.showWarningMessage(message + ' 请等待当前 AI 操作结束，并保留未发送输入后再重载。', '保存文件并重载 VS Code', '重新检查')).then(async choice => {
+                if (choice === '保存文件并重载 VS Code') await vscode.commands.executeCommand('localLatex.reloadForMCP');
                 else if (choice === '重新检查') await checkVersion(true);
             }).catch(error => vscode.window.showErrorMessage('MCP 版本检查失败：' + error.message));
         }
@@ -79,6 +79,14 @@ function activate(context, vscode = require('vscode')) {
         return {...result, runtime};
     }
     const queued = connect => {const task = chain.then(() => register(connect)); chain = task.catch(() => {}); return task;};
+    context.subscriptions.push(vscode.commands.registerCommand('localLatex.reloadForMCP', async () => {
+        try {
+            const saved = await vscode.workspace.saveAll(false);
+            if (!saved || vscode.workspace.textDocuments.some(doc => doc.isDirty))
+                throw new Error('仍有未保存文件，已停止重载。请先保存或处理这些文件，再重新执行。');
+            await vscode.commands.executeCommand('workbench.action.reloadWindow');
+        } catch (error) {vscode.window.showErrorMessage('MCP 窗口重载未完成：' + error.message);}
+    }));
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.checkMCPVersion', (explicit = true) => checkVersion(explicit)));
     const runtimeWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(context.globalStorageUri.fsPath, 'mcp-runtime.json'));
     context.subscriptions.push(runtimeWatcher,
@@ -105,7 +113,7 @@ function activate(context, vscode = require('vscode')) {
             try {connected = await queued(true);}
             catch (error) {connectionError = error.message;}
             const connection = connectionError ? 'MCP 尚未连接成功：' + JSON.stringify(connectionError) + '。请先诊断此问题，不覆盖其他服务或绕过安全检查；恢复连接后再执行论文任务。'
-                : connected.runtime.state === 'mismatch' ? require('./mcp_version').prompt(connected.runtime)
+                : connected.runtime.state === 'mismatch' ? '活动 MCP 版本不一致。请在插件通知中使用“保存文件并重载 VS Code”，随后核对实际 MCP 版本再继续。'
                 : connected.restart_required ? 'MCP 配置刚更新；首次连接或配置变化后需重启 Codex，再在新会话核对 texscholar。连接配置不等于当前会话已加载工具。' : undefined;
             const directory = path.join(context.globalStorageUri.fsPath, 'task-requests'); await fs.mkdir(directory, {recursive: true});
             const file = path.join(directory, 'first-message-' + crypto.randomUUID() + '.txt');
