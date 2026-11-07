@@ -310,3 +310,8 @@ Windows 上已经执行的测试结果必须与 macOS 状态分开。macOS 的�
 补齐升级后旧附件路径：当服务版本已新于任务标注版本，返回 task_version_outdated/refresh_plugin_task，要求从当前插件重新准备任务或批注包，不再错误地要求重启已经更新的服务；版本不一致仍完全停止写入，不自动降低 expected_plugin_version。
 
 本轮验证：Windows editor 94 项通过（D:/latex-writing-checks/0937/editor-0a0643f32d2042cd8aa08b7bcc0cc3f1，退出 0）；最后文案微调的 writing 9 项通过（writing-final，退出 0）。MCP 首轮 2 项失败为 Mac 应用名大小写分类与旧文本断言：修复大小写分类、将版本冲突改为结构字段断言后，最终 MCP 24 项通过（D:/latex-writing-checks/0937/mcp-final2，退出 0），首轮失败保留于 mcp/stderr.log。实际本机只读识别六条桌面端连接，新核验正确显示当前会话待核验而非因另一个报告误称全部匹配；没有停止进程或修改论文。Mac 分类使用隔离输入验证，未实机验证。原会话实际切换需作者重启桌面应用后调用当前版本核验，不以本轮安装成功代替。
+
+
+0.9.38：直接通过当前论文连接 read_context 只读确认 plugin_version=0.9.37；作者提示来自 0.9.37 将多连接一律降为未知并自动警告的策略，不能据此认定仍为旧服务。扩展固定 mcp-runtime.json 为按活进程合并的报告，保留最近报告字段；仅记录服务身份，不含论文。并发报告使用专用元数据文件锁，退出进程记录在下次报告内精简，不增加报告目录或历史文件；Windows 用安全进程查询而非 os.kill 发送信号。检查逐一匹配受管活动进程，多个新版连接可匹配，任意旧版仍拦截；未报告为安静待核验，显式检查仍说明原因。没有重启进程、删除文件、修改论文或 SKILL。Mac 未实机验证。
+
+本轮结果：Windows editor 95 项通过（D:/latex-writing-checks/0938/editor-98cb6a2d7b8a4d919879861a025dbcb5，退出 0），含两个真实 STDIO 服务并发报告、两者匹配、旧版不被最近新版掩盖、退出记录精简及启动未知安静待核验。MCP 首轮因旧隐私字段集合断言未包含 schema/instances 失败（mcp/stderr.log，退出 1），按明确的新身份元数据协议补齐字段和不含论文数据断言后，MCP 24 项通过（mcp-final，退出 0）；仅测试变化，既有 editor 覆盖沿用。Windows 元数据锁使用 LockFileEx 等待锁释放，无定时重试；Mac 使用 flock，未实机验证。真实论文仅只读请求 ID 95 以确认服务版本，没有写入正文、候选或批注。

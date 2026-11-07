@@ -18,27 +18,29 @@ async function inspect(storage, alive = processAlive, inventory) {
         if (error.code === 'ENOENT') return describe({state: 'unknown', expected: VERSION, reason: '尚无运行服务的版本报告，旧版服务需先重启一次。'}, inventory);
         throw error;
     }
-    if (!Number.isInteger(report.pid) || report.pid <= 0 || typeof report.version !== 'string' || typeof report.server !== 'string')
+    const reports = report.instances || [report];
+    for (const item of reports) if (!Number.isInteger(item.pid) || item.pid <= 0 || typeof item.version !== 'string' || typeof item.server !== 'string')
         throw new Error('MCP 运行版本记录格式无效。');
-    if (!alive(report.pid)) return describe({state: 'unknown', expected: VERSION, reason: '上次报告的 MCP 进程已退出，等待当前服务报告版本。'}, inventory);
-    return describe({state: report.version === VERSION && require('./tools').samePath(path.resolve(report.server), path.join(__dirname, 'mcp_server.py')) ? 'matched' : 'mismatch',
-        expected: VERSION, actual: report.version, pid: report.pid}, inventory);
+    const live = reports.filter(item => alive(item.pid));
+    const clients = inventory?.available ? inventory.clients : live.map(item => ({pid: item.pid, client: 'unknown'}));
+    const current = clients.map(client => ({...client, report: live.find(item => item.pid === client.pid)}));
+    const wrong = current.filter(item => item.report && (item.report.version !== VERSION || !require('./tools').samePath(path.resolve(item.report.server), path.join(__dirname, 'mcp_server.py'))));
+    const missing = current.filter(item => !item.report);
+    const selected = wrong[0]?.report || live.find(item => clients.some(client => client.pid === item.pid));
+    const state = wrong.length ? 'mismatch' : !clients.length || missing.length || inventory?.available === false ? 'unknown' : 'matched';
+    const affected = wrong.length ? wrong : missing;
+    const desktop = affected.some(item => item.client === 'desktop');
+    let reason = state === 'mismatch' ? `${wrong.length} 条连接报告的版本或启动位置不一致。`
+        : state === 'unknown' ? missing.length ? `${missing.length} 条连接尚未报告版本；等待其首次请求核验，不要求仅因连接数量重启。` : '尚无当前活动连接的有效报告，等待首次请求核验。' : undefined;
+    if (inventory?.available === false) reason = [reason, inventory.reason].filter(Boolean).join(' ');
+    if (desktop) reason += ' 涉及 Codex 桌面端连接；若实际会话返回旧版本，应在桌面应用中重启该 MCP。仅重启 VS Code 不会重启桌面端连接。';
+    return {state, expected: VERSION, actual: selected?.version, pid: selected?.pid, reason, desktop,
+        verified: current.length - missing.length, clients: current.map(({report, ...client}) => ({...client, version: report?.version}))};
 }
 function describe(status, inventory) {
     if (!inventory) return status;
-    const clients = inventory.clients || [];
-    status.clients = clients;
-    status.desktop = clients.some(item => item.client === 'desktop');
-    if (!inventory.available) {
-        if (status.state === 'matched') status.state = 'unknown';
-        status.reason = [status.reason, inventory.reason].filter(Boolean).join(' ');
-        return status;
-    }
-    if (status.state === 'matched' && (clients.length !== 1 || clients[0].pid !== status.pid)) status.state = 'unknown';
-    if (clients.length > 1) status.reason = [status.reason, `发现 ${clients.length} 条独立 MCP 连接，最近一条的报告不能证明当前论文会话已更新。`].filter(Boolean).join(' ');
-    if (status.desktop && status.state !== 'matched') status.reason = [status.reason, '检测到 Codex 桌面端拥有的连接；若当前会话返回旧版本，请在桌面应用中重启 TeXScholar MCP，或保存输入后正常退出并重开 Codex／ChatGPT 桌面应用。仅重启 VS Code 不会重启桌面端连接。'].filter(Boolean).join(' ');
-    else if (status.state === 'unknown') status.reason = [status.reason, '请在实际论文会话核对版本，不把配置或其他进程的版本当作本会话已更新。'].filter(Boolean).join(' ');
-    return status;
+    return {...status, clients: inventory.clients || [], desktop: (inventory.clients || []).some(item => item.client === 'desktop'),
+        reason: [status.reason, inventory.reason, '等待活动连接首次报告，连接数量本身不表示需要重启。'].filter(Boolean).join(' ')};
 }
 function publish(status) {for (const listener of listeners) listener(status);}
 function subscribe(listener) {listeners.add(listener); return {dispose() {listeners.delete(listener);}};}

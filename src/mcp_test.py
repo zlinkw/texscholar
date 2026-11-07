@@ -452,7 +452,11 @@ class MCP(unittest.TestCase):
         self.assertEqual(report['version'], replies[0]['result']['serverInfo']['version'])
         self.assertIsInstance(report['pid'], int)
         self.assertEqual(report['server'], str(Path(__file__).with_name('mcp_server.py').resolve()))
-        self.assertEqual(set(report), {'version', 'pid', 'server'})
+        self.assertEqual(set(report), {'schema', 'version', 'pid', 'server', 'instances'})
+        self.assertEqual(report['schema'], 2)
+        self.assertIn({k: report[k] for k in ('version', 'pid', 'server')}, report['instances'])
+        for instance in report['instances']:
+            self.assertEqual(set(instance), {'version', 'pid', 'server'}, 'runtime identities never include paper data')
         for command in ('propose', 'rework'):
             retired = subprocess.run([sys.executable, '-X', 'utf8', str(Path(__file__).with_name('source_review.py')), '--project', str(self.root), '--state', 'reply.tex', command], capture_output=True)
             self.assertNotEqual(retired.returncode, 0)

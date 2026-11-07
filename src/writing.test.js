@@ -40,6 +40,37 @@ test('actual MCP process reports its version; absent, outdated and exited report
     assert.equal((await version.inspect(root)).state, 'unknown');
 });
 
+test('two live MCP processes keep separate version reports and an old peer cannot be hidden by a new one', async () => {
+    const fs = require('node:fs/promises'), path = require('node:path'), cp = require('node:child_process');
+    const {once} = require('node:events'), {createInterface} = require('node:readline');
+    const version = require('./mcp_version');
+    const root = await fs.mkdtemp(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'mcp-peers-'));
+    const registrations = path.join(root, 'mcp-workspaces'); await fs.mkdir(registrations);
+    const peers = Array.from({length: 2}, () => {
+        const child = cp.spawn(process.env.LOCAL_LATEX_PYTHON, ['-X', 'utf8', path.join(__dirname, 'mcp_server.py'), '--registrations', registrations], {windowsHide: true});
+        const entry = {child, lines: createInterface({input: child.stdout})[Symbol.asyncIterator](), stderr: ''};
+        child.stderr.on('data', data => {entry.stderr += data;}); return entry;
+    });
+    const ask = async (peer, method, id) => {peer.child.stdin.write(JSON.stringify({jsonrpc: '2.0', id, method, params: {protocolVersion: '2025-03-26'}}) + '\n'); return JSON.parse((await peer.lines.next()).value);};
+    const clients = peers.map(p => ({pid: p.child.pid, client: 'vscode'}));
+    const close = async peer => {if (peer.child.exitCode === null) {const ended = once(peer.child, 'close'); peer.child.stdin.end(); await ended;}};
+    try {
+        await Promise.all(peers.map((peer, i) => ask(peer, 'initialize', i + 1)));
+        assert.equal((await version.inspect(root, undefined, {available: true, clients})).state, 'matched', 'two correctly reported peers are normal');
+        const file = path.join(root, 'mcp-runtime.json'), data = JSON.parse(await fs.readFile(file, 'utf8'));
+        assert.equal(data.instances.length, 2, 'simultaneous startup reports are merged under the metadata lock');
+        data.instances[0].version = '0.0.1'; await fs.writeFile(file, JSON.stringify(data), 'utf8');
+        const stale = await version.inspect(root, undefined, {available: true, clients});
+        assert.equal(stale.state, 'mismatch'); assert.equal(stale.actual, '0.0.1');
+        await Promise.all(peers.map((peer, i) => ask(peer, 'tools/list', i + 3)));
+        assert.equal((await version.inspect(root, undefined, {available: true, clients})).state, 'matched');
+        await close(peers[0]); await ask(peers[1], 'tools/list', 6);
+        assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).instances.length, 1, 'exited process records do not accumulate');
+        assert.equal((await version.inspect(root, undefined, {available: true, clients: [clients[1]]})).state, 'matched');
+    } finally {await Promise.all(peers.map(close));}
+    for (const peer of peers) assert.equal(peer.stderr, '');
+});
+
 test('hourly release checks are throttled across activation, honor disablement and keep manual checks available', async () => {
     const {activate, newer} = require('./updates');
     const state = new Map(), subscriptions = [], notices = [], errors = [];
@@ -197,6 +228,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         workspaceState: {get: key => workspaceState.get(key), update: async (key, value) => workspaceState.set(key, value)}};
     try {
         await require('./mcp_setup').activate(context, vscode, {scanClients: async () => ({available: true, clients: [{pid: process.pid, client: desktopClient ? 'desktop' : 'vscode'}]})}).ready;
+        assert(!notices.some(text => text.includes('MCP 运行版本待核验')), 'startup without a report is a quiet pending state');
         const start = handlers.get('localLatex.startPaperTask');
         await start();
         assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), unrelated, 'cancel before connecting');

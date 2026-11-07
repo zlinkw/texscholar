@@ -42,8 +42,8 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
         version.publish(status);
         const signature = JSON.stringify([status.expected, status.state, status.actual, status.pid, status.clients]);
         if (status.state === 'matched') {
-            if (explicit) vscode.window.showInformationMessage('最近活动的 TeXScholar MCP 与插件版本一致：' + status.expected + '。论文会话仍会在调用时核对版本。');
-        } else if (explicit || context.globalState.get('mcpVersionNotice') !== signature) {
+            if (explicit) vscode.window.showInformationMessage('已报告的 ' + status.verified + ' 条活动 MCP 连接版本均与插件一致：' + status.expected + '。论文会话仍会在调用时核对版本。');
+        } else if (explicit || status.state === 'mismatch' && context.globalState.get('mcpVersionNotice') !== signature) {
             await context.globalState.update('mcpVersionNotice', signature);
             const message = status.state === 'mismatch' ? `TeXScholar 已更新到 ${status.expected}，最近报告的 MCP 仍为 ${status.actual}。${status.reason || ''}`
                 : `TeXScholar ${status.expected} 的 MCP 运行版本待核验。${status.reason}`;
