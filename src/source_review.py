@@ -715,14 +715,34 @@ class Review:
                 self.state["edits"][k]["freshness"] = "needs-recheck"
             seen |= more
 
+    def projection_span(self, text, item):
+        """Use exact original text or the immutable candidate's two source boundaries."""
+        try:
+            return locate(text, item['before'], item['left'], item['right'])
+        except Conflict:
+            if not item['before'].strip():
+                raise
+        left, right = item['left'], item['right']
+        a, b = text.find(left) if left else -1, text.find(right) if right else -1
+        bounded = (a >= 0 and b >= a + len(left)
+                   and text.find(left, a + 1) < 0 and text.find(right, b + 1) < 0)
+        if bounded:
+            if item.get('batch') != self.state['session']:
+                raise Conflict('候选缺少当前批次的不可变来源关系；不推断投影范围。')
+            return a + len(left), b
+        # Retain exact-content projection when only the surrounding manual edits
+        # differ. A changed original needs both boundaries; never align by similarity.
+        return locate(text, item['before'])
+
     def decide(self, accept, reject, expected_versions=None, option=None):
         self.assert_ready()
         if not accept and not reject or set(accept) & set(reject):
             raise Conflict("Specify distinct exact IDs")
         updated = {}
         accepted = {}
+        decisions = {}
         for id_ in accept + reject:
-            edit = self.state["edits"].get(id_)
+            edit = copy.deepcopy(self.state["edits"].get(id_))
             if not edit or edit["status"] not in PENDING:
                 raise Conflict("ID is missing or already decided: " + id_)
             if expected_versions and expected_versions.get(id_) != edit["versions"][-1]:
@@ -730,7 +750,10 @@ class Review:
             rel = edit["file"]
             text = updated.get(rel, self.read(rel))
             item = self.payload(edit)
-            a, b = locate(text, self.live_excerpt(edit, item), item["left"], item["right"])
+            try:
+                a, b = locate(text, self.live_excerpt(edit, item), item["left"], item["right"])
+            except Conflict as exc:
+                raise Conflict(f'当前正文失配：审核项 {id_}，文件 {rel}；{exc}') from exc
             if id_ in accept:
                 if item.get('options') and option is None:
                     raise Conflict('Choose an explicit option A/B/C before accepting')
@@ -741,30 +764,28 @@ class Review:
                 if not edit.get("deferred", False):
                     updated[rel] = text[:a] + item["before"] + text[b:]
                 edit["status"] = "rejected"
-                self.stale({id_})
             else:
                 if edit.get("deferred", False):
                     updated[rel] = text[:a] + item["after"] + text[b:]
                 # Only the explicitly accepted change enters this projection. Later manual edits stay separate.
                 base = accepted.get(rel, self.contents(self.state["accepted"], rel))
                 try:
-                    x, y = locate(base, item["before"], item["left"], item["right"])
-                except Conflict:
-                    # Live source was anchored above. Its manual context need not
-                    # exist in the accepted-only snapshot; the full original must
-                    # still match exactly once there. Never infer insertion points.
-                    if not item["before"].strip():
-                        raise
-                    x, y = locate(base, item["before"])
+                    x, y = self.projection_span(base, item)
+                except Conflict as exc:
+                    raise Conflict(f'已接收投影失配：审核项 {id_}，文件 {rel}；{exc}') from exc
                 accepted[rel] = base[:x] + item["after"] + base[y:]
                 edit["status"] = "accepted"
             for request in edit.get("requests", []):
                 if request["status"] in ("open", "addressed-pending-review"):
                     request["status"] = "closed-by-author-acceptance" if id_ in accept else "closed-by-author-rejection"
+            decisions[id_] = edit
         if accepted:
             files = {p: accepted.get(p, self.contents(self.state["accepted"], p)).encode("utf-8")
                      for p in self.state["rounds"][-1]["files"]}
             self.state["accepted"] = self.snapshot(files, "explicit author acceptance " + ",".join(accept))
+        self.state['edits'].update(decisions)
+        if reject:
+            self.stale(set(reject))
         return updated, {"accepted": accept, "rejected": reject}
 
     def inspect(self, id_, version=None, source=False):

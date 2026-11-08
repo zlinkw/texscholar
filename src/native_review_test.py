@@ -435,6 +435,106 @@ class NativeReview(unittest.TestCase):
                 self.assertEqual((self.root / 'reply.tex').read_bytes(), old_state)
                 self.assertEqual(self.review().state['edits'][id_]['status'], 'pending')
 
+    def test_accept_after_manual_deletion_maps_only_the_selected_scope(self):
+        source = self.root / 'main.tex'
+        text = '% Outside original\n% ' + 'x' * 180 + '\n' + source.read_text(encoding='utf-8')
+        source.write_text(text, encoding='utf-8', newline='')
+        self.apply('begin', 'manual-edit', ['main.tex', 'reply.tex'])
+        old = 'GMAP and all compared segmentation methods use the same evaluation protocol.'
+        first = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'The model is strong and fast.', 'after': old})['id']
+        self.apply('decide', [first], [])
+        peer = self.apply('propose', {'file': 'reply.tex', 'kind': 'response',
+            'before': 'Thank you.', 'after': 'Thank you for your careful review.'})['id']
+        peer_version = self.review().state['edits'][peer]['versions'][-1]
+        self.apply('feedback', {'id': peer, 'version': peer_version, 'side': 'original', 'start': 0, 'end': 5,
+            'quote': 'Thank', 'text': 'Keep this pending note.'})
+        latest = old.replace('segmentation ', '')
+        live = source.read_text(encoding='utf-8').replace(old, latest).replace('% Outside original', '% Outside author edit')
+        source.write_text(live, encoding='utf-8', newline='')
+        choices = [{'label': label, 'after': latest.replace('protocol.', tail), 'reason': label}
+                   for label, tail in zip('ABC', ['protocol and data splits.', 'protocol and metrics.', 'protocol and seeds.'])]
+        id_ = self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript', 'before': latest,
+            'options': choices, 'deps': [first]})['id']
+        r = self.review()
+        original_state = json.loads(json.dumps(r.state))
+        projection = r.contents(r.state['accepted'], 'main.tex')
+        self.assertTrue(r.inspect(id_)['source_match'])
+        self.assertNotIn(latest, projection)
+        # Exercise the public CLI, which takes the shared writer lock and rereads.
+        result = subprocess.run([sys.executable, '-X', 'utf8', str(Path(__file__).with_name('source_review.py')),
+            '--project', str(self.root), '--state', 'reply.tex', '--apply', '--expect', digest(r.raw),
+            'decide', '--accept', id_, '--version', r.state['edits'][id_]['versions'][-1], '--option', 'A'], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8'))
+        fresh = self.review()
+        self.assertEqual(source.read_text(encoding='utf-8'), live.replace(latest, choices[0]['after']))
+        self.assertEqual(fresh.contents(fresh.state['accepted'], 'main.tex'), projection.replace(old, choices[0]['after']))
+        self.assertNotIn('% Outside author edit', fresh.contents(fresh.state['accepted'], 'main.tex'))
+        self.assertEqual(fresh.state['next'], original_state['next'])
+        self.assertEqual(fresh.state['edits'][peer], original_state['edits'][peer])
+        self.assertEqual(fresh.state['edits'][first], original_state['edits'][first])
+        self.assertEqual(fresh.state['edits'][id_]['deps'], [first])
+        self.assertEqual(fresh.state['edits'][id_]['accepted_option'], 'A')
+
+    def test_changed_projection_requires_unique_boundaries_and_current_batch_provenance(self):
+        from unittest.mock import patch
+        source = self.root / 'main.tex'
+        left, right = 'L' * 120, 'R' * 120
+        for case in ['ambiguous', 'missing-provenance', 'changed-live-source']:
+            with self.subTest(case=case):
+                baseline = left + 'Old target.' + right
+                source.write_text((baseline + '\n' + baseline) if case == 'ambiguous' else baseline, encoding='utf-8', newline='')
+                self.apply('begin', case, ['main.tex', 'reply.tex'])
+                source.write_text(left + 'Current target.' + right, encoding='utf-8', newline='')
+                id_ = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript',
+                    'before': 'Current target.', 'after': 'Accepted target.'})['id']
+                if case == 'changed-live-source':
+                    source.write_text(left + 'Author edited again.' + right, encoding='utf-8', newline='')
+                r = self.review()
+                old_source, old_state, old_projection = source.read_bytes(), r.raw, r.state['accepted']
+                payload = r.payload(r.state['edits'][id_])
+                if case == 'missing-provenance':
+                    payload.pop('batch')
+                with patch.object(r, 'payload', return_value=payload):
+                    with self.assertRaisesRegex(Conflict, ('当前正文失配' if case == 'changed-live-source' else '已接收投影失配') + '.*' + id_ + '.*main.tex'):
+                        r.decide([id_], [])
+                self.assertEqual(source.read_bytes(), old_source)
+                self.assertEqual((self.root / 'reply.tex').read_bytes(), old_state)
+                self.assertEqual(r.state['accepted'], old_projection)
+                self.assertEqual(r.state['edits'][id_]['status'], 'pending')
+
+    def test_later_decision_failure_leaves_all_decisions_and_projection_unchanged(self):
+        import copy
+        from unittest.mock import patch
+        first = self.proposal()
+        second = self.apply('propose', {'file': 'reply.tex', 'kind': 'response',
+            'before': 'Thank you.', 'after': 'Thank you for the suggestion.'})['id']
+        owner = self.root / 'reply.tex'
+        saved_owner = owner.read_bytes()
+        for phase in ['live', 'projection']:
+            with self.subTest(phase=phase):
+                owner.write_bytes(saved_owner)
+                if phase == 'live':
+                    owner.write_text(owner.read_text(encoding='utf-8').replace('Thank you.', 'Author changed the reply.'), encoding='utf-8', newline='')
+                r = self.review()
+                state, source_bytes, owner_bytes = copy.deepcopy(r.state), (self.root / 'main.tex').read_bytes(), owner.read_bytes()
+                payload = r.payload
+                contents = r.contents
+                def older_projection(commit, rel):
+                    text = contents(commit, rel)
+                    return text.replace('Thank you.', 'Earlier reply.') if phase == 'projection' and commit == state['accepted'] and rel == 'reply.tex' else text
+                def without_origin(edit):
+                    item = payload(edit)
+                    if edit['file'] == 'reply.tex':
+                        item.pop('batch', None)
+                    return item
+                with patch.object(r, 'payload', side_effect=without_origin), patch.object(r, 'contents', side_effect=older_projection):
+                    with self.assertRaisesRegex(Conflict, '当前正文失配' if phase == 'live' else '已接收投影失配'):
+                        r.decide([first, second], [])
+                self.assertEqual(r.state, state)
+                self.assertEqual((self.root / 'main.tex').read_bytes(), source_bytes)
+                self.assertEqual(owner.read_bytes(), owner_bytes)
+
     def test_state_owner_offsets_include_header_and_unicode(self):
         self.apply('propose', {'file': 'reply.tex', 'kind': 'response', 'before': 'Thank you.', 'after': 'Thank you for the suggestion.', 'deferred': True})
         data = self.review().inspect('a', source=True)

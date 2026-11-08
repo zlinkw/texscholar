@@ -160,7 +160,7 @@ function createInlineReview(vscode, context, execute = run) {
             await refresh(c);
             throw new Error('该项已有新版或审核决定，显示已自动更新。请核对后再次操作；未代为接收或覆盖。');
         }
-        if (!data.source_match) throw new Error('原文被手动修改，需先核对；没有覆盖任何内容。');
+        if (!data.source_match) throw new Error(`当前正文失配：审核项 ${c.id}，文件 ${data.edit.file}；原文被手动修改，需先核对；没有覆盖任何内容。`);
         return data;
     }
     async function current(c) {

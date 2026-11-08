@@ -134,6 +134,9 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert.equal(f.editor.selection.end, at);
     assert(f.backendCalls.slice(beforeLocate).every(call => call.args.includes('inspect')), 'locating source performs only read-only inspection, no review write or PDF build');
     assert.equal(f.value, f.original); assert.equal(f.edit.status, 'pending');
+    f.data.source_match = false;
+    await assert.rejects(f.ui.accept({...c, option: 'B'}), /当前正文失配.*1.*paper\.tex/);
+    f.data.source_match = true;
     f.editor.selection = {start: at, end: at + 5, isEmpty: false};
     await f.ui.annotate(c);
     const selection = f.packets.findLast(m => m.type === 'sourceSelection').selection;
