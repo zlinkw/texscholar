@@ -230,6 +230,23 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(len(edit['versions']), len(before['edits'][id_]['versions']) + 1)
         self.assertEqual(state['next'], before['next'])
         self.assertEqual((self.root / 'main.tex').read_bytes(), original)
+        prior = edit['previous_feedback']
+        self.assertEqual(prior['version'], data['version'])
+        self.assertEqual(prior['requests'][0]['text'], '直接重新生成候选。')
+        self.assertEqual(self.review().feedback_context()['items'], [], 'comparison notes are not outstanding AI requests')
+        self.apply('propose', {'after': 'The model is compact and fast.', 'discard_annotations': True}, id_)
+        self.assertEqual(self.review().state['edits'][id_]['previous_feedback'], prior, 'no new requirements keeps the last useful comparison')
+        newer = self.review().inspect(id_)
+        self.apply('feedback', {'id': id_, 'version': newer['version'], 'side': 'original', 'start': 13, 'end': 19,
+                                'quote': 'strong', 'text': '新的这一轮要求。'})
+        self.apply('propose', {'after': 'The model is efficient and fast.', 'discard_annotations': True}, id_)
+        current = self.review().state['edits'][id_]
+        self.assertEqual([n['text'] for n in current['previous_feedback']['requests']], ['新的这一轮要求。'])
+        self.assertEqual(current['previous_feedback']['version'], newer['version'])
+        saved = (self.root / 'reply.tex').read_bytes()
+        with self.assertRaisesRegex(Conflict, 'No content change'):
+            self.apply('propose', {'after': 'The model is efficient and fast.', 'discard_annotations': True}, id_)
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), saved)
 
     def test_feedback_context_contains_exact_original_and_candidate_for_each_note_generation(self):
         id_ = self.proposal(); data = self.review().inspect(id_)

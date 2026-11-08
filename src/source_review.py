@@ -684,6 +684,12 @@ class Review:
             item['batch'] = self.state['session']
         commit = self.snapshot({"original.tex": original.encode("utf-8"), "candidate.tex": after.encode("utf-8"),
                                 "span.json": json.dumps(item, ensure_ascii=False).encode("utf-8")}, "review item " + id_)
+        if rework:
+            notes = [r for r in edit.get('requests', []) if r['status'] in ('open', 'addressed-pending-review')]
+            if notes:
+                # One read-only comparison round, separate from actionable notes.
+                # No new notes means the last requirements remain useful to compare.
+                edit['previous_feedback'] = {'version': edit['versions'][-1], 'requests': copy.deepcopy(notes)}
         edit["versions"].append(commit)
         edit.update({"deps": deps, "location": spec.get("location", edit.get("location", ""))})
         if questions is not None:

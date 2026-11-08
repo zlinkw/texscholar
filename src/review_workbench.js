@@ -47,7 +47,7 @@ dialog{background:var(--vscode-editor-background);color:var(--vscode-editor-fore
 <dialog id="appearanceDialog" aria-labelledby="appearanceTitle"><form method="dialog"><div class="dialogHeading"><strong id="appearanceTitle">审核页外观</strong><button aria-label="关闭外观设置" class="secondary">关闭</button></div></form><div class="appearanceFields"><label>阅读字体<input id="style-fontFamily" data-style="fontFamily" placeholder="留空跟随 VS Code；如 Microsoft YaHei, sans-serif"></label><label>阅读字号<input type="number" id="style-candidateFontSize" data-style="candidateFontSize" min="10" max="32" step="1"></label><label>文字行高<input type="number" id="style-candidateLineHeight" data-style="candidateLineHeight" min="1" max="2.5" step="0.1"></label><label>按钮字号<input type="number" id="style-controlFontSize" data-style="controlFontSize" min="10" max="24" step="1"></label><label>中文字号<input type="number" id="style-translationFontSize" data-style="translationFontSize" min="10" max="32" step="1"></label><label>内容间距<select id="style-cardLayout" data-style="cardLayout"><option value="compact">紧凑</option><option value="comfortable">宽松</option></select></label></div><small>更改后即时生效并保存。仅影响审核页，不修改论文、PDF 字号或全局 SKILL。源码编辑保持等宽字体。</small><div><button data-action="resetAppearance" class="secondary">恢复默认外观</button><span id="appearanceStatus" role="status"></span></div></dialog>
 <dialog id="directoryDialog" aria-labelledby="directoryTitle"><form method="dialog"><div class="dialogHeading"><strong id="directoryTitle">跳转审核项</strong><button class="secondary">关闭</button></div></form><div class="directoryFilters"><input id="directoryQuery" aria-describedby="directoryHint" aria-label="搜索审核项" placeholder="编号、位置、文件、R1-Q3…"><select id="directoryKind" aria-label="筛选文档"><option value="">全部文档</option><option value="manuscript">正文</option><option value="response">回复信</option></select><label><input id="directoryNotes" type="checkbox">有待处理批注</label></div><button data-action="clearFilter" class="secondary">清除筛选</button><small>上一项、下一项及接收后跳转遵循此筛选。</small><small id="directoryHint" role="status" aria-live="polite"></small><div id="directoryResults"></div></dialog>
 <div id="layout"><main><div id="empty" hidden>当前没有可显示的审核项；可通过顶部编号目录清除筛选、选择其他项目，或用“Git 备份已接收修改”备份成果。</div><div id="review"><div class="reviewHeading"><h3 id="title"></h3><div class="optionActions"><button data-action="previousChange" class="secondary" title="定位当前可见内容中的上一处实际差异">上处差异</button><button data-action="nextChange" class="secondary" title="定位当前可见内容中的下一处实际差异">下处差异</button><label class="comparisonControl">对照 <select id="comparisonChoice" aria-label="审核页对照方式"><option value="original">原文对照</option></select></label></div></div><small id="rankingNotice" hidden></small><p id="comparisonNotice" class="scopeSummary" hidden></p>
-<p id="intent" class="intent" hidden></p><section><h4>原文</h4><div id="original" class="review-text" data-side="original"></div><div id="originalZh" class="zh"></div></section>
+<p id="intent" class="intent" hidden></p><details id="previousFeedback" open hidden><summary>上轮返修批注（只读对照）</summary><small>用来核对本版是否落实要求；不会自动成为本版待处理批注。</small><div id="previousNotes"></div></details><section><h4>原文</h4><div id="original" class="review-text" data-side="original"></div><div id="originalZh" class="zh"></div></section>
 <div id="translateStatus"></div>
 <section id="options"></section><div id="composerDock"></div><p id="fewer"></p><section><h4>关联原始审稿问题</h4><div id="questions"></div></section>
 <section><h4>返修批注</h4><button data-action="newNote" title="新增返修批注（Alt+N）" class="secondary">新增返修批注</button><button data-action="reject" data-write class="secondary">拒绝本项全部候选</button><div id="noteComposer" hidden><p id="noteMode">新增返修批注</p><div id="noteScopeControls"><label>范围 <select id="scopeChoice"><option value="group">本项全部方案（默认）</option><option value="original">完整原文</option></select></label><button data-action="whole" class="secondary">取消选区／整项批注</button></div><p id="scope">未划词时可以直接填写整项要求。</p><button id="useSelection" data-action="useSelection" class="secondary" hidden>改用新选区</button><textarea id="note" placeholder="填写返修要求"></textarea><button title="保存当前批注（Ctrl/Cmd+Enter）" id="saveNote" data-action="note" data-write>保存返修批注</button><button data-action="noteHandoff" data-write title="先保存，再把本项待处理批注加入 Codex 输入区；不自动发送">保存并加入 Codex</button><button data-action="cancelNote" class="secondary">取消</button></div><div id="notes"></div></section></div><small id="operationStatus" role="status" aria-live="polite"></small><p id="status" role="status" aria-live="polite"></p><button id="retryHandoff" data-action="retryHandoff" data-write hidden>重试本项交接</button></main></div>
@@ -94,8 +94,8 @@ function createWorkbench(vscode, context, services) {
     const options = data => data.options || [{label: 'A', after: data.candidate, reason: '已有单方案', changes: data.changes}];
     const directory = () => services.directory().filter(item => lastRecords.has(item.id));
     function packet() {
-        const {file, kind, location, versions, requests, questions} = loaded.edit;
-        return {type: 'content', c: active, data: {original: loaded.original, edit: {file, kind, location, versions, requests, questions}, intent: loaded.intent, fewer_options_reason: loaded.fewer_options_reason},
+        const {file, kind, location, versions, requests, questions, previous_feedback} = loaded.edit;
+        return {type: 'content', c: active, data: {original: loaded.original, edit: {file, kind, location, versions, requests, questions, previous_feedback}, intent: loaded.intent, fewer_options_reason: loaded.fewer_options_reason},
             options: options(loaded), directory: directory(), navigationFilter, style: services.style(),
             sourceSelection, resume: uiState, reading, busy: handling, relatedReturn: relatedReturn?.c.id,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
@@ -192,7 +192,7 @@ function createWorkbench(vscode, context, services) {
                     await services.note({...active}, selected, state.note);
                 }
                 loaded = await services.read({...active});
-                post({type: 'noteEdited', requests: loaded.edit.requests || [], message: '批注已保存，继续保存候选。'});
+                post({type: 'noteEdited', requests: loaded.edit.requests || [], previous_feedback: loaded.edit.previous_feedback, message: '批注已保存，继续保存候选。'});
             }
             for (const [label, text] of Object.entries({...state.drafts})) {
                 const option = options(loaded).find(o => o.label === label);
@@ -241,7 +241,7 @@ function createWorkbench(vscode, context, services) {
         if (next.c.version === active.version) {
             const questionsChanged = JSON.stringify(loaded.edit.questions) !== JSON.stringify(next.data.edit.questions);
             loaded = next.data;
-            post({type: 'notes', requests: loaded.edit.requests || [], questions: loaded.edit.questions || []});
+            post({type: 'notes', requests: loaded.edit.requests || [], previous_feedback: loaded.edit.previous_feedback, questions: loaded.edit.questions || []});
             if (questionsChanged) autoTranslate();
         } else if (dirty || noteDirty) {
             pending = next; hasPending = true;
@@ -428,7 +428,7 @@ function createWorkbench(vscode, context, services) {
                 if (!note || note.status !== 'open' || note.version !== c.version) throw new Error('该批注已更新或不是当前版本的待处理批注，请核对新版。');
                 await services.editNote(c, note, message.text, message.previousText);
                 loaded = await services.read(c);
-                post({type: 'noteEdited', request: note.id, requests: loaded.edit.requests || [], message: '批注已修改；编号、选区与候选保持不变。'});
+                post({type: 'noteEdited', request: note.id, requests: loaded.edit.requests || [], previous_feedback: loaded.edit.previous_feedback, message: '批注已修改；编号、选区与候选保持不变。'});
                 if (message.handoff) return await handoffSavedNote(c);
             } else if (message.type === 'note') {
                 if (dirty) throw new Error('请先保存候选编辑，再绑定返修选区。');

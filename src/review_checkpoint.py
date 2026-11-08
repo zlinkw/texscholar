@@ -125,6 +125,7 @@ def compact(r):
             # Keep dependency identity, not old candidate text or closed annotations.
             edits[id_]['versions'] = []
             edits[id_].pop('requests', None)
+            edits[id_].pop('previous_feedback', None)
             edits[id_].setdefault('checkpoint', commit)
             minimal.append(id_)
     for id_, version in saved['accepted'].items():

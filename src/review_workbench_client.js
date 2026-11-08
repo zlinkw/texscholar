@@ -385,7 +385,25 @@ function renderQuestions(questions) {
     for (const [key, entry] of translatedText) if (key.startsWith('question')) renderTranslation(key, entry);
     highlightSelection();
 }
+function noteOrigin(n) {
+    const context = n.display_context;
+    const origin = context ? (context.question ? context.question.id : n.option ? '方案 ' + n.option : '原文') + (context.kind === 'translation' ? '译文' : '审稿问题') : n.option || '整项';
+    const generation = data.edit.versions.indexOf(n.version) + 1;
+    return origin + (generation ? ' · v' + generation : '');
+}
+function renderPreviousNotes() {
+    const container = $('previousNotes');
+    const active = new Set((data.edit.requests || []).map(n => n.id));
+    const notes = (data.edit.previous_feedback?.requests || []).filter(n => !active.has(n.id));
+    $('previousFeedback').hidden = !notes.length;
+    const signature = JSON.stringify([notes, notes.map(n => data.edit.versions.indexOf(n.version))]);
+    if (container.dataset.signature === signature) return;
+    container.dataset.signature = signature;
+    container.innerHTML = notes.map(n => '<div class="note"><strong>' + esc(noteOrigin(n)) + '</strong><div class="review-text">' + esc(n.text) + '</div>' +
+        ((n.display_context?.quote ?? n.quote) ? '<details><summary>此前选区</summary><div class="review-text">' + esc(n.display_context?.quote ?? n.quote) + '</div></details>' : '') + '</div>').join('');
+}
 function renderNotes(requests) {
+    renderPreviousNotes();
     const container = $('notes');
     for (const node of [...container.children]) if (!requests.some(n => n.id === node.dataset.noteId)) {
         if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
@@ -399,7 +417,7 @@ function renderNotes(requests) {
         node.dataset.signature = signature;
         if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
         const context = n.display_context;
-        const origin = context ? (context.question ? context.question.id : n.option ? '方案 ' + n.option : '原文') + (context.kind === 'translation' ? '译文' : '审稿问题') : n.option || '整项';
+        const origin = noteOrigin(n);
         node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + '</strong><div class="review-text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
             (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '');
     }
@@ -720,8 +738,8 @@ window.addEventListener('message', ({data: message}) => {
         for (const o of options) $('option-' + o.label).classList.toggle('selected', preview === o.label);
         renderReadings(); return;
     }
-    if (message.type === 'noteEdited') {data.edit.requests = message.requests; closeComposer(); renderNotes(message.requests);}
-    if (message.type === 'notes') {data.edit.requests = message.requests; data.edit.questions = message.questions;
+    if (message.type === 'noteEdited') {data.edit.requests = message.requests; data.edit.previous_feedback = message.previous_feedback; closeComposer(); renderNotes(message.requests);}
+    if (message.type === 'notes') {data.edit.requests = message.requests; data.edit.questions = message.questions; data.edit.previous_feedback = message.previous_feedback;
         keepReading(() => {renderNotes(message.requests); renderQuestions(message.questions);}); return;}
     if (message.type === 'noteSaved') closeComposer();
     if (message.type === 'conflict') {

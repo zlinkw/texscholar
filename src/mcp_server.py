@@ -58,7 +58,7 @@ TOOLS = [
      schema({**WRITE, 'round': STRING, 'files': {'type': 'array', 'items': STRING}, 'submission': STRING}, ['project', 'state', 'expected_sha256', 'round', 'files']), False),
     ('propose_options', 'Validate and save ONE location with ranked A/B/C in one call. apply defaults true; no mandatory preview call. Chain returned sha256 for the next write. Formal prose unchanged.',
      schema({**WRITE, 'spec': schema(SPEC, ['file', 'kind', 'before', 'options'])}, ['project', 'state', 'expected_sha256', 'spec']), False),
-    ('rework_options', 'Replace pending A/B/C under SAME ID/version. On success old notes are discarded by default; failure preserves state. Explicit discard_annotations=false retains notes; resolve_requests supports selective handling. No acceptance. Chain returned sha256/version.',
+    ('rework_options', 'Replace pending A/B/C under SAME ID/version. On success old actionable notes are cleared by default; the latest requirements remain read-only in the UI. Failure preserves state. Explicit discard_annotations=false retains actionable notes; resolve_requests supports selective handling. No acceptance. Chain returned sha256/version.',
      schema({**WRITE, 'id': STRING, 'version': STRING, 'spec': schema(SPEC, ['options'])}, ['project', 'state', 'expected_sha256', 'id', 'version', 'spec']), False),
     ('link_questions', 'Append/deduplicate exact verified original reviewer quotes or explicit question_pool references. Explicit replace only. No other changes; never auto-pair.',
      schema({**WRITE, 'id': STRING, 'version': STRING, 'questions': {'type': 'array', 'items': QUESTION}, 'question_refs': STRINGS, 'replace': {'type': 'boolean', 'default': False}},
@@ -278,7 +278,7 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
         if id_ not in included:
             continue
         edit = edits[id_]
-        item = {key: value for key, value in edit.items() if key not in ('versions', 'requests', 'questions')}
+        item = {key: value for key, value in edit.items() if key not in ('versions', 'requests', 'questions', 'previous_feedback')}
         item.update(id=id_, requests=[note for note in edit.get('requests', []) if note['status'] == 'open'])
         item['question_refs'] = []
         for question in edit.get('questions', []):

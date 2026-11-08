@@ -131,6 +131,9 @@ class MCP(unittest.TestCase):
         saved = server.call('rework_options', args)
         edit = self.review().state['edits'][id_]
         self.assertEqual(edit.get('requests', []), [])
+        self.assertEqual(edit['previous_feedback']['requests'][0]['text'], '重写即可')
+        context = server.call('read_context', {**base, 'ids': [id_]})['context']['items'][id_]
+        self.assertNotIn('previous_feedback', context, 'read-only comparison does not become recurring AI work or duplicate context')
         self.assertEqual(self.review().inspect(id_)['original'], 'The model is strong and fast.')
         self.assertEqual((self.root / 'main.tex').read_bytes(), source)
         self.apply('feedback', {'id': id_, 'version': saved['version'], 'side': 'original', 'start': 0, 'end': 0, 'quote': '', 'text': '显式保留'})

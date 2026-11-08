@@ -36,7 +36,7 @@ async function fixture(label) {
 
 const PYTHON = process.env.LOCAL_LATEX_PYTHON;
 const SCRIPTS = fs.existsSync(path.join(__dirname,'source_review.py')) ? __dirname : path.resolve(__dirname,'../../scripts');
-async function reviewFixture(label, dependency = false) {
+async function reviewFixture(label, dependency = false, previousFeedback = false) {
     const f = await fixture(label);
     fs.writeFileSync(path.join(f.root,'main.tex'),'% CODEX-RULES-BEGIN\n% 保留写作规则。\n% CODEX-RULES-END\n\\documentclass{article}\n\\begin{document}\nThe model is strong and fast.\n\\end{document}\n','utf8');
     fs.writeFileSync(path.join(f.root,'reply.tex'),'% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-NEXT manuscript=1 response=a\n% CODEX-REVIEW-STATE-END\n\\documentclass{article}\n\\begin{document}\nThank you.\n\\end{document}\n','utf8');
@@ -60,6 +60,12 @@ async function reviewFixture(label, dependency = false) {
     };
     await backend(['begin','--round','round-1','--files','main.tex','reply.tex']);
     await backend(['propose'],{file:'main.tex',kind:'manuscript',before:'strong',after:'reliable'});
+    if (previousFeedback) {
+        await backend(['rework','--id','1'],{after:'dependable'});
+        const prior = (await status()).edits['1'].versions.at(-1);
+        await backend(['feedback'],{id:'1',version:prior,side:'original',start:0,end:6,quote:'strong',text:'PRIVATE previous feedback'});
+        await backend(['rework','--id','1'],{after:'reliable',discard_annotations:true});
+    }
     await backend(['propose'],{file:'main.tex',kind:'manuscript',before:'fast',after:'compact',deps:dependency?['1']:[]});
     const data = JSON.parse(await run(PYTHON,[...common,'inspect','--id','2'],f.root));
     await backend(['feedback'],{id:'2',version:data.version,side:'original',start:0,end:4,quote:'fast',text:'PRIVATE pending feedback: 保留原文，继续返修。'});
@@ -118,7 +124,8 @@ test('commit hooks remain enforced and push rejection preserves the local backup
 });
 
 test('accepted checkpoint excludes pending material, compacts terminal history and preserves dependency/rework/acceptance',async () => {
-    const f = await reviewFixture('checkpoint-success',true);
+    const f = await reviewFixture('checkpoint-success',true,true);
+    assert.equal((await f.status()).edits['1'].previous_feedback.requests[0].text,'PRIVATE previous feedback');
     await f.backend(['decide','--accept','1','--reject','a']);
     const before = await f.status(), pending = before.edits['2'];
     const source = fs.readFileSync(path.join(f.root,'main.tex'));
@@ -130,13 +137,14 @@ test('accepted checkpoint excludes pending material, compacts terminal history a
     const committedMain = await f.git(['show','HEAD:main.tex']), committedReply = await f.git(['show','HEAD:reply.tex']);
     assert(committedMain.includes('reliable and fast')); assert(!committedMain.includes('compact'));
     assert(committedMain.includes('保留写作规则'));
-    for (const text of [committedMain,committedReply]) for (const secret of ['CODEX-REVIEW-DATA','PRIVATE pending feedback','useful comment','.codex-review/objects']) assert(!text.includes(secret));
+    for (const text of [committedMain,committedReply]) for (const secret of ['CODEX-REVIEW-DATA','PRIVATE pending feedback','PRIVATE previous feedback','useful comment','.codex-review/objects']) assert(!text.includes(secret));
     assert(committedReply.includes('CODEX-REVIEW-NEXT manuscript=3 response=b'));
     assert(committedReply.includes('CODEX-REVIEW-SOURCE-ONLY: accepted-content'));
     assert(!fs.readFileSync(path.join(f.root,'reply.tex'),'utf8').includes('closed-by-author-rejection'));
     const after = await f.status();
     assert.deepEqual(after.edits['2'],pending);
     assert.deepEqual(after.edits['1'].versions,[]); assert.equal(after.edits['1'].status,'accepted');
+    assert(!after.edits['1'].previous_feedback, 'finished comparison notes do not retain disposable cache versions');
     const identity = JSON.parse(await run(PYTHON,[...f.common,'inspect','--id','1','--source'],f.root));
     assert.equal(identity.archived,true); assert.equal(identity.checkpoint,result.head); assert(!('candidate' in identity));
     assert(!after.edits.a); assert.equal(after.next[0],3);

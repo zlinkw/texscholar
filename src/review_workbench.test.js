@@ -58,6 +58,10 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     await send('dirty', {dirty: false, noteDirty: false});
     await send('save', {option: 'B', value: 'The model is compact and fast.'});
     assert.equal(view.active.version, 'v2');
+    const previous = {version: 'v1', requests: [{id: 'old-note', version: 'v1', text: '保留旧版返修要求'}]};
+    records.get('1').data.edit.previous_feedback = previous;
+    view.sync(records, view.active);
+    assert.deepEqual(messages.findLast(m => m.type === 'notes').previous_feedback, previous, 'same-version updates retain the read-only comparison round');
     assert.equal(records.get('1').data.options[0].after, 'The model is reliable.');
     await send('accept', {option: 'B'});
     assert.equal(events.at(-1).c.option, 'B'); assert.equal(view.active.id, '2');

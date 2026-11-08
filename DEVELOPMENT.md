@@ -341,3 +341,12 @@ Windows 上已经执行的测试结果必须与 macOS 状态分开。macOS 的�
 规定检查为 backend 组、inline/workbench 接收调用链和 backup 组。新增夹具覆盖正文手删词后接收、范围外手改不进入投影、待审批注／其他决定／依赖／编号保留、生成后再改原文、重复边界／来源缺失，以及多项决定失败无部分变更。复用既有入口，测试仅用隔离目录和本地 Git 远端，不新增性能测试或论文编译。JS/Python 为直接运行源码，本地打包复用同一已测源码，正式发布与正常 VSIX 安装复用同一产物，不直接补丁已安装目录。Mac 未实机验证。
 
 实际结果：backend 80 项通过（D:/latex-writing-checks/0942/backend-33d4efe4c4764412807c5eec58404a55，退出 0）；inline/workbench/backup 37 项通过（consumers-62b0164910d5428b8f794dcc1d0ed04d，退出 0），合计 117 项。新增 CLI 成功回归确实持共享锁后重读，投影仅纳入本次接收范围，外部手改、其他候选／批注／依赖／计数不变；拒绝边界及后项失败时全部决定／投影保持原样。原有正常接收、拒绝、并发／事务和私有备份／暂存保护仍通过。初始失败保留于 before.stderr.log，修后定向 target-final.stderr.log 退出 0。真实 105 只读映射核验返回其现存旧投影范围，恰为原句恢复 segmentation 后的全文；没有调用真实 decide、persist、编译或论文 Git 操作。没有性能承诺或 Mac 实测。
+
+
+0.9.43：新增最近一轮返修要求的只读对照。候选生成新版本时，将现有 open／addressed-pending-review 要求保存为该项单份 previous_feedback；默认清除待处理要求的原行为保持，无新要求时沿用最近对照，有新要求时整体替换，不叠加多代记录。审核页默认展开，标注实际来源版本／方案与此前选区，不提供旧选区向新版猜测定位或编辑按钮；同版本事件更新和手动候选保存共用显示。显式保留的 requests 与对照按真实批注 ID 去重。
+
+只读对照不进入 MCP 写作上下文、待处理筛选、批注交接或成果 Git；已完结依赖记录精简时移除，保持既有引用核验及缓存轮换。未接收工作仍可替换，不改全局 SKILL、真实论文、作者决定或 Typst，不恢复已删除批注。规定检查为 backend、editor、backup 及隔离审核页交互，扩展既有用例覆盖版本转换／无新要求／覆盖上一轮／失败保留／AI 不重复收到／已完结清理及界面刷新。无新依赖或性能测试，Mac 未实机验证；本地打包安装同一产物。
+
+实际覆盖：backend 80 项（D:/latex-writing-checks/0943/backend-132488fc5a284ceaa3e1298a2993bc72）与 editor 95 项（editor-64fba0eab9244ed093c597e9a358d8bd）通过，退出 0。只读要求未变时复用节点的最终调整后，受影响 inline/workbench/math 30 项补验通过（editor-final2.stdout.log，退出 0），其余未变覆盖复用。backup 首轮 14 项通过、1 项失败（backup-21ccf5db50ee49898baac76f5835a8ed，退出 1）：新增夹具在创建依赖后返修上游，正确触发 needs-recheck，使原“全部已完结”前提失效；改为先准备上一轮记录再创建依赖，不修改 freshness 规则或放宽断言，该项定向通过（backup-final.stdout.log，退出 0）。合计 190 项获得有效覆盖，不重复计算。
+
+隔离 Chromium 使用真实页面与模拟 VS Code 消息，验证默认展开、v1/v2 来源、只读无操作按钮、保留当前输入与精确选区、旧要求未变时跨新版保留节点、覆盖上一轮而非累积、切项隔离、显式保留时去重及 620px 布局（page-incremental.stdout.log，退出 0）。首轮页面断言未等待 resize 布局完成而失败（page.stderr.log）；等待原生动画帧后通过（page-final.stdout.log），未改产品门槛。补验进程首轮漏传 LOCAL_LATEX_TEST_ROOT，保留 editor-final 退出 1；补齐既有夹具路径后 editor-final2 退出 0。没有真实论文改动、PDF 编译、网络翻译或 Mac 实机验证。
