@@ -3,7 +3,7 @@ from pathlib import PurePosixPath
 import re
 from source_review import Conflict, FieldConflict, body
 from ai_context import paragraph_context
-from review_pdf import _command, _environment_end
+from review_pdf import _command, _environment_end, group_end, skip_space
 
 
 def source_path(root, name):
@@ -25,32 +25,6 @@ def source_path(root, name):
     return target
 
 
-def group_end(text, start, opening='{', closing='}', comments=True):
-    if start >= len(text) or text[start] != opening:
-        raise Conflict('Expected a literal balanced argument in reference source')
-    depth, braces, quote, at = 1, 0, False, start + 1
-    while at < len(text):
-        char = text[at]
-        if char == '\\':
-            _, at = _command(text, at)
-            continue
-        if char == '%' and not quote and comments:
-            end = text.find('\n', at)
-            at = len(text) if end < 0 else end + 1
-            continue
-        if opening != '{':
-            if char == '{': braces += 1
-            elif char == '}': braces -= 1
-            elif opening == '(' and char == '"' and braces == 0: quote = not quote
-        if not quote and braces == 0:
-            if char == opening: depth += 1
-            elif char == closing:
-                depth -= 1
-                if depth == 0: return at + 1
-        at += 1
-    raise Conflict('Unclosed reference argument; source was not changed')
-
-
 def commands(text):
     at = 0
     while at < len(text):
@@ -67,16 +41,6 @@ def commands(text):
             at = end
         else:
             at += 1
-
-
-def skip_space(text, at):
-    while at < len(text):
-        if text[at].isspace(): at += 1
-        elif text[at] == '%':
-            end = text.find('\n', at)
-            at = len(text) if end < 0 else end + 1
-        else: break
-    return at
 
 
 def tex_hits(text, kind, key):

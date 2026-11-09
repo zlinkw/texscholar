@@ -13,7 +13,7 @@ import stat
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from source_review import Review, PENDING, body, locate, digest, writer_lock_at
+from source_review import Review, PENDING, Conflict, body, locate, digest, writer_lock_at
 
 ASSETS = {'.tex', '.bib', '.cls', '.sty', '.bst', '.bbx', '.cbx', '.cfg', '.def', '.fd',
           '.map', '.enc', '.tfm', '.otf', '.ttf', '.pdf', '.png', '.jpg', '.jpeg', '.eps', '.svg', '.ps'}
@@ -21,6 +21,9 @@ EXCLUDED = {'.git', '.codex-review', '.latex-build', 'clean_dir', 'node_modules'
 DIFF_OPTIONS = ('--encoding=utf8', '--no-del', '--math-markup=3', '--graphics-markup=0', '--config', 'MINWORDSBLOCK=0')
 # Standard argument-free text containers, not indivisible mathematical/float units.
 PROSE_CONTAINERS = {'abstract', 'quote', 'quotation'}
+HEADING_COMMANDS = {'\\' + name + star for name in
+                    ('part', 'chapter', 'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph')
+                    for star in ('', '*')}
 
 PREVIEW_MACROS = r'''
 \usepackage{float}
@@ -312,6 +315,56 @@ def _command(text, position):
     return token, end
 
 
+def group_end(text, start, opening='{', closing='}', comments=True):
+    """Read a balanced TeX/BibTeX argument, respecting escapes and comments."""
+    if start >= len(text) or text[start] != opening:
+        raise Conflict('Expected a literal balanced argument in reference source')
+    depth, braces, quote, at = 1, 0, False, start + 1
+    while at < len(text):
+        char = text[at]
+        if char == '\\':
+            _, at = _command(text, at)
+            continue
+        if char == '%' and not quote and comments:
+            end = text.find('\n', at)
+            at = len(text) if end < 0 else end + 1
+            continue
+        if opening != '{':
+            if char == '{': braces += 1
+            elif char == '}': braces -= 1
+            elif opening == '(' and char == '"' and braces == 0: quote = not quote
+        if not quote and braces == 0:
+            if char == opening: depth += 1
+            elif char == closing:
+                depth -= 1
+                if depth == 0: return at + 1
+        at += 1
+    raise Conflict('Unclosed reference argument; source was not changed')
+
+
+def skip_space(text, at):
+    while at < len(text):
+        if text[at].isspace(): at += 1
+        elif text[at] == '%':
+            end = text.find('\n', at)
+            at = len(text) if end < 0 else end + 1
+        else: break
+    return at
+
+
+def heading_end(text, start):
+    token, at = _command(text, start)
+    if token not in HEADING_COMMANDS:
+        raise Conflict('section must contain exactly one complete heading command')
+    try:
+        at = skip_space(text, at)
+        if at < len(text) and text[at] == '[':
+            at = skip_space(text, group_end(text, at, '[', ']'))
+        return group_end(text, at)
+    except Conflict as error:
+        raise Conflict('section must contain exactly one complete heading command') from error
+
+
 def _environment_end(text, position):
     """Find one balanced environment, ignoring escaped commands and comments."""
     opening = re.match(r'\\begin\{([^{}]+)\}', text[position:])
@@ -345,7 +398,7 @@ def _environment_end(text, position):
 
 
 def sentences(text, *, split_prose_containers=True):
-    """Presentation units: prose sentences and adjacent, balanced TeX environments."""
+    """Presentation units: sentences, complete headings and balanced environments."""
     result, start, depth, math, i = [], 0, 0, None, 0
     while i < len(text):
         char = text[i]
@@ -381,6 +434,8 @@ def sentences(text, *, split_prose_containers=True):
                 if stop < 0:
                     raise ValueError('审核 PDF 的比较片段中有未闭合的显示数学。')
                 protected_end = stop + 2
+            elif char == '\\' and _command(text, i)[0] in HEADING_COMMANDS:
+                protected_end = heading_end(text, i)
         if protected_end is not None:
             if start < i:
                 result.append(text[start:i])
@@ -436,6 +491,8 @@ def _unit_spans(text, *, split_prose_containers=True):
     units, offset = [], 0
     for part in sentences(text, split_prose_containers=split_prose_containers):
         kind = 'environment' if re.match(r'\\begin\{|\\\[|\$\$', part.lstrip()) else 'prose'
+        if part.lstrip().startswith('\\') and _command(part.lstrip(), 0)[0] in HEADING_COMMANDS:
+            kind = 'heading'
         marker = re.fullmatch(r'\\(?:begin|end)\{([^{}]+)\}', part.strip())
         if marker and marker[1] in PROSE_CONTAINERS:
             kind = 'container'

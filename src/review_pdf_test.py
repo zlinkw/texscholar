@@ -13,6 +13,78 @@ EXE = '.exe' if os.name == 'nt' else ''
 
 
 class ReviewUnits(unittest.TestCase):
+    def test_heading_commands_and_first_sentence_are_separate_review_units(self):
+        from review_pdf import _unit_spans, visible_tex
+        headings = [r'\section{Original title}', r'\subsection*{Original title}',
+            r'\subsection[Short {nested [text]}]{Original \textbf{title}}',
+            '\\subsection*% ignored } and ]\r\n{Original {nested} title}',
+            '\\subsection% ignored fake \\section{not active}\n[Short {]} title]% ignored }\n{Original \\textbf{title} with \\{literal\\} and \\%}',
+            r'\part{Original title}', r'\chapter{Original title}', r'\paragraph{Original title}', r'\subparagraph{Original title}']
+        for heading in headings:
+            for gap in ['\n', '\n\n', '% trailing comment\n']:
+                with self.subTest(heading=heading, gap=gap):
+                    text = heading + gap + 'First sentence. Tail stays.'
+                    self.assertEqual(''.join(sentences(text)), text)
+                    self.assertEqual(_unit_spans(text)[0]['kind'], 'heading')
+                    self.assertEqual(visible_tex(_unit_spans(text)[0]['text']).strip(), visible_tex(heading).strip())
+                    revised = heading.replace('Original', 'Revised')
+                    for replacements, ids in [
+                        ([('1', heading, revised), ('2', 'First sentence.', 'Revised first sentence.')], [['1'], ['2']]),
+                        ([('1', 'Original', 'Revised'), ('2', 'First', 'Revised first')], [['1'], ['2']]),
+                        ([('1', heading, revised)], [['1']]),
+                        ([('2', 'First sentence.', 'Revised first sentence.')], [['2']]),
+                    ]:
+                        changes = self.changes(text, replacements)
+                        self.assertEqual([u['ids'] for u in changes], ids)
+                        for unit in changes:
+                            if unit['ids'] == ['1']:
+                                self.assertNotIn('First sentence.', unit['before'])
+                            else:
+                                self.assertNotIn('\\subsection', unit['before'])
+                                self.assertEqual(visible_tex(unit['before']).strip(), 'First sentence.')
+
+    def test_heading_scanner_ignores_inactive_commands_and_rejects_incomplete_arguments(self):
+        from review_pdf import _unit_spans, heading_end
+        text = ('% \\section{Comment only}\n'
+                r'Text \verb|\section{Literal}| and \textbf{\section{Grouped}} '
+                r'with $\text{\section{Math}}$ stays.' + '\n'
+                r'\subsection*[Short \] {nested [text]}]{Real \{title\}}' + '\nFirst sentence.')
+        parts = _unit_spans(text)
+        self.assertEqual(''.join(p['text'] for p in parts), text)
+        headings = [p['text'].strip() for p in parts if p['kind'] == 'heading']
+        self.assertEqual(headings, [r'\subsection*[Short \] {nested [text]}]{Real \{title\}}'])
+        for text in [r'\section[Short {nested}]', r'\section{Unclosed', '\\section% {ignored}\n',
+                     r'\section[Unclosed{Title}', r'\section{Title \}']:
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, 'complete heading'):
+                heading_end(text, 0)
+
+    def test_heading_body_equation_options_and_review_metadata_stay_independent(self):
+        import copy
+        from review_pdf import _unit_spans
+        heading = r'\subsection[Short]{Original \textbf{title}}'
+        equation = r'\begin{equation}\begin{aligned}x&=1\\y&=2\end{aligned}\end{equation}'
+        text = heading + '\nFirst sentence.' + equation + 'Tail stays.'
+        edits = []
+        for id_, old, new in [('7', heading, heading.replace('Original', 'Revised')),
+                             ('8', 'First sentence.', 'New sentence.'), ('9', 'x&=1', 'x&=3')]:
+            start = text.index(old)
+            edits.append({'id': id_, 'start': start, 'end': start + len(old), 'deps': ['prior'],
+                'questions': [{'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Exact question.'}],
+                'requests': [{'text': 'Keep this note.'}], 'status': 'pending', 'item': {'after': new}})
+        edits[0]['item']['comparison_options'] = [{'label': label, 'after': heading.replace('Original', word), 'reason': label}
+            for label, word in zip('ABC', ['Revised', 'New', 'Better'])]
+        original = copy.deepcopy(edits)
+        units = list(review_units(text, edits))
+        changes = [u for u in units if u['kind'] != 'equal']
+        self.assertEqual([u['ids'] for u in changes], [['7'], ['8'], ['9']])
+        self.assertEqual([o['label'] for o in changes[0]['variants']], list('ABC'))
+        self.assertEqual([u['kind'] for u in _unit_spans(text)], ['heading', 'prose', 'environment', 'prose'])
+        self.assertEqual(edits, original)
+        self.assertEqual(''.join(u['before'] for u in units), text)
+        with self.assertRaisesRegex(ValueError, '同一原文.*8.*10'):
+            extra = {'id': '10', 'start': text.index('sentence'), 'end': text.index('sentence') + len('sentence'), 'item': {'after': 'clause'}}
+            list(review_units(text, [edits[1], extra]))
+
     def test_parallel_options_keep_equal_sentences_and_math_once(self):
         from review_pdf import parallel_changes
         before = 'Context stays. The model is strong. End stays.'

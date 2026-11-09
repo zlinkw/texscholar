@@ -1,33 +1,13 @@
 """Read-only source scopes and comment roles for AI; never editing boundaries."""
 import re
 from source_review import Conflict, locate
-from review_pdf import _command, _environment_end
+from review_pdf import _command, _environment_end, heading_end
 
 
 class SectionSelectionConflict(Conflict):
     def __init__(self, heading, available):
         super().__init__('Section selector is missing, ambiguous or inactive; choose an exact active heading from available_sections')
         self.heading, self.available, self.file = heading, available, None
-
-
-def heading_end(text, start):
-    prefix = re.match(r'\\[A-Za-z]+\*?\s*(?:\[[\s\S]*?\]\s*)?\{', text[start:])
-    if not prefix:
-        raise Conflict('section must contain exactly one complete heading command')
-    cursor, depth = start + prefix.end(), 1
-    while cursor < len(text) and depth:
-        if text[cursor] == '\\':
-            _, cursor = _command(text, cursor)
-            continue
-        if text[cursor] == '%':
-            newline = text.find('\n', cursor)
-            cursor = len(text) if newline < 0 else newline + 1
-            continue
-        depth += (text[cursor] == '{') - (text[cursor] == '}')
-        cursor += 1
-    if depth:
-        raise Conflict('section must contain exactly one complete heading command')
-    return cursor
 
 
 def paragraph_context(text, start, end):

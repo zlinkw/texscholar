@@ -359,3 +359,8 @@ Windows 上已经执行的测试结果必须与 macOS 状态分开。macOS 的�
 规定检查为 backend 组及 writing/questions/inline 的受影响消费者。矩阵覆盖 propose/rework 操作层直接关联／池引用、spec 写法、两层合并去重、预检与回读、失败保留、批量顺序／SHA 链／首错停止、元数据其他字段不变。WinError 5 单独进行隔离原子替换失败注入，保持 operation_failed、单次尝试、状态未写入且保留临时诊断文件，显式再次调用后保存成功；不认定真实电脑的拒绝访问根因，不新增重试或清理逻辑。Mac 未实机验证。本地打包和正式发布同一产物，按本次明确限制不安装；用户后续需自行安装并重载实际 MCP 宿主。
 
 实际结果：backend 83 项通过（D:/latex-writing-checks/0944/backend-8176d8166aff44ce8e9fd8254ee74dc6，退出 0）；writing/questions/inline 32 项通过（consumers-d9195f6c66c8483ba7465100f8b255fa，退出 0）。随后只补 rework 预检断言，产品代码未变，MCP 27 项补验通过（mcp-final.stderr.log，退出 0），其余同轮覆盖沿用，合计 115 项有效覆盖，不重复计数。矩阵实际保存并通过新的 Review.inspect 回读确认操作层直接／池引用、spec、双层独有问题及去重均落盘；输入对象未被原地修改。无效引用／任一层坏 quote 在 propose 和 rework 中均失败，先前成功项保留、后续不执行，SHA 回执对应真实状态。元数据关联完整其他字段比较通过。原子替换错误只做隔离注入与显式续写验证，原写入函数和真实临时文件未变；不将此注入当作真实 WinError 5 根因诊断。没有真实论文接收、编译、状态／缓存改写或全局 SKILL 操作。
+
+
+0.9.45：开发仓库及父目录无 AGENTS.md，沿用现有协作协议和当前全局约束。本轮只修审核 PDF 的结构边界：复用原有命令、平衡参数和注释扫描，将章节标题单独作为 heading 单元，与随后正文及公式环境分开。共享 group_end／skip_space 从引用读取模块移到既有 TeX 扫描器，章节读取复用同一 heading_end；不增加重复解析实现或新依赖。标题支持 part/chapter/section/subsection/subsubsection/paragraph/subparagraph、星号、可选短标题、嵌套括号、转义和参数内注释。保留 review_units 原有同句多编号冲突检查，不合并论文候选，不改变审核决定或持久化模型。
+
+隔离复现：修前新增两项测试失败（D:/latex-writing-checks/0945/before.stderr.log，退出 1，27 个子案例失败及 1 个冲突错误）。修后 ReviewUnits 16 项和 MCP 27 项通过（final.stderr.log，退出 0，合计 43 项）。覆盖标题与首句分别修改、标题内仅改词、只改标题／正文、有无段间空行、星号／短标题／嵌套及注释、未闭合参数拒绝、非活动标题不误识别、真正同句多编号仍拒绝、邻近嵌套公式环境，以及输入 ID、A/B/C、问题关联、批注、依赖和状态不变。共用解析器的章节选区、引用读取及既有 MCP 消费者一并通过；未运行会实际编译 PDF 的 ReviewPDF 类，不声称已验证视觉排版或真实论文编译。用户随后授权本机安装，交付按本地打包、正式发布、标准 VSIX 安装复用同一产物，不直接补丁安装目录。未改真实论文、DATA、全局 SKILL 或 Typst，未接收候选。Mac 未实机验证。
