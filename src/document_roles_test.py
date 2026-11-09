@@ -127,7 +127,7 @@ class FileRoles(unittest.TestCase):
             review.propose({'file': '任意名称.tex', 'kind': 'manuscript', 'before': '% CODEX-FILE-ROLES-BEGIN', 'after': '% changed'})
         self.assertEqual((self.root / '任意名称.tex').read_text(encoding='utf-8'), text)
 
-    def test_confirmed_role_update_accompanies_accepted_backup_but_never_manual_prose(self):
+    def test_confirmed_role_update_and_manual_prose_accompany_explicit_source_backup(self):
         import base64
         from review_checkpoint import plan
         self.write('state.tex', '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-NEXT manuscript=1 response=a\n% CODEX-REVIEW-STATE-END\n')
@@ -144,6 +144,10 @@ class FileRoles(unittest.TestCase):
         self.assertIn('Accepted text.', payload)
         self.assertNotIn('CODEX-REVIEW-DATA', payload)
         file = self.root / '任意名称.tex'
-        file.write_text(file.read_text(encoding='utf-8').replace('Accepted text.', 'Unapproved manual text.'), encoding='utf-8')
-        with self.assertRaisesRegex(Conflict, '手动修改'):
-            plan(Review(self.root, 'state.tex'))
+        file.write_text(file.read_text(encoding='utf-8').replace('Accepted text.', 'Author manual text.'), encoding='utf-8')
+        checkpoint = plan(Review(self.root, 'state.tex'))
+        payload = base64.b64decode(checkpoint['sources']['任意名称.tex']['content']).decode('utf-8')
+        self.assertIn('Author manual text.', payload)
+        self.assertIn('CODEX-FILE-ROLES-BEGIN', payload)
+        self.assertNotIn('CODEX-REVIEW-DATA', payload)
+        self.assertIn('任意名称.tex', checkpoint['manual_files'])

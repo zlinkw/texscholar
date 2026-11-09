@@ -146,7 +146,7 @@ async function backupProject(plan, entries, note) {
     }
 }
 async function finishReview(root, owner, options, note, execute = run) {
-    if (!note?.trim()) throw new Error('请填写本批已接收成果的实际改动目的。');
+    if (!note?.trim()) throw new Error('请填写本次正文成果的实际改动目的。');
     const plan = await inspectBackup(root, options, execute), {git} = plan;
     const helper = async (operation, input, expect) => {
         const args = ['-X','utf8',options.checkpointScript || path.join(__dirname,'review_checkpoint.py'),
@@ -156,13 +156,13 @@ async function finishReview(root, owner, options, note, execute = run) {
     };
     const data = await helper('plan');
     let saved = data.resume, commit = saved?.commit || null;
-    if (!saved && !Object.keys(data.accepted).length) {
+    if (!saved && !Object.keys(data.accepted).length && !data.manual_files.length) {
         if (data.checkpoint?.commit === plan.head && plan.head === plan.remoteHead) {
             await verifyPrivate(plan);
             const cleaned = await helper('cleanup',undefined,data.sha256);
-            return {...cleaned,skipped:true,head:plan.head,reason:`没有新接收成果，未创建空提交或重复推送；已清理 ${cleaned.deleted_objects.length} 个无引用旧缓存。`};
+            return {...cleaned,skipped:true,head:plan.head,reason:`没有新增已接收或手动修改成果，未创建空提交或重复推送；已清理 ${cleaned.deleted_objects.length} 个无引用旧缓存。`};
         }
-        return {skipped:true, reason:'没有新接收成果或可核对的成功检查点；未提交或清理。'};
+        return {skipped:true, reason:'没有新增已接收或手动修改成果，也无可核对的成功检查点；未提交或清理。'};
     }
     try {
         if (!saved) {
@@ -188,7 +188,7 @@ async function finishReview(root, owner, options, note, execute = run) {
             for (const name of names) if ((await git(['rev-parse',':'+name])).trim() !== expected[name]) throw new Error('暂存成果内容发生变化：'+name);
             if (staged.length) {
                 const stat = await git(['diff','--cached','--stat']);
-                const message = `accepted(paper): ${note.trim()}\n\n改动目的：${note.trim()}\n已接收编号：${Object.keys(data.accepted).join(', ')}\n文件范围：\n${names.map(n=>'- '+n).join('\n')}\n\n${stat.trim()}\n\n仅记录已接收投影；未接收候选、作者批注及运行状态不在提交中。\n本次备份不代表未决项或科学问题已解决。`;
+                const message = `accepted(paper): ${note.trim()}\n\n改动目的：${note.trim()}\n已接收编号：${Object.keys(data.accepted).join(', ') || '无'}\n手动修改文件：${data.manual_files.join(', ') || '无'}\n文件范围：\n${names.map(n=>'- '+n).join('\n')}\n\n${stat.trim()}\n\n记录已接收成果及作者直接修改的当前源码；未接收候选、作者批注及运行状态不在提交中。\n本次备份不代表未决项或科学问题已解决。`;
                 await git(['commit','-m',message]);
                 commit = (await git(['rev-parse','HEAD'])).trim();
                 if ((await git(['rev-parse','HEAD^'])).trim() !== plan.head) throw new Error('成果提交父版本变化；未推送。');
@@ -198,7 +198,7 @@ async function finishReview(root, owner, options, note, execute = run) {
             unchanged();
             for (const name of names) if ((await git(['rev-parse','HEAD:'+name])).trim() !== expected[name]) throw new Error('提交中的成果内容变化：'+name+'；未推送。');
             const marked = await helper('record',{commit,files:expected,purpose:note.trim()},data.sha256);
-            saved = {commit,files:expected,accepted:data.accepted};
+            saved = {commit,files:expected,accepted:data.accepted,manual_files:data.manual_files};
             if (!marked.applied) throw new Error('成果提交未记录，停止推送和精简。');
         } else {
             if (plan.head !== saved.commit) throw new Error('HEAD 已不是上次保留的成果提交，请先核对；不自动合并。');
@@ -210,7 +210,7 @@ async function finishReview(root, owner, options, note, execute = run) {
         if (current.resume?.commit !== head) throw new Error('成果记录已变化，请刷新后核对；不精简历史。');
         const result = await helper('compact',undefined,current.sha256);
         const cleaned = await helper('cleanup',undefined,result.sha256);
-        return {...result,...cleaned,head,repository:plan.repository,accepted_ids:Object.keys(saved.accepted)};
+        return {...result,...cleaned,head,repository:plan.repository,accepted_ids:Object.keys(saved.accepted),manual_files:saved.manual_files || []};
     } catch (error) {
         throw new Error((commit ? `本地成果提交 ${commit.slice(0,8)} 已保留；本轮备份收尾未全部完成，实际已删除缓存以错误详情为准。` : '成果备份未完成；未接收候选或精简历史。')+'\n'+error.message);
     }
@@ -227,13 +227,13 @@ function activate(context) {
         const files = await vscode.workspace.findFiles(new vscode.RelativePattern(folder.uri.fsPath,'**/*.tex'),'**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**');
         const owners = files.filter(file => /^% CODEX-REVIEW-DATA /m.test(fs.readFileSync(file.fsPath,'utf8')));
         if (owners.length !== 1) throw new Error('需先核对唯一的本地审核状态，不能猜测提交范围。');
-        const note = await vscode.window.showInputBox({title:'Git 备份已接收修改',prompt:'本批已接收修改的实际目的；未接收候选和批注继续保留本地',validateInput:value => value.trim() ? undefined : '请填写成果说明。'});
+        const note = await vscode.window.showInputBox({title:'Git 备份已接收修改',prompt:'备份已接收成果及当前轮源码中的手动修改；未接收候选和批注保留本地。请填写改动目的',validateInput:value => value.trim() ? undefined : '请填写成果说明。'});
         if (note === undefined) return;
         const cfg = vscode.workspace.getConfiguration('localLatex');
-        const result = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'只提交已接收成果，推送成功后精简已完结记录'},() => finishReview(folder.uri.fsPath,path.relative(folder.uri.fsPath,owners[0].fsPath).split(path.sep).join('/'),
+        const result = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'备份已接收成果及手动修改，推送成功后精简已完结记录'},() => finishReview(folder.uri.fsPath,path.relative(folder.uri.fsPath,owners[0].fsPath).split(path.sep).join('/'),
             {git:cfg.get('gitPath','git'),gh:cfg.get('ghPath','gh'),python:cfg.get('pythonPath','python')},note));
         if (result.skipped) return vscode.window.showInformationMessage(result.reason);
-        vscode.window.showInformationMessage(`已接收成果 ${result.accepted_ids.join(', ')} 已推送至私有 GitHub；已精简 ${result.removed_ids.length} 条已完结记录，删除 ${result.deleted_objects.length} 个无引用旧缓存；未决候选和批注保留。`);
+        vscode.window.showInformationMessage(`已接收成果 ${result.accepted_ids.join(', ') || '无'}；手动修改文件 ${result.manual_files.join(', ') || '无'}。源码已推送至私有 GitHub；已精简 ${result.removed_ids.length} 条已完结记录，删除 ${result.deleted_objects.length} 个无引用旧缓存；未决候选和批注保留。`);
     }
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.finishReview',async () => {
         if (busy) return vscode.window.showWarningMessage('Git 备份尚未结束。');

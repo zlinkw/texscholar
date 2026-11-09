@@ -749,6 +749,8 @@ class Review:
         updated = {}
         accepted = {}
         decisions = {}
+        inline_files = {e['file'] for e in self.state['edits'].values()
+                        if e['status'] in PENDING and not e.get('deferred', False)}
         for id_ in accept + reject:
             edit = copy.deepcopy(self.state["edits"].get(id_))
             if not edit or edit["status"] not in PENDING:
@@ -775,13 +777,19 @@ class Review:
             else:
                 if edit.get("deferred", False):
                     updated[rel] = text[:a] + item["after"] + text[b:]
-                # Only the explicitly accepted change enters this projection. Later manual edits stay separate.
-                base = accepted.get(rel, self.contents(self.state["accepted"], rel))
-                try:
-                    x, y = self.projection_span(base, item)
-                except Conflict as exc:
-                    raise Conflict(f'已接收投影失配：审核项 {id_}，文件 {rel}；{exc}') from exc
-                accepted[rel] = base[:x] + item["after"] + base[y:]
+                if self.storage == 'files' and rel not in inline_files:
+                    # Current clean source is the author's working baseline,
+                    # including direct edits. Only the chosen span is replaced;
+                    # pending options/notes remain in their separate objects.
+                    accepted[rel] = updated[rel]
+                else:
+                    # Existing inline candidates must stay out of the projection.
+                    base = accepted.get(rel, self.contents(self.state["accepted"], rel))
+                    try:
+                        x, y = self.projection_span(base, item)
+                    except Conflict as exc:
+                        raise Conflict(f'已接收投影失配：审核项 {id_}，文件 {rel}；{exc}') from exc
+                    accepted[rel] = base[:x] + item["after"] + base[y:]
                 edit["status"] = "accepted"
             for request in edit.get("requests", []):
                 if request["status"] in ("open", "addressed-pending-review"):

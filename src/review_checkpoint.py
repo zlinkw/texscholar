@@ -14,8 +14,7 @@ from pathlib import Path
 from contextlib import nullcontext
 from datetime import datetime, timezone
 
-from source_review import Review, Conflict, PENDING, digest, letters
-from document_roles import block_span as role_span, without_block as without_roles, replace_block as replace_roles, scan as scan_roles
+from source_review import Review, Conflict, PENDING, body, digest, letters
 
 
 def source_text(text):
@@ -34,27 +33,19 @@ def plan(r):
         raise Conflict('仍有旧式候选写在正文中，不能将其当作已接收成果提交。')
     accepted = {id_: e['versions'][-1] for id_, e in r.state['edits'].items()
                 if e['status'] == 'accepted' and e['versions'] and e.get('published_version') != e['versions'][-1]}
-    if not accepted:
-        return {'sha256': digest(r.raw), 'accepted': {}, 'sources': {}, 'checkpoint': r.state.get('checkpoint')}
     outside = [r.state['edits'][id_]['file'] for id_ in accepted
                if r.state['edits'][id_]['file'] not in r.state['rounds'][-1]['files']]
     if outside:
         raise Conflict('仍有已接收文件不在当前轮投影范围；请核对并将其纳入本轮后再备份：' + ', '.join(sorted(set(outside))))
-    sources = {}
+    sources, manual = {}, []
     for name in r.state['rounds'][-1]['files']:
         current = r.read(name)
         approved = r.contents(r.state['accepted'], name)
-        if source_text(current) != source_text(approved) and role_span(current):
-            registry = scan_roles(r.repo)
-            if registry['status'] == 'confirmed' and registry['owner'] == name:
-                # A separately author-confirmed stable file map may accompany
-                # accepted prose; it never authorizes unrelated manual prose.
-                if source_text(without_roles(current)) == source_text(without_roles(approved)):
-                    a, b = role_span(current)
-                    approved = replace_roles(approved, current[a:b])
         if source_text(current) != source_text(approved):
-            raise Conflict('存在未纳入已接收投影的手动修改，请先核对，不自动提交：' + name)
-        text = source_text(approved)
+            manual.append(name)
+        # Pending options live outside the source. The author's explicit backup
+        # includes direct edits, without accepting any of those options or notes.
+        text = source_text(current)
         if name == r.state_rel:
             # A clone can start a new local review without missing private objects.
             text = ('% CODEX-REVIEW-STATE-BEGIN\n'
@@ -64,15 +55,17 @@ def plan(r):
         raw = r.original[name]
         payload = (b'\xef\xbb\xbf' if raw.startswith(b'\xef\xbb\xbf') else b'') + text.encode('utf-8')
         sources[name] = {'content': base64.b64encode(payload).decode('ascii'), 'working_sha256': digest(raw)}
+    if not accepted and not manual:
+        return {'sha256': digest(r.raw), 'accepted': {}, 'manual_files': [], 'sources': {}, 'checkpoint': r.state.get('checkpoint')}
     closed = {id_: {'status': e['status'], 'version': e['versions'][-1]}
               for id_, e in r.state['edits'].items()
               if e['status'] in {'accepted', 'rejected'} and e['versions'] and e['file'] in sources}
-    return {'sha256': digest(r.raw), 'accepted': accepted, 'closed': closed, 'sources': sources}
+    return {'sha256': digest(r.raw), 'accepted': accepted, 'manual_files': manual, 'closed': closed, 'sources': sources}
 
 
 def record(r, spec):
     data = plan(r)
-    if data.get('resume') or not data['accepted']:
+    if data.get('resume') or not (data['accepted'] or data['manual_files']):
         raise Conflict('没有可记录的新成果提交，或应先完成已有提交的推送。')
     commit = spec['commit']
     if r.git('rev-parse', 'HEAD').decode().strip() != commit:
@@ -84,7 +77,12 @@ def record(r, spec):
             raise Conflict('Git 中的内容并非核对过的已接收成果：' + name)
         if r.git('rev-parse', commit + ':' + name).decode().strip() != spec['files'][name]:
             raise Conflict('成果文件的 Git 对象已变化：' + name)
-    r.state['pending_backup'] = {'commit': commit, 'accepted': data['accepted'], 'closed': data['closed'],
+    # The verified local source commit is the author's checkpoint for manual
+    # edits too. Later acceptance starts from it; push failure retains this
+    # local checkpoint and never permits compaction or cache cleanup.
+    r.state['accepted'] = r.snapshot({name: body(base64.b64decode(source['content'], validate=True).decode('utf-8-sig')).encode('utf-8')
+                                    for name, source in data['sources'].items()}, 'author source checkpoint ' + commit)
+    r.state['pending_backup'] = {'commit': commit, 'accepted': data['accepted'], 'manual_files': data['manual_files'], 'closed': data['closed'],
                                  'files': spec['files'], 'purpose': spec['purpose']}
     return {}, {'recorded': commit}
 

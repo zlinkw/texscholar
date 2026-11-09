@@ -402,7 +402,7 @@ class NativeReview(unittest.TestCase):
             self.apply('decide', [id_], [])
         self.assertIn('author-edited', source.read_text(encoding='utf-8'))
 
-    def test_accept_projection_keeps_manual_context_outside_unique_original(self):
+    def test_accept_uses_latest_manual_context_without_overwriting_it(self):
         for rel, kind, before in [('main.tex', 'manuscript', 'The model is strong and fast.'),
                                   ('reply.tex', 'response', 'Thank you.')]:
             with self.subTest(file=rel):
@@ -426,10 +426,10 @@ class NativeReview(unittest.TestCase):
                 self.apply('decide', [id_], [], {id_: data['version']}, 'B')
                 r = self.review()
                 self.assertEqual(r.state['edits'][id_]['accepted_option'], 'B')
-                self.assertEqual(r.contents(r.state['accepted'], rel), projection.replace(before, options[1]['after']))
+                self.assertEqual(r.contents(r.state['accepted'], rel), body(changed).replace(before, options[1]['after']))
                 self.assertEqual(body(source.read_text(encoding='utf-8')), body(changed).replace(before, options[1]['after']))
 
-    def test_projection_without_unique_substantive_original_still_blocks_acceptance(self):
+    def test_unique_live_source_acceptance_does_not_require_an_old_projection_match(self):
         source = self.root / 'main.tex'
         for label, baseline, current, before in [
             ('duplicate', 'Old context.\nTarget sentence.\nOther.\nTarget sentence.\nOld end.',
@@ -440,17 +440,21 @@ class NativeReview(unittest.TestCase):
             ('whitespace', 'Old context.\n \nOld end.', 'New context.\n \nNew end.', ' \n'),
         ]:
             with self.subTest(case=label):
+                self.setUp()
+                source = self.root / 'main.tex'
                 source.write_text(baseline, encoding='utf-8', newline='')
                 self.apply('begin', label, ['main.tex', 'reply.tex'])
                 source.write_text(current, encoding='utf-8', newline='')
                 id_ = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': before,
                     'left': 'New context.\n' if not before else '', 'after': 'Proposed sentence.'})['id']
-                old_source, old_state = source.read_bytes(), (self.root / 'reply.tex').read_bytes()
-                with self.assertRaises(Conflict):
-                    self.apply('decide', [id_], [])
-                self.assertEqual(source.read_bytes(), old_source)
-                self.assertEqual((self.root / 'reply.tex').read_bytes(), old_state)
-                self.assertEqual(self.review().state['edits'][id_]['status'], 'pending')
+                r = self.review()
+                item = r.payload(r.state['edits'][id_])
+                from source_review import locate
+                a, b = locate(current, before, item['left'], item['right'])
+                self.apply('decide', [id_], [])
+                expected = current[:a] + item['after'] + current[b:]
+                self.assertEqual(source.read_text(encoding='utf-8'), expected)
+                self.assertEqual(self.review().contents(self.review().state['accepted'], 'main.tex'), expected)
 
     def test_accept_after_manual_deletion_maps_only_the_selected_scope(self):
         source = self.root / 'main.tex'
@@ -485,8 +489,8 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8'))
         fresh = self.review()
         self.assertEqual(source.read_text(encoding='utf-8'), live.replace(latest, choices[0]['after']))
-        self.assertEqual(fresh.contents(fresh.state['accepted'], 'main.tex'), projection.replace(old, choices[0]['after']))
-        self.assertNotIn('% Outside author edit', fresh.contents(fresh.state['accepted'], 'main.tex'))
+        self.assertEqual(fresh.contents(fresh.state['accepted'], 'main.tex'), body(live).replace(latest, choices[0]['after']))
+        self.assertIn('% Outside author edit', fresh.contents(fresh.state['accepted'], 'main.tex'))
         self.assertEqual(fresh.state['next'], original_state['next'])
         self.assertEqual(fresh.state['edits'][peer], original_state['edits'][peer])
         self.assertEqual(fresh.state['edits'][first], original_state['edits'][first])
@@ -513,8 +517,12 @@ class NativeReview(unittest.TestCase):
                 if case == 'missing-provenance':
                     payload.pop('batch')
                 with patch.object(r, 'payload', return_value=payload):
-                    with self.assertRaisesRegex(Conflict, ('当前正文失配' if case == 'changed-live-source' else '已接收投影失配') + '.*' + id_ + '.*main.tex'):
-                        r.decide([id_], [])
+                    if case == 'changed-live-source':
+                        with self.assertRaisesRegex(Conflict, '当前正文失配.*' + id_ + '.*main.tex'):
+                            r.decide([id_], [])
+                    else:
+                        with self.assertRaises(Conflict):
+                            r.projection_span(r.contents(old_projection, 'main.tex'), payload)
                 self.assertEqual(source.read_bytes(), old_source)
                 self.assertEqual((self.root / 'reply.tex').read_bytes(), old_state)
                 self.assertEqual(r.state['accepted'], old_projection)
@@ -531,9 +539,13 @@ class NativeReview(unittest.TestCase):
         for phase in ['live', 'projection']:
             with self.subTest(phase=phase):
                 owner.write_bytes(saved_owner)
+                if phase == 'projection':
+                    owner.write_bytes(saved_owner.replace(b'Thank you.', b'Thank you for the suggestion.'))
                 if phase == 'live':
                     owner.write_text(owner.read_text(encoding='utf-8').replace('Thank you.', 'Author changed the reply.'), encoding='utf-8', newline='')
                 r = self.review()
+                if phase == 'projection':
+                    r.state['edits'][second]['deferred'] = False  # Existing inline legacy path still uses its projection.
                 state, source_bytes, owner_bytes = copy.deepcopy(r.state), (self.root / 'main.tex').read_bytes(), owner.read_bytes()
                 payload = r.payload
                 contents = r.contents

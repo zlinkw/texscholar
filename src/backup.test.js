@@ -206,17 +206,65 @@ test('failed push retains full records and the same local commit resumes without
     assert.equal((await f.git(['rev-list','--count',f.baseline+'..HEAD'])).trim(),'1');
 });
 
-test('checkpoint preserves hooks and refuses unapproved manual source changes',async () => {
+test('checkpoint preserves hooks and backs up explicit manual source edits with accepted results',async () => {
     const f = await reviewFixture('checkpoint-hook'); await f.backend(['decide','--accept','1']);
     fs.writeFileSync(path.join(f.root,'.git/hooks/pre-commit'),'#!/bin/sh\necho checkpoint-hook-refused >&2\nexit 1\n','utf8');
     await assert.rejects(finishReview(f.root,'reply.tex',f.options,'验证 hook 不被绕过',f.execute),/checkpoint-hook-refused/);
     assert.equal((await f.git(['rev-parse','HEAD'])).trim(),f.baseline); assert((await f.status()).edits['1'].versions.length);
     const g = await reviewFixture('checkpoint-manual'); await g.backend(['decide','--accept','1']);
-    fs.appendFileSync(path.join(g.root,'main.tex'),'% 作者额外手动修改，尚未纳入投影。\n','utf8');
+    fs.appendFileSync(path.join(g.root,'main.tex'),'% 作者额外手动修改。\n','utf8');
+    fs.appendFileSync(path.join(g.root,'reply.tex'),'Author manual reply sentence.\n','utf8');
     const raw = fs.readFileSync(path.join(g.root,'main.tex'));
-    await assert.rejects(finishReview(g.root,'reply.tex',g.options,'不夹带手动修改',g.execute),/手动修改/);
+    const before = await g.status();
+    const result = await finishReview(g.root,'reply.tex',g.options,'备份已接收成果及作者手动补充',g.execute);
     assert(fs.readFileSync(path.join(g.root,'main.tex')).equals(raw));
-    assert.equal((await g.git(['rev-parse','HEAD'])).trim(),g.baseline);
+    assert.deepEqual(result.manual_files.sort(),['main.tex','reply.tex']);
+    assert((await g.git(['show','HEAD:main.tex'])).includes('作者额外手动修改'));
+    const reply = await g.git(['show','HEAD:reply.tex']);
+    assert(reply.includes('Author manual reply sentence.'));
+    for (const text of [reply, await g.git(['show','HEAD:main.tex'])]) {
+        assert(!text.includes('PRIVATE pending feedback')); assert(!text.includes('useful comment'));
+        assert(!text.includes('CODEX-REVIEW-DATA')); assert(!text.includes('compact'));
+    }
+    const after = await g.status();
+    assert.deepEqual(after.edits['2'],before.edits['2']); assert.deepEqual(after.edits.a,before.edits.a);
+    assert.deepEqual(after.next,before.next);
+    assert((await g.git(['log','-1','--format=%B'])).includes('手动修改文件'));
+    const again = await finishReview(g.root,'reply.tex',g.options,'无新增成果时不重复提交',g.execute);
+    assert.equal(again.skipped,true); assert.equal((await g.git(['rev-parse','HEAD'])).trim(),result.head);
+});
+
+test('manual-only checkpoint keeps pending review work and uses current source for the next candidate',async () => {
+    const f = await reviewFixture('checkpoint-manual-only');
+    fs.appendFileSync(path.join(f.root,'reply.tex'),'Manual source sentence.\n','utf8');
+    const before = await f.status();
+    const result = await finishReview(f.root,'reply.tex',f.options,'备份手动补充的回复',f.execute);
+    assert.equal(result.skipped,undefined); assert.deepEqual(result.accepted_ids,[]);
+    assert.deepEqual(result.manual_files,['reply.tex']);
+    assert((await f.git(['show','HEAD:reply.tex'])).includes('Manual source sentence.'));
+    const after = await f.status();
+    assert.deepEqual(after.edits,before.edits); assert.deepEqual(after.next,before.next);
+    await f.backend(['propose'],{file:'reply.tex',kind:'response',before:'Manual source sentence.',after:'Updated manual source sentence.'});
+    await f.backend(['decide','--accept','b']);
+    assert(fs.readFileSync(path.join(f.root,'reply.tex'),'utf8').includes('Updated manual source sentence.'));
+    await finishReview(f.root,'reply.tex',f.options,'备份基于手动原文接收的下一次修改',f.execute);
+    assert((await f.git(['show','HEAD:reply.tex'])).includes('Updated manual source sentence.'));
+});
+
+test('source changes during a manual checkpoint stop without committing or overwriting the author',async () => {
+    const f = await reviewFixture('checkpoint-manual-race');
+    fs.appendFileSync(path.join(f.root,'reply.tex'),'Manual source sentence.\n','utf8');
+    let changed = false;
+    const execute = async (exe,args,cwd,input) => {
+        const result = await f.execute(exe,args,cwd,input);
+        if (!changed && args.some(a=>String(a).endsWith('review_checkpoint.py')) && args.at(-1)==='plan') {
+            changed = true; fs.appendFileSync(path.join(f.root,'reply.tex'),'Concurrent author edit.\n','utf8');
+        }
+        return result;
+    };
+    await assert.rejects(finishReview(f.root,'reply.tex',f.options,'不覆盖并发手改',execute),/备份期间源码或状态变化/);
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),f.baseline);
+    assert(fs.readFileSync(path.join(f.root,'reply.tex'),'utf8').includes('Concurrent author edit.'));
 });
 
 test('notes saved during push remain intact after compaction',async () => {
