@@ -563,7 +563,9 @@ class Review:
             start = source.find(question['quote'])
             if start < 0 or source.find(question['quote'], start + 1) >= 0:
                 raise Conflict('Reviewer question quote must match its actual source uniquely')
-            normalized.append({k: question[k] for k in ('id', 'file', 'quote')})
+            entry = {k: question[k] for k in ('id', 'file', 'quote')}
+            if entry not in normalized:
+                normalized.append(entry)
         return normalized
 
     def update_questions(self, id_, version, questions, replace=False):

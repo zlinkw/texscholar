@@ -350,3 +350,12 @@ Windows 上已经执行的测试结果必须与 macOS 状态分开。macOS 的�
 实际覆盖：backend 80 项（D:/latex-writing-checks/0943/backend-132488fc5a284ceaa3e1298a2993bc72）与 editor 95 项（editor-64fba0eab9244ed093c597e9a358d8bd）通过，退出 0。只读要求未变时复用节点的最终调整后，受影响 inline/workbench/math 30 项补验通过（editor-final2.stdout.log，退出 0），其余未变覆盖复用。backup 首轮 14 项通过、1 项失败（backup-21ccf5db50ee49898baac76f5835a8ed，退出 1）：新增夹具在创建依赖后返修上游，正确触发 needs-recheck，使原“全部已完结”前提失效；改为先准备上一轮记录再创建依赖，不修改 freshness 规则或放宽断言，该项定向通过（backup-final.stdout.log，退出 0）。合计 190 项获得有效覆盖，不重复计算。
 
 隔离 Chromium 使用真实页面与模拟 VS Code 消息，验证默认展开、v1/v2 来源、只读无操作按钮、保留当前输入与精确选区、旧要求未变时跨新版保留节点、覆盖上一轮而非累积、切项隔离、显式保留时去重及 620px 布局（page-incremental.stdout.log，退出 0）。首轮页面断言未等待 resize 布局完成而失败（page.stderr.log）；等待原生动画帧后通过（page-final.stdout.log），未改产品门槛。补验进程首轮漏传 LOCAL_LATEX_TEST_ROOT，保留 editor-final 退出 1；补齐既有夹具路径后 editor-final2 退出 0。没有真实论文改动、PDF 编译、网络翻译或 Mac 实机验证。
+
+
+0.9.44：开发仓库 D:/GitRepo/texscholar 及父目录均无 AGENTS.md；读取现有协作协议并应用当前全局规则。本轮只修 submit_options 已声明 questions/question_refs 的转发归一化：propose/rework 在预检前将操作层与 spec 的关联统一展开，后续预检与持锁保存复用相同 spec；引用未知立即报字段错误。共享 question_links 保持原始摘录唯一精确校验，以既有 id/file/quote 三元组规则去重；link_questions 的追加／显式替换与元数据专用语义保持。回执 questions 来自保存后的审核状态，预检则返回已验证的拟保存关联。精确摘录错误的恢复信息包含两层来源文件。
+
+隔离复现：未修前操作层无效引用及坏摘录被静默忽略、回执缺 questions（before.stderr.log，退出 1）；将基准 HEAD 的旧 Server 在内存加载进隔离夹具回读，确认操作层关联落盘为空、两层合并缺少仅在外层的问题（baseline-readback.stderr.log，退出 1）。不改已安装扩展、真实论文、全局 SKILL，不接收、编译、迁移或新增匹配系统。
+
+规定检查为 backend 组及 writing/questions/inline 的受影响消费者。矩阵覆盖 propose/rework 操作层直接关联／池引用、spec 写法、两层合并去重、预检与回读、失败保留、批量顺序／SHA 链／首错停止、元数据其他字段不变。WinError 5 单独进行隔离原子替换失败注入，保持 operation_failed、单次尝试、状态未写入且保留临时诊断文件，显式再次调用后保存成功；不认定真实电脑的拒绝访问根因，不新增重试或清理逻辑。Mac 未实机验证。本地打包和正式发布同一产物，按本次明确限制不安装；用户后续需自行安装并重载实际 MCP 宿主。
+
+实际结果：backend 83 项通过（D:/latex-writing-checks/0944/backend-8176d8166aff44ce8e9fd8254ee74dc6，退出 0）；writing/questions/inline 32 项通过（consumers-d9195f6c66c8483ba7465100f8b255fa，退出 0）。随后只补 rework 预检断言，产品代码未变，MCP 27 项补验通过（mcp-final.stderr.log，退出 0），其余同轮覆盖沿用，合计 115 项有效覆盖，不重复计数。矩阵实际保存并通过新的 Review.inspect 回读确认操作层直接／池引用、spec、双层独有问题及去重均落盘；输入对象未被原地修改。无效引用／任一层坏 quote 在 propose 和 rework 中均失败，先前成功项保留、后续不执行，SHA 回执对应真实状态。元数据关联完整其他字段比较通过。原子替换错误只做隔离注入与显式续写验证，原写入函数和真实临时文件未变；不将此注入当作真实 WinError 5 根因诊断。没有真实论文接收、编译、状态／缓存改写或全局 SKILL 操作。

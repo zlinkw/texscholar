@@ -7,7 +7,7 @@
 - 优先复用 read_context 已返回的真实正文范围、候选版本、作者规则及原始意见摘录；缺少必要内容才补读相关文件，不为每条关联重读全篇。逐项确认内容关系，不能按候选编号、邻近位置、Reviewer 标签自动猜配。作者给出明确映射时仍须核对实际内容和版本。
 - 每项关联严格采用 `{"id":"R1-Q3","file":"reply.tex","quote":"实际原始意见全文"}`。`id` 沿用真实问题编号，`file` 为项目内现有 UTF-8 源文件相对路径；`quote` 从当前原始意见逐字读取，包括必要的 LaTeX 命令、标点和实际 CRLF/LF 换行，不能归一化换行、用摘要或自行改写。这里的文件名和摘录只是结构示例，不是可以直接套用的真实关联。
 - 摘录须在真实原始意见中唯一精确匹配。机器状态块及生成的 CODEX-QUESTION 注释不是原始意见，不参与匹配。原文缺失、不唯一、路径异常或版本变化时停止并指出问题，不模糊匹配、不自行编造来源。
-- 新候选直接在 MCP `propose_options` / `rework_options` 的 `questions` 数组中提供关联，不再额外调用关联工具。现有未决候选只补或纠正关联时，调用 MCP `link_questions`，传候选 id、当前 version、expected_sha256 和 questions；apply 默认 true，一次调用完成核验与保存，不需要预览后再提交。
+- 新候选直接在 MCP `propose_options` / `rework_options` 的 `spec.questions` 或 `spec.question_refs` 中提供关联，不再额外调用关联工具。批量 `submit_options` 也支持操作层的 `questions` / `question_refs`；两层同时提供时按 spec 在前、操作层在后合并，沿用完整 `id/file/quote` 的精确去重，任何一层都不会静默丢弃。预检和保存复用相同归一化输入；成功回执的 `questions` 可与实际状态回读核对。现有未决候选只补或纠正关联时，调用 MCP `link_questions`，传候选 id、当前 version、expected_sha256 和 questions；apply 默认 true，一次调用完成核验与保存，不需要预览后再提交。
 - 默认追加并去重，保留已有正确关联；只有调用方显式传 `replace: true` 才替换整组关联。元数据更新不创建候选版本，不改措辞、原文定位、编号计数、决定、批注、依赖或 freshness，不接收候选、不关闭科学问题。成功后的 sha256 可用于下一次写入。多项仅补关联可放入 submit_options，operation=link_questions；每项仍明确 id/version/questions 或 question_refs，replace 必须显式指定。question_pool 只为本次请求共享真实完整摘录，引用不会触发自动配对，也不替代写入时的逐项核验。
 - 多个审稿问题可以关联同一处修改，各回复分别解释对应内容；不为每个问题重复创建重叠候选。普通候选按相邻修改位置组织，可包含多句但最多一个自然段，不跨段；公式、图注、表注等特殊内容单独处理，不自动拆分或迁移旧项。
 - 全文科研规则放顶部 CODEX-RULES，局部逻辑和来源说明放对应段落／回复之前的现有注释；GUI 查询的关联保存在既有唯一审核状态的 `questions` 字段，不另建第二份状态。

@@ -200,6 +200,125 @@ class MCP(unittest.TestCase):
         self.assertEqual(error['recovery']['files'], ['reply.tex'])
         self.assertEqual(self.review().raw, raw)
 
+    def test_batch_candidate_question_locations_preview_save_and_readback(self):
+        import copy
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        q1 = {'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you.'}
+        q2 = {'id': 'R2-Q1', 'file': 'main.tex', 'quote': 'Unchanged context before.'}
+        q3 = {'id': 'R3-Q1', 'file': 'main.tex', 'quote': 'Unchanged context after.'}
+        pool = {'first': q1, 'second': q2, 'third': q3}
+        cases = [({}, {'questions': [q1]}, [q1]), ({}, {'question_refs': ['first']}, [q1]),
+                 ({'questions': [q1]}, {}, [q1]), ({'question_refs': ['first']}, {}, [q1]),
+                 ({'questions': [q1], 'question_refs': ['second']},
+                  {'questions': [q2, q1], 'question_refs': ['first', 'second', 'third']}, [q1, q2, q3])]
+        source = self.root / 'main.tex'
+        text = source.read_text(encoding='utf-8').replace('\\end{document}',
+            '\n\n'.join('Batch target %d.' % i for i in range(len(cases))) + '\n\\end{document}')
+        source.write_text(text, encoding='utf-8', newline='')
+        for i, (inside, outside, expected) in enumerate(cases):
+            with self.subTest(case=i):
+                options = [{'label': label, 'after': 'Candidate %d %s.' % (i, label), 'reason': label} for label in 'ABC']
+                spec = {'file': 'main.tex', 'kind': 'manuscript', 'before': 'Batch target %d.' % i, 'options': options, **inside}
+                operation = {'operation': 'propose_options', 'spec': spec, **outside}
+                sha = digest(self.review().raw)
+                preview_args = {**base, **outside, 'spec': spec, 'question_pool': pool, 'expected_sha256': sha, 'apply': False}
+                preview = server.call('propose_options', preview_args)
+                self.assertEqual(digest(self.review().raw), sha)
+                args = {**base, 'expected_sha256': sha, 'question_pool': pool, 'operations': [operation]}
+                unchanged = copy.deepcopy(args)
+                created = server.call('submit_options', args)
+                self.assertTrue(created['complete'])
+                receipt = created['results'][0]
+                self.assertEqual(self.review().inspect(receipt['id'])['edit'].get('questions', []), expected)
+                self.assertEqual(receipt['questions'], expected)
+                self.assertEqual(preview['questions'], expected)
+                self.assertEqual(args, unchanged, 'normalization does not mutate caller-owned inputs')
+                revised = {'operation': 'rework_options', 'id': receipt['id'], 'version': receipt['version'],
+                    'spec': {'options': [{**o, 'after': o['after'].replace('.', ' revised.')} for o in options], **inside}, **outside}
+                prior = self.review().raw
+                rework_preview = server.call('rework_options', {**base, **{k: v for k, v in revised.items() if k != 'operation'},
+                    'expected_sha256': created['sha256'], 'question_pool': pool, 'apply': False})
+                self.assertEqual(rework_preview['questions'], expected)
+                self.assertEqual(self.review().raw, prior)
+                saved = server.call('submit_options', {**base, 'expected_sha256': created['sha256'], 'question_pool': pool, 'operations': [revised]})
+                self.assertTrue(saved['complete'])
+                self.assertEqual(saved['results'][0]['questions'], expected)
+                self.assertEqual(self.review().inspect(receipt['id'])['edit']['questions'], expected)
+                self.assertNotEqual(saved['results'][0]['version'], receipt['version'])
+                self.assertEqual(saved['sha256'], digest(self.review().raw))
+        self.assertEqual(source.read_text(encoding='utf-8'), text)
+
+    def test_batch_candidate_question_errors_stop_without_saving_failed_item(self):
+        server = self.server()
+        base = {'project': str(self.root), 'state': 'reply.tex'}
+        q = {'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you.'}
+        bad = {**q, 'quote': 'This quote is not in the original review.'}
+        cases = [({}, {'question_refs': ['unknown']}, 'invalid_field'),
+                 ({'question_refs': ['unknown']}, {}, 'invalid_field'),
+                 ({'questions': [q]}, {'questions': [bad]}, 'question_quote_invalid'),
+                 ({'questions': [bad]}, {'questions': [q]}, 'question_quote_invalid')]
+        options = [{'label': label, 'after': 'Candidate ' + label + '.', 'reason': label} for label in 'ABC']
+        def operation(before, **links):
+            return {'operation': 'propose_options', 'spec': {'file': 'main.tex', 'kind': 'manuscript', 'before': before, 'options': options}, **links}
+        for i, (inside, outside, code) in enumerate(cases):
+            with self.subTest(case=i):
+                self.apply('begin', 'links-' + str(i), ['main.tex', 'reply.tex'])
+                failed = operation('The model is strong and fast.', **outside)
+                failed['spec'].update(inside)
+                old_source = (self.root / 'main.tex').read_bytes()
+                result = server.call('submit_options', {**base, 'expected_sha256': digest(self.review().raw),
+                    'question_pool': {'known': q}, 'operations': [operation('Unchanged context before.', questions=[q]), failed,
+                    operation('Unchanged context after.', questions=[q])]})
+                self.assertFalse(result['complete'])
+                self.assertEqual(result['failed_index'], 1)
+                self.assertEqual(result['not_attempted_indices'], [2])
+                self.assertEqual(result['error']['code'], code)
+                if code == 'question_quote_invalid':
+                    self.assertEqual(result['error']['recovery']['files'], ['reply.tex'])
+                self.assertEqual(result['results'][0]['questions'], [q])
+                self.assertEqual(set(self.review().state['edits']), {'1'})
+                self.assertEqual(self.review().state['next'], [2, 1])
+                self.assertEqual(self.review().state['edits']['1']['questions'], [q])
+                self.assertEqual(result['sha256'], digest(self.review().raw))
+                self.assertEqual((self.root / 'main.tex').read_bytes(), old_source)
+                prior = self.review().raw
+                pending = json.loads(json.dumps(self.review().state['edits']['1']))
+                rework = {'operation': 'rework_options', 'id': '1', 'version': result['results'][0]['version'],
+                    'spec': {'options': [{**o, 'after': o['after'].replace('.', ' revised.')} for o in options], **inside}, **outside}
+                failed_rework = server.call('submit_options', {**base, 'expected_sha256': digest(prior),
+                    'question_pool': {'known': q}, 'operations': [rework]})
+                self.assertFalse(failed_rework['complete'])
+                self.assertEqual(failed_rework['error']['code'], code)
+                self.assertEqual(self.review().raw, prior)
+                self.assertEqual(self.review().state['edits']['1'], pending)
+
+    def test_atomic_replace_failure_is_distinct_from_question_validation_and_not_retried(self):
+        server = self.server()
+        q = {'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you.'}
+        options = [{'label': label, 'after': 'Candidate ' + label + '.', 'reason': label} for label in 'ABC']
+        raw = self.review().raw
+        args = {'project': str(self.root), 'state': 'reply.tex', 'expected_sha256': digest(raw),
+            'operations': [{'operation': 'propose_options', 'questions': [q], 'spec': {
+                'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': options}}]}
+        denied = PermissionError(5, '[WinError 5] Access is denied')
+        denied.winerror = 5
+        with patch('source_review.os.replace', side_effect=denied) as replace:
+            failed = server.call('submit_options', args)
+        self.assertFalse(failed['complete'])
+        self.assertEqual(failed['results'], [])
+        self.assertEqual(failed['error']['code'], 'operation_failed')
+        self.assertIn('WinError 5', failed['error']['message'])
+        self.assertEqual(replace.call_count, 1)
+        self.assertEqual(self.review().raw, raw)
+        temporary = list(self.root.glob('reply.tex.codex-write-*'))
+        self.assertEqual(len(temporary), 1)
+        saved = server.call('submit_options', args)
+        self.assertTrue(saved['complete'])
+        self.assertEqual(saved['results'][0]['questions'], [q])
+        self.assertEqual(set(self.review().state['edits']), {'1'})
+        self.assertTrue(temporary[0].exists(), 'diagnostic temporary file is not silently cleaned up')
+
     def test_field_errors_identify_option_without_requiring_context_reread(self):
         server = self.server()
         options = [{'label': k, 'after': 'Candidate ' + k + '.', 'reason': k} for k in 'ABC']

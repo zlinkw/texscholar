@@ -137,8 +137,9 @@ def error_detail(error, args):
             scope = {'ids': [args['id']]} if 'id' in args else {'files': list(dict.fromkeys(files))}
             error = ToolConflict(str(error), 'source_changed', {'action': 'read_context', **scope, 'automatic_retry': False})
         elif str(error) == 'Reviewer question quote must match its actual source uniquely':
-            links = args.get('spec', args)
-            questions = [*links.get('questions', []), *[args.get('question_pool', {})[ref] for ref in links.get('question_refs', []) if ref in args.get('question_pool', {})]]
+            containers = [args['spec'], args] if isinstance(args.get('spec'), dict) else [args]
+            questions = [q for links in containers for q in [*links.get('questions', []),
+                *[args.get('question_pool', {})[ref] for ref in links.get('question_refs', []) if ref in args.get('question_pool', {})]]]
             error = ToolConflict(str(error), 'question_quote_invalid', {'action': 'read_exact_question_source',
                 'files': list(dict.fromkeys(q['file'] for q in questions
                                            if isinstance(q, dict) and isinstance(q.get('file'), str))), 'automatic_retry': False})
@@ -218,14 +219,14 @@ def role_packet(roles):
 
 def expand_questions(value, pool, field):
     """Callers choose associations; the ordinary writer still verifies every quote."""
+    direct = value.get('questions', [])
+    if not isinstance(direct, list):
+        raise FieldConflict(field + 'questions', 'questions must be an array')
     if 'question_refs' not in value:
         return value
     refs = value['question_refs']
     if not isinstance(pool, dict) or not isinstance(refs, list) or any(not isinstance(ref, str) or ref not in pool for ref in refs):
         raise FieldConflict(field + 'question_refs', 'Every question reference must name an entry in this request question_pool')
-    direct = value.get('questions', [])
-    if not isinstance(direct, list):
-        raise FieldConflict(field + 'questions', 'questions must be an array')
     return {**{k: v for k, v in value.items() if k != 'question_refs'}, 'questions': [*direct, *[pool[ref] for ref in refs]]}
 
 
@@ -417,6 +418,13 @@ class Server:
                 for key in ('file', 'kind', 'before'):
                     if not isinstance(args['spec'].get(key), str):
                         raise FieldConflict('spec.' + key, 'Provide ' + key + ' as a string')
+            spec = expand_questions(args['spec'], args.get('question_pool', {}), 'spec.')
+            links = expand_questions({key: args[key] for key in ('questions', 'question_refs') if key in args},
+                                     args.get('question_pool', {}), '')
+            if 'questions' in links:
+                spec = {**spec, 'questions': [*spec.get('questions', []), *links['questions']]}
+            # Preview and locked persistence consume this same normalized spec.
+            args = {**args, 'spec': spec}
         apply = args.get('apply', True)
         if type(apply) is not bool:
             raise Conflict('apply must be boolean')
@@ -436,7 +444,7 @@ class Server:
             if name == 'begin_review':
                 updated, result = r.begin(args['round'], args['files'], args.get('submission'))
             elif name in {'propose_options', 'rework_options'}:
-                spec = expand_questions(args['spec'], args.get('question_pool', {}), 'spec.')
+                spec = args['spec']
                 if name == 'rework_options' and 'discard_annotations' not in spec and not spec.get('resolve_requests'):
                     spec = {**spec, 'discard_annotations': True}
                 actual_roles = scan_roles(root)
@@ -463,8 +471,10 @@ class Server:
                        'sha256': digest(r.encode(r.embedded())) if apply else digest(r.raw),
                        'next': 'Saved: use this sha256 for the next write; no full-context reread is required unless new input or a conflict occurs. Author acceptance remains separate.' if apply
                        else 'Preview only; nothing saved. Use the unchanged sha256 to apply if desired.'}
-            if apply and 'id' in result:
-                receipt['version'] = r.state['edits'][result['id']]['versions'][-1]
+            if 'id' in result:
+                receipt['questions'] = r.state['edits'][result['id']].get('questions', [])
+                if apply:
+                    receipt['version'] = r.state['edits'][result['id']]['versions'][-1]
             return receipt
         if apply:
             with review.writer_lock():

@@ -8,7 +8,7 @@
 2. 按任务选 modules；只在本会话确实仍有对应规则时传 known_rules。返修附件有 known_feedback 时原样传入：工具会重读当前源文件和状态，未变的原文、候选、批注可标 feedback_reused 而不重复返回，其他上下文照常提供。附件缺失、上下文丢失或版本失效时不得声称已经持有；新版返回优先，不要求恢复被废弃的旧批注。缺少必要依据时按需补读，不用工具成功冒充科学核验。
 3. 直接组织 A/B/C 并保存。单项用 propose_options/rework_options，多项用 submit_options；apply 默认 true，无需预览后再写一遍。下一次写入使用成功回执的 sha256/version，不逐项重读、重算摘要或编译。成功后简报实际编号和目的即可。维护 CLI propose-options 不属于日常 MCP 的额外步骤。
 4. AI rework_options 成功时默认清除本项旧的待处理批注并提供新版，无需作者预先拒绝。界面保留最近一轮返修要求的只读对照，标明原候选版本；它不是新版待处理要求，不重复加入 AI 交接，也不阻塞返修。没有新批注时沿用最近要求，有新要求则替换这份对照，不累积多代记录。失败保留原状态。明确需要保留时传 discard_annotations=false；明确逐条处理时可用 resolve_requests。元数据关联绝不清除批注，不因放弃旧候选宣布科学问题解决。旧版本可以按需读取，不强制追溯或迁移它们。
-5. question_refs 在读取结果中引用本次 context.questions；提交可在 question_pool 明确提供完整 {id,file,quote}，由各项 question_refs 引用。仅在本次请求内有效，不自动配对；每条摘录仍由工具核验。新候选直接带关联，只补关联用 link_questions，也可放入 submit_options。replace=true 才替换整组关联。
+5. question_refs 在读取结果中引用本次 context.questions；提交可在 question_pool 明确提供完整 {id,file,quote}，由各项 question_refs 引用。仅在本次请求内有效，不自动配对；每条摘录仍由工具核验。新候选直接带关联，只补关联用 link_questions，也可放入 submit_options。 submit_options 的 propose/rework 操作可在操作层或 spec 内给 questions/question_refs；两层同时提供时按 spec 在前、操作层在后合并，并按完整 id/file/quote 去重。预检和保存使用同一份归一化输入，未知引用或不精确摘录报错。回执 questions 是实际保存后的完整关联列表，可据此核对，不能把已保存操作重复提交。replace=true 才替换整组关联。
 6. 批量首错停止，results 中成功项已保存，不能重放；只续写失败和未尝试项。invalid_field 的 field 指出需修正的位置，无需为修参数重读论文。状态、原文、版本冲突按 recovery 重读实际受影响范围，不盲目重试，不绕过写入锁或精确匹配。重叠错误的 existing 指向已有项，核对后返修，不自动合并。
 7. references 可与 read_context 同时请求：每项给 kind（label/citation/macro）、准确 key 和 files。返回指定源文件中的真实定义及邻近内容；缺失或多处匹配明确报告。仅查定义可同时传 ids=[]。不执行宏展开，不把 BibTeX 条目当作已验证文献，跨段逻辑与科学事实仍由 AI 核对。
 
