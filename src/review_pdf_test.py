@@ -13,6 +13,60 @@ EXE = '.exe' if os.name == 'nt' else ''
 
 
 class ReviewUnits(unittest.TestCase):
+    def test_explicit_groups_stay_outside_a_neighboring_sentence_comparison(self):
+        text = 'The response is short.\nThe revised content is as follows:\n' + r'\begingroup\color{black}' + '\nExcerpt stays.\\par\\endgroup\n'
+        units = list(review_units(text, [{'id': 'a', 'start': 0, 'end': len('The response is short.'),
+                                         'item': {'after': 'The response is complete.'}}]))
+        changes = [u for u in units if u['kind'] != 'equal']
+        self.assertEqual([u['before'].strip() for u in changes], ['The response is short.'])
+        self.assertEqual(''.join(u['before'] for u in units), text)
+        self.assertEqual(''.join(u['after'] for u in units).count(r'\begingroup'), 1)
+        self.assertEqual(''.join(u['after'] for u in units).count(r'\endgroup'), 1)
+
+    def test_custom_formatting_containers_keep_prose_and_equations_separate(self):
+        from copy import deepcopy
+        from review_pdf import text_containers
+        preamble = (r'\newenvironment*{answerbox}{\begingroup\color{black}}{\par\endgroup}'
+                    '\n' + r'\newenvironment{answerinner}[0]{\small\itshape}{}')
+        containers = text_containers(preamble)
+        for newline in ['\n', '\r\n']:
+            text = newline.join([r'\begin{answerbox}', 'First answer stays.', '',
+                r'\begin{answerinner}', 'The prediction is weak.', r'\end{answerinner}',
+                r'\begin{equation}x=1.\end{equation}', 'Last answer stays.', r'\end{answerbox}'])
+            edits = []
+            for id_, old, new in [('a', 'First answer stays.', 'The first answer changes.'),
+                                  ('b', 'The prediction is weak.', 'The prediction is robust.'),
+                                  ('c', r'\begin{equation}x=1.\end{equation}', r'\begin{equation}x=2.\end{equation}')]:
+                start = text.index(old)
+                edits.append({'id': id_, 'start': start, 'end': start + len(old),
+                    'item': {'after': new}, 'questions': [id_], 'requests': [{'text': id_}]})
+            original = deepcopy(edits)
+            units = list(review_units(text, edits, containers=containers))
+            changes = [u for u in units if u['kind'] != 'equal']
+            self.assertEqual([u['ids'] for u in changes], [['a'], ['b'], ['c']])
+            self.assertEqual(''.join(u['before'] for u in units), text)
+            self.assertEqual(''.join(u['after'] for u in units).count('Last answer stays.'), 1)
+            self.assertEqual(changes[-1]['change_type'], 'Equation')
+            self.assertEqual(edits, original)
+            extra = {'id': 'd', 'start': text.index('weak'), 'end': text.index('weak') + 4,
+                     'item': {'after': 'uncertain'}}
+            with self.assertRaisesRegex(ValueError, '同一原文.*b.*d'):
+                list(review_units(text, edits + [extra], containers=containers))
+
+    def test_only_literal_argument_free_formatting_wrappers_are_text_containers(self):
+        from review_pdf import text_containers
+        preamble = '\n'.join([
+            r'% \newenvironment{commented}{\small}{}',
+            r'\newcommand{\example}{\newenvironment{nested}{\small}{}}',
+            r'\newenvironment{argument}[1]{\color{#1}}{}',
+            r'\newenvironment{tablebox}{\begin{tabular}{c}}{\end{tabular}}',
+            r'\newenvironment{contentbox}{Literal text.}{}',
+            r'\renewenvironment{abstract}{\par\textbf{Abstract}}{\par}',
+            '\\newenvironment% definition comment\n{valid}[0]{\\begingroup\\color{red}\\bfseries}{\\par\\endgroup}',
+            r'\newenvironment{redefined}{\small}{}',
+            r'\renewenvironment{redefined}{\begin{equation}}{\end{equation}}'])
+        self.assertEqual(text_containers(preamble), {'abstract', 'quote', 'quotation', 'valid'})
+
     def test_heading_commands_and_first_sentence_are_separate_review_units(self):
         from review_pdf import _unit_spans, visible_tex
         headings = [r'\section{Original title}', r'\subsection*{Original title}',
@@ -253,6 +307,30 @@ class ReviewPDF(unittest.TestCase):
     review = NativeReview.review
     apply = NativeReview.apply
     proposal = NativeReview.proposal
+
+    def test_custom_response_container_renders_independent_items_without_state_changes(self):
+        path = self.root / 'reply.tex'
+        path.write_text(path.read_text(encoding='utf-8').replace(r'\begin{document}',
+            '\\newenvironment{answerbox}{\\begingroup\\itshape}{\\par\\endgroup}\n\\begin{document}')
+            .replace('Thank you.', '{Previous request.\n\nLast request.\n}\n\\par\n'
+                     '\\begin{answerbox}\nFirst response stays.\n\nSecond response stays.\n'
+                     '\\begin{equation}x=1.\\end{equation}\nThe revised content is as follows:\n'
+                     '\\begingroup\\color{black}\nExcerpt stays.\\par\\endgroup\n\\end{answerbox}')
+            .replace(r'\documentclass{article}', r'\documentclass{article}\usepackage{color}'), encoding='utf-8')
+        ids = []
+        for before, after in [('First response stays.', 'First response changes.'),
+                              ('Second response stays.', 'Second response changes.'),
+                              (r'\begin{equation}x=1.\end{equation}', r'\begin{equation}x=2.\end{equation}')]:
+            ids.append(self.apply('propose', {'file': 'reply.tex', 'kind': 'response',
+                                             'before': before, 'after': after})['id'])
+        raw = path.read_bytes()
+        result = preview(self.root, 'reply.tex', path, ids[0], self.review().inspect(ids[0])['version'],
+                         'missing-git', str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        self.assertEqual(path.read_bytes(), raw)
+        content = '\n'.join(page.extract_text() for page in PdfReader(result['pdf']).pages)
+        for text in ['First response stays.', 'First response changes.', 'Second response stays.', 'Second response changes.']:
+            self.assertEqual(content.count(text), 1)
+        self.assertTrue(Path(result['pdf']).is_file())
 
     def test_build_cache_rotates_per_document_and_preserves_last_pdf_on_failure(self):
         import review_pdf

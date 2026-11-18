@@ -104,7 +104,7 @@ def command(args, cwd, log):
     return result.stdout
 
 
-def paragraph_span(text, start, end):
+def paragraph_span(text, start, end, *, containers=PROSE_CONTAINERS):
     """Comparison context only; presentation pairs are independently selected later."""
     begin = text.find(r'\begin{document}')
     stop = text.rfind(r'\end{document}')
@@ -128,6 +128,11 @@ def paragraph_span(text, start, end):
         elif stack and stack[-1][0] == match[2]:
             name, first = stack.pop()
             pairs.append((name, first, lower + match.end()))
+    # A nearby blank line may belong to the preceding question's brace group.
+    # Keep comparison context inside the text wrapper containing this edit.
+    for name, first, last in pairs:
+        if name in containers and first <= start <= end <= last:
+            a, b = max(a, first), min(b, last)
     for name, first, last in sorted(pairs, key=lambda p: p[2] - p[1]):
         if name in {'document', 'letter'}:
             continue
@@ -397,7 +402,7 @@ def _environment_end(text, position):
     raise ValueError('审核 PDF 的比较片段中有未闭合环境：' + opening[1])
 
 
-def sentences(text, *, split_prose_containers=True):
+def sentences(text, *, split_prose_containers=True, containers=PROSE_CONTAINERS):
     """Presentation units: sentences, complete headings and balanced environments."""
     result, start, depth, math, i = [], 0, 0, None, 0
     while i < len(text):
@@ -411,13 +416,13 @@ def sentences(text, *, split_prose_containers=True):
             opening = re.match(r'\\begin\{([^{}]+)\}', text[i:])
             if opening:
                 protected_end = _environment_end(text, i)
-                if split_prose_containers and opening[1] in PROSE_CONTAINERS:
+                if split_prose_containers and opening[1] in containers:
                     if start < i:
                         result.append(text[start:i])
                     first = i + opening.end()
                     last = protected_end - len('\\end{' + opening[1] + '}')
                     result.append(text[i:first])
-                    result.extend(sentences(text[first:last]))
+                    result.extend(sentences(text[first:last], containers=containers))
                     end = protected_end
                     while end < len(text) and text[end].isspace():
                         end += 1
@@ -436,6 +441,8 @@ def sentences(text, *, split_prose_containers=True):
                 protected_end = stop + 2
             elif char == '\\' and _command(text, i)[0] in HEADING_COMMANDS:
                 protected_end = heading_end(text, i)
+            elif char == '\\' and _command(text, i)[0] in (r'\begingroup', r'\endgroup'):
+                protected_end = _command(text, i)[1]
         if protected_end is not None:
             if start < i:
                 result.append(text[start:i])
@@ -487,14 +494,16 @@ def sentences(text, *, split_prose_containers=True):
     return result
 
 
-def _unit_spans(text, *, split_prose_containers=True):
+def _unit_spans(text, *, split_prose_containers=True, containers=PROSE_CONTAINERS):
     units, offset = [], 0
-    for part in sentences(text, split_prose_containers=split_prose_containers):
+    for part in sentences(text, split_prose_containers=split_prose_containers, containers=containers):
         kind = 'environment' if re.match(r'\\begin\{|\\\[|\$\$', part.lstrip()) else 'prose'
         if part.lstrip().startswith('\\') and _command(part.lstrip(), 0)[0] in HEADING_COMMANDS:
             kind = 'heading'
         marker = re.fullmatch(r'\\(?:begin|end)\{([^{}]+)\}', part.strip())
-        if marker and marker[1] in PROSE_CONTAINERS:
+        if marker and marker[1] in containers:
+            kind = 'container'
+        if part.strip() in (r'\begingroup', r'\endgroup'):
             kind = 'container'
         units.append({'text': part, 'start': offset, 'end': offset + len(part), 'kind': kind})
         offset += len(part)
@@ -515,8 +524,8 @@ def _pair_units(old, new):
             yield from (([], [y]) for y in new[c:d])
 
 
-def _unit_changes(before, after):
-    old, new = _unit_spans(before), _unit_spans(after)
+def _unit_changes(before, after, *, containers=PROSE_CONTAINERS):
+    old, new = _unit_spans(before, containers=containers), _unit_spans(after, containers=containers)
     if [u['text'].strip() for u in old if u['kind'] == 'container'] != [u['text'].strip() for u in new if u['kind'] == 'container']:
         # Wrapper insertion/removal remains a balanced environment comparison.
         old, new = _unit_spans(before, split_prose_containers=False), _unit_spans(after, split_prose_containers=False)
@@ -555,14 +564,71 @@ def visible_tex(text):
     return ''.join(out)
 
 
-def presentation_type(text, start, end, old, new):
+def text_containers(preamble):
+    """Recognize literal, argument-free wrappers containing only formatting declarations."""
+    containers = set(PROSE_CONTAINERS)
+    declarations = {'\\begingroup', '\\endgroup', '\\par', '\\noindent', '\\normalfont',
+        '\\rmfamily', '\\sffamily', '\\ttfamily', '\\upshape', '\\itshape', '\\slshape',
+        '\\scshape', '\\mdseries', '\\bfseries', '\\tiny', '\\scriptsize', '\\footnotesize',
+        '\\small', '\\normalsize', '\\large', '\\Large', '\\LARGE', '\\huge', '\\Huge', '\\selectfont'}
+    def formatting(code):
+        at = 0
+        while (at := skip_space(code, at)) < len(code):
+            command, end = _command(code, at)
+            if command in declarations:
+                at = end
+            elif command == '\\color':
+                at = skip_space(code, end)
+                if at < len(code) and code[at] == '[':
+                    at = skip_space(code, group_end(code, at, '[', ']'))
+                if at >= len(code) or code[at] != '{':
+                    return False
+                at = group_end(code, at)
+            else:
+                return False
+        return True
+    text, at = visible_tex(preamble), 0
+    while at < len(text):
+        if text[at] == '{':
+            at = group_end(text, at)
+            continue
+        command, end = _command(text, at)
+        command = command.rstrip('*')
+        if command not in {'\\newenvironment', '\\renewenvironment'}:
+            at = end
+            continue
+        at = skip_space(text, end + (end < len(text) and text[end] == '*'))
+        if at >= len(text) or text[at] != '{':
+            continue
+        end = group_end(text, at)
+        name = text[at + 1:end - 1]
+        at, argument_free = skip_space(text, end), True
+        while at < len(text) and text[at] == '[':
+            end = group_end(text, at, '[', ']')
+            argument_free = argument_free and text[at + 1:end - 1].strip() == '0'
+            at = skip_space(text, end)
+        codes = []
+        for _ in range(2):
+            if at >= len(text) or text[at] != '{':
+                raise ValueError('审核 PDF 遇到未完成的环境定义：' + name)
+            end = group_end(text, at)
+            codes.append(text[at + 1:end - 1])
+            at = skip_space(text, end)
+        if argument_free and re.fullmatch(r'[A-Za-z@]+\*?', name) and all(formatting(code) for code in codes):
+            containers.add(name)
+        elif name not in PROSE_CONTAINERS:
+            containers.discard(name)
+    return containers
+
+
+def presentation_type(text, start, end, old, new, *, containers=PROSE_CONTAINERS):
     """Classify source boundaries before the review renderer introduces its own \u005cpar."""
     left, right = visible_tex(text[:start]), visible_tex(text[end:])
     first, second = visible_tex(old), visible_tex(new)
     boundary = r'\n[ \t\r]*\n|\\par\b'
     # Section commands also begin new prose; a source newline alone does not.
     headings = r'\\(?:section|subsection|subsubsection|paragraph|subparagraph)\*?\{[^{}]*\}'
-    headings += r'|\\(?:begin|end)\{(?:' + '|'.join(sorted(PROSE_CONTAINERS)) + r')\}'
+    headings += r'|\\(?:begin|end)\{(?:' + '|'.join(re.escape(name) for name in sorted(containers)) + r')\}'
     def begins(prefix):
         breaks = list(re.finditer(boundary + '|' + headings, prefix))
         return not prefix[breaks[-1].end() if breaks else 0:].strip()
@@ -585,13 +651,13 @@ def presentation_type(text, start, end, old, new):
     return 'Within paragraph', paragraph_start
 
 
-def parallel_changes(before, variants):
+def parallel_changes(before, variants, *, containers=PROSE_CONTAINERS):
     """Union actual sentence/environment changes, without tripling unchanged context."""
     changes, spans = {}, []
     for option in variants:
         position = 0
         entries = []
-        for unit in _unit_changes(before, option['after']):
+        for unit in _unit_changes(before, option['after'], containers=containers):
             a, b = position, position + len(unit['before'])
             position = b
             if unit['kind'] != 'equal':
@@ -621,11 +687,11 @@ def parallel_changes(before, variants):
         yield {'kind': 'equal', 'before': before[position:], 'after': before[position:]}
 
 
-def review_units(before, edits, offset=0):
+def review_units(before, edits, offset=0, *, containers=PROSE_CONTAINERS):
     """Anchor each comparison to original content, never align a whole changed paragraph."""
     originals = [(u['start'] + len(u['text']) - len(u['text'].lstrip()),
                   u['end'] - len(u['text']) + len(u['text'].rstrip()))
-                 for u in _unit_spans(before) if u['text'].strip()]
+                 for u in _unit_spans(before, containers=containers) if u['text'].strip()]
     windows = []
     for edit in sorted(edits, key=lambda e: e['start']):
         start, end = edit['start'] - offset, edit['end'] - offset
@@ -662,10 +728,10 @@ def review_units(before, edits, offset=0):
         if variants:
             start, end = edit['start'] - offset - a, edit['end'] - offset - a
             variants = [{**o, 'after': old[:start] + o['after'] + old[end:]} for o in variants]
-        for unit in parallel_changes(old, variants) if variants else _unit_changes(old, new):
+        for unit in parallel_changes(old, variants, containers=containers) if variants else _unit_changes(old, new, containers=containers):
             if not variants and units and unit['kind'] != 'equal' and units[-1]['kind'] != 'equal':
                 first, second = units[-1]['before'] + unit['before'], units[-1]['after'] + unit['after']
-                parts = _unit_spans(first) + _unit_spans(second)
+                parts = _unit_spans(first, containers=containers) + _unit_spans(second, containers=containers)
                 if all(part['kind'] == 'prose' for part in parts) and not any(re.search(r'\n[ \t\r]*\n|\\par\b', visible_tex(text).strip()) for text in (first, second)):
                     units[-1] = {'kind': 'replace', 'before': first, 'after': second}
                     continue
@@ -675,7 +741,7 @@ def review_units(before, edits, offset=0):
             unit['ids'] = [] if unit['kind'] == 'equal' else [window['edits'][0]['id']]
             unit['addition_only'] = not unit['before'].strip() and bool(unit['after'].strip())
             unit['deletion_only'] = bool(unit['before'].strip()) and not unit['after'].strip()
-            unit['change_type'], unit['paragraph_start'] = presentation_type(before, position, position + len(unit['before']), unit['before'], unit['after'])
+            unit['change_type'], unit['paragraph_start'] = presentation_type(before, position, position + len(unit['before']), unit['before'], unit['after'], containers=containers)
             position += len(unit['before'])
             yield unit
         cursor = b
@@ -837,6 +903,7 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
     preamble, marker, _ = main_text.partition(r'\begin{document}')
     if not marker:
         raise ValueError('所选文件不是可编译主文档。')
+    containers = text_containers(preamble)
     if Path(data['edit']['file']) not in scope:
         raise ValueError('所选主文档没有通过普通 input/include/subfile 包含该修改文件；请选择实际主文档。动态宏包含需先核对项目结构。')
     grouped, shown = {}, []
@@ -864,7 +931,7 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
             edit['end'] = edit['start'] + len(edit['item']['before'])
         blocks = []
         for edit in sorted(edits, key=lambda e: e['start']):
-            a, b = paragraph_span(original, edit['start'], edit['end'])
+            a, b = paragraph_span(original, edit['start'], edit['end'], containers=containers)
             if blocks and a <= blocks[-1]['end']:
                 blocks[-1]['end'] = max(blocks[-1]['end'], b); blocks[-1]['edits'].append(edit)
             else:
@@ -873,7 +940,7 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
         for block in reversed(blocks):
             a, b = block['start'], block['end']
             chunks = []
-            for n, unit in enumerate(review_units(original[a:b], block['edits'], a)):
+            for n, unit in enumerate(review_units(original[a:b], block['edits'], a, containers=containers)):
                 old_sentence, new_sentence = unit['before'], unit['after']
                 if unit['kind'] == 'equal':
                     chunks.append(new_sentence)
