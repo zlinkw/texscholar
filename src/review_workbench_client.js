@@ -7,6 +7,7 @@ let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSele
 let navigationFilter = {query: '', kind: '', notes: false};
 let changeCursor;
 let directoryCursor, localFeedback;
+const batchSelection = new Map();
 const feedbackTargets = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap(), differences = new WeakMap();
 const displayedChanges = new WeakMap();
@@ -129,7 +130,7 @@ function send(type, extra = {}, blocks = true) {
     if (actionNames[type] || passiveActions.has(type)) feedbackTargets.set(type, localFeedback);
     if (passiveActions.has(type)) {if (sideBusy.has(type)) return; sideBusy.add(type); buttons();}
     if (blocks && !passiveActions.has(type)) {waiting = type; status(''); buttons();}
-    api.postMessage({type, id: current.id, version: current.version, ...extra});
+    api.postMessage({type, sentAt: Date.now(), instance, repo: current.repo, owner: current.owner, id: current.id, version: current.version, ...extra});
 }
 function status(message, error = false, action) {
     const node = feedbackNode;
@@ -163,6 +164,7 @@ function buttons() {
             !!(waiting && !passiveActions.has(button.dataset.action) && button.dataset.action !== 'directory') || !!(button.hasAttribute('data-write') && (unavailable || conflict));
         if (passiveActions.has(button.dataset.action)) button.disabled = sideBusy.has(button.dataset.action);
     }
+    if (data?.source_match === false) for (const b of document.querySelectorAll('[data-action="accept"],[data-action="saveAccept"],[data-action="preview"],[data-action="pdf"]')) b.disabled = true;
     $('operationStatus').textContent = waiting ? current.id + ' · ' + (actionNames[waiting] || '审核操作') + '…' : '';
     for (const node of document.querySelectorAll('textarea.edit')) node.readOnly = !!waiting;
     for (const button of document.querySelectorAll('[data-action="save"]')) {
@@ -252,6 +254,7 @@ function toggleMathMode() {
 }
 function renderDirectory(items) {
     directoryItems = items;
+    for (const id of batchSelection.keys()) if (!items.some(i => i.id === id)) batchSelection.delete(id);
     const pending = items.filter(i => ['pending', 'rework'].includes(i.status));
     $('progress').textContent = current ? current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · v' + data.edit.versions.length
         + (navigationFilter.query || navigationFilter.kind || navigationFilter.notes ? ' · 已筛选' : '') : '审核项';
@@ -270,16 +273,29 @@ function filterDirectory() {
     $('directoryResults').replaceChildren();
     for (const item of found) {
         const node = document.createElement('button'); node.className = 'secondary'; node.dataset.action = 'switch'; node.dataset.target = item.id;
-        node.textContent = item.id + ' · ' + (item.status === 'rework' ? '返修' : '待审') + ' · ' + item.file + (item.location ? ' · ' + item.location : '') + (item.requests ? ' · 批注 ' + item.requests : '') + (item.summary ? '\n' + item.summary : '');
-        node.disabled = !!waiting; $('directoryResults').appendChild(node);
+        node.textContent = item.id + ' · ' + (item.source_match === false ? '定位冲突' : item.status === 'rework' ? '返修' : '待审') + ' · ' + item.file + (item.location ? ' · ' + item.location : '') + (item.requests ? ' · 批注 ' + item.requests : '') + (item.summary ? '\n' + item.summary : '');
+        node.disabled = !!waiting;
+        const row = document.createElement('div'), check = document.createElement('input'), choice = document.createElement('select');
+        check.type = 'checkbox'; check.setAttribute('aria-label', '选择 ' + item.id);
+        const saved = batchSelection.get(item.id);
+        if (saved && saved.version !== item.version) batchSelection.delete(item.id);
+        check.checked = batchSelection.has(item.id);
+        for (const label of (item.options || ['A','B','C'])) {const option = document.createElement('option'); option.value = label; option.textContent = label + (item.manual_options?.includes(label) ? '（已手改）' : ''); choice.appendChild(option);}
+        choice.value = batchSelection.get(item.id)?.option || (item.id === current.id ? preview : item.option) || 'A';
+        choice.setAttribute('aria-label', item.id + ' 接收方案');
+        check.addEventListener('change', () => {if (check.checked) batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); else batchSelection.delete(item.id); selectedCount();});
+        choice.addEventListener('change', () => {if (check.checked) {batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); selectedCount();}});
+        row.append(check, choice, node); $('directoryResults').appendChild(row);
     }
+    selectedCount();
     if (!found.length) $('directoryResults').textContent = '没有符合条件的可操作审核项。';
     if (!found.some(i => i.id === directoryCursor)) directoryCursor = found[0]?.id;
     markDirectoryCursor();
     $('directoryHint').textContent = found.length + ' 项；↑↓ 选择，Enter 打开，Esc 关闭。';
 }
+function selectedCount() {$('selectedCount').textContent = '已选 ' + batchSelection.size + ' 项' + (batchSelection.size ? '；接收顺序（同点插入依此排列）：' + [...batchSelection.values()].map(i => i.id + '(' + i.option + ')').join(' → ') : '');}
 function markDirectoryCursor() {
-    for (const node of $('directoryResults').children) {
+    for (const node of $('directoryResults').querySelectorAll('button')) {
         const active = node.dataset.target === directoryCursor;
         node.classList.toggle('directoryCurrent', active);
         if (active) node.setAttribute('aria-current', 'true'); else node.removeAttribute('aria-current');
@@ -288,6 +304,7 @@ function markDirectoryCursor() {
 function renderOption(o) {
     let article = $('option-' + o.label);
     if (!article) {article = document.createElement('article'); article.id = 'option-' + o.label; $('options').appendChild(article);}
+    article.dataset.reviewId = current.id; article.dataset.reviewVersion = current.version;
     article.className = [preview === o.label ? 'selected' : '', focused === o.label ? 'focused' : focused ? 'folded' : ''].join(' ');
     if (!article.children.length) article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
         + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small><p class="tradeoff"></p><p class="scopeSummary"></p><details class="reason"><summary>详细取舍</summary><span></span></details>'
@@ -665,6 +682,9 @@ document.addEventListener('click', event => {
     const menu = button.closest('.more'); if (menu) menu.open = false;
     if (type === 'appearance') {style(appearance); $('appearanceDialog').showModal(); return;}
     if (type === 'resetAppearance') {saveAppearance({reset: true}); return;}
+    if (type === 'selectAll') {for (const row of $('directoryResults').children) {const input=row.querySelector('input'); if(input && !input.checked) {input.checked=true; input.dispatchEvent(new Event('change'));}} return;}
+    if (type === 'clearSelection') {batchSelection.clear(); filterDirectory(); return;}
+    if (type === 'acceptBatch') {send(type,{items:[...batchSelection.values()]}); return;}
     if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
     if (type === 'clearFilter') {$('directoryQuery').value = ''; $('directoryKind').value = ''; $('directoryNotes').checked = false; filterDirectory(); return;}
     if (type === 'nextChange' || type === 'previousChange') {jumpChange(type === 'nextChange' ? 1 : -1); return;}
@@ -699,7 +719,8 @@ document.addEventListener('click', event => {
         const value = $('scopeChoice').value;
         send('note', {...(selected || {side: 'original', option: 'ABC'.includes(value) && value.length === 1 ? value : undefined}), text: $('note').value, handoff}); return;
     }
-    send(type, {option, target: button.dataset.target, index: Number(button.dataset.index),
+    const clicked = button.closest('article');
+    send(type, {...(clicked ? {id:clicked.dataset.reviewId,version:clicked.dataset.reviewVersion} : {}), option, target: button.dataset.target, index: Number(button.dataset.index),
         compare: $('compare').checked, ...(['save', 'saveAccept'].includes(type) ? {value: $('edit-' + option).value} : {})});
 });
 window.addEventListener('message', ({data: message}) => {
@@ -732,6 +753,13 @@ window.addEventListener('message', ({data: message}) => {
     }
     if (message.type === 'translationStatus') {$('translateStatus').textContent = message.message; return;}
     if (message.type === 'pdfStatus') {pdfStatus(message.message); return;}
+    if (message.type === 'locationStatus') {data.source_match = message.source_match; data.conflict = message.conflict;
+        $('locationConflict').hidden = message.source_match !== false;
+        $('locationConflict').textContent = message.source_match === false ? '定位冲突：' + message.conflict + '。候选仍保留；可修复位置或安全拒绝。' : '';
+        buttons(); return;}
+    if (message.type === 'titles') {data.edit.location = message.location; $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (message.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length; renderDirectory(message.directory); return;}
+    if (message.type === 'titleStatus') {$('titleStatus').textContent = message.message; return;}
+    if (message.type === 'backupStatus') {$('backupStatus').textContent = message.message || '后台 Git 备份尚无任务'; return;}
     if (message.type === 'directory') {renderDirectory(message.directory); return;}
     if (message.type === 'preview') {
         preview = message.option;
@@ -748,6 +776,7 @@ window.addEventListener('message', ({data: message}) => {
     }
     if (message.type === 'unavailable') {unavailable = true; $('empty').hidden = false; $('review').hidden = true;}
     if (message.type === 'content' || message.type === 'saved') {
+        const renderStarted = performance.now();
         rendering = true; restoration = undefined;
         const saved = message.type === 'saved';
         const refresh = !saved && current && current.repo === message.c.repo && current.owner === message.c.owner && current.id === message.c.id;
@@ -765,6 +794,8 @@ window.addEventListener('message', ({data: message}) => {
         style(message.style); $('empty').hidden = true; $('review').hidden = false;
         $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length;
         pdfStatus(message.pdfStatus);
+        $('locationConflict').hidden = data.source_match !== false;
+        $('locationConflict').textContent = data.source_match === false ? '定位冲突：' + data.conflict + '。候选仍保留；可查看、修复位置或安全拒绝。' : '';
         renderDirectory(message.directory);
         if (!saved) {
             editingNote = undefined; $('noteComposer').hidden = true; placeComposer(); $('noteScopeControls').hidden = false;
@@ -808,6 +839,7 @@ window.addEventListener('message', ({data: message}) => {
         $('intent').hidden = !data.intent;
         $('intent').textContent = data.intent ? '本项目标：' + data.intent.goal + '　保留：' + data.intent.preserve : '';
         rendering = false;
+        api.postMessage({type:'rendered',id:current.id,version:current.version,ms:performance.now()-renderStarted,instance});
         highlightSelection();
         dirty();
     }

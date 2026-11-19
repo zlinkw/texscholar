@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 import uuid
 from contextlib import contextmanager, nullcontext
 
@@ -188,8 +189,10 @@ def locate(text, needle, left="", right=""):
             break
         left_ok = bool(left) and text[:i].endswith(left)
         right_ok = bool(right) and text[i + len(needle):].startswith(right)
-        if (left_ok or right_ok) or (not left and not right):
+        if ((left_ok or right_ok) if needle else ((not left or left_ok) and (not right or right_ok))):
             hits.append((int(left_ok) + int(right_ok), i))
+        elif needle and not left and not right:
+            hits.append((0, i))
         start = i + max(1, len(needle))
     if hits:
         score = max(h[0] for h in hits)
@@ -201,6 +204,7 @@ def locate(text, needle, left="", right=""):
 
 class Review:
     def __init__(self, repo, state, git="git", storage=None):
+        started = time.perf_counter()
         self.repo = Path(repo).resolve(strict=True)
         self.git_exe = git
         self.env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
@@ -263,6 +267,29 @@ class Review:
             self.interrupted = False
         self.original = {}
         self.question_original = {}
+        self._objects = {}
+        self._read_cache = None
+        self._raw_sources = {}
+        self._source_digests = {}
+        if self.state:
+            backup = self.backup_status()
+            for id_, version in backup.get('published', {}).items():
+                edit = self.state['edits'].get(id_)
+                if edit and edit['status'] == 'accepted' and edit['versions'] and edit['versions'][-1] == version:
+                    edit['published_version'] = version
+        self.timings = {'state_read_parse_s': time.perf_counter() - started,
+                        'source_read_s': 0.0, 'object_read_s': 0.0, 'locate_s': 0.0, 'diff_scope_s': 0.0}
+
+    def backup_status(self):
+        path = self.object_root.parent / 'automatic-backup.json'
+        if path.is_symlink() or path.is_junction() or path.exists() and not path.is_file():
+            raise Conflict('后台备份日志不是普通文件')
+        data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+        return data if data.get('session') == self.state.get('session') else {}
+
+    def backup_packet(self):
+        data = self.backup_status()
+        return {'auto_backup': data.get('status', {}), 'auto_backup_job': data.get('job'), 'auto_backup_done': data.get('done')}
 
     def writer_lock(self):
         return writer_lock_at(self.object_root.parent)
@@ -293,10 +320,72 @@ class Review:
         return p
 
     def read(self, rel):
+        if self._read_cache is not None and rel in self._read_cache:
+            return self._read_cache[rel]
+        started = time.perf_counter()
         p = self.path(rel)
         raw = p.read_bytes()
         self.original.setdefault(rel, raw)
-        return body(raw.decode("utf-8-sig"))
+        self._raw_sources[rel] = raw.decode("utf-8-sig")
+        text = body(self._raw_sources[rel])
+        if self._read_cache is not None:
+            self._read_cache[rel] = text
+        self.timings['source_read_s'] += time.perf_counter() - started
+        return text
+
+    def source_digest(self, text):
+        if text not in self._source_digests:
+            self._source_digests[text] = digest(text.encode('utf-8'))
+        return self._source_digests[text]
+
+    def locate_edit(self, text, edit, item=None):
+        started = time.perf_counter()
+        try:
+            return self._locate_edit(text, edit, item)
+        finally:
+            self.timings['locate_s'] += time.perf_counter() - started
+
+    def _locate_edit(self, text, edit, item=None):
+        item = item if item is not None else self.payload(edit)
+        anchor = edit.get('anchor')
+        needle = self.live_excerpt(edit, item)
+        if anchor and anchor['version'] == edit['versions'][-1]:
+            if anchor.get('conflict'):
+                raise Conflict(anchor['conflict'])
+            if anchor['source'] == self.source_digest(text):
+                a, b = anchor['start'], anchor['end']
+                if text[a:b] != needle:
+                    raise Conflict('Recorded location disagrees with immutable candidate')
+                return a, b
+            context = self.anchor_context(edit, item)
+            return locate(text, needle, context['left'], context['right'])
+        return locate(text, needle, item['left'], item['right'])
+
+    def anchor_context(self, edit, fallback):
+        anchor = edit.get('anchor')
+        if anchor and anchor.get('context'):
+            return {side: self.contents(anchor['context'], side + '.txt') for side in ('left', 'right')}
+        return fallback
+
+    def bind(self, edit, text, a, b, left_size=120, right_size=120):
+        context = self.snapshot({'left.txt': text[max(0, a-left_size):a].encode('utf-8'),
+                                 'right.txt': text[b:b+right_size].encode('utf-8')}, 'verified location context')
+        edit['anchor'] = {'version': edit['versions'][-1], 'source': self.source_digest(text),
+                          'start': a, 'end': b, 'context': context}
+
+    def relocate(self, id_, version, spec):
+        self.assert_ready()
+        if not isinstance(spec, dict) or not isinstance(spec.get('before'), str) or any(not isinstance(spec.get(k, ''), str) for k in ('left', 'right')):
+            raise FieldConflict('spec', 'Relocation needs exact before/left/right strings')
+        edit = self.state['edits'].get(id_)
+        if not edit or edit['status'] not in PENDING or edit['versions'][-1] != version:
+            raise Conflict('Displayed candidate is stale or already decided')
+        text, item = self.read(edit['file']), self.payload(edit)
+        if spec.get('before') != self.live_excerpt(edit, item):
+            raise Conflict('Relocation must preserve the exact original candidate text')
+        a, b = locate(text, spec['before'], spec.get('left', ''), spec.get('right', ''))
+        self.bind(edit, text, a, b, max(120, len(spec.get('left', ''))), max(120, len(spec.get('right', ''))))
+        return {}, {'id': id_, 'version': version, 'relocated': True}
 
     def blob(self, raw):
         return self.git("hash-object", "-w", "--stdin", data=raw).decode().strip()
@@ -347,10 +436,14 @@ class Review:
             return self.git("show", f"{commit}:{rel}")
         if not re.fullmatch(r"[a-f0-9]{64}", commit):
             raise Conflict("Invalid local snapshot identity; legacy Git records require migration")
-        raw = (self.object_root / (commit + ".json")).read_bytes()
-        if digest(raw) != commit:
-            raise Conflict("Local review snapshot integrity check failed")
-        return base64.b64decode(json.loads(raw)["files"][rel], validate=True)
+        if commit not in self._objects:
+            started = time.perf_counter()
+            raw = (self.object_root / (commit + ".json")).read_bytes()
+            if digest(raw) != commit:
+                raise Conflict("Local review snapshot integrity check failed")
+            self._objects[commit] = json.loads(raw)['files']
+            self.timings['object_read_s'] += time.perf_counter() - started
+        return base64.b64decode(self._objects[commit][rel], validate=True)
 
     def migrate_storage(self, defer_pending=False):
         """One-time conversion of legacy objects; preserve IDs, notes and source."""
@@ -619,7 +712,17 @@ class Review:
             if self.storage == 'files' and not deferred:
                 raise Conflict("新候选必须 deferred=true；接收后才替换正文。旧记录仍可读取。")
         text = self.read(rel)
-        a, b = locate(text, before, left, right)
+        if rework and any(k in spec for k in ('before', 'left', 'right')):
+            if spec.get('before', before) != before:
+                raise Conflict('Rework relocation cannot change original text')
+            left, right = spec.get('left', left), spec.get('right', right)
+            a, b = locate(text, before, left, right)
+        elif rework:
+            a, b = self.locate_edit(text, edit, old)
+            anchor = self.anchor_context(edit, old)
+            left, right = anchor['left'], anchor['right']
+        else:
+            a, b = locate(text, before, left, right)
         from document_roles import block_span, BEGIN as ROLE_BEGIN, END as ROLE_END
         protected = block_span(text)
         if protected and (a < protected[1] and b > protected[0] or a == b and protected[0] <= a < protected[1]):
@@ -647,8 +750,36 @@ class Review:
             if id_ == rework or other["file"] != rel or other["status"] not in PENDING:
                 continue
             obj = self.payload(other)
-            x, y = locate(text, self.live_excerpt(other, obj), obj["left"], obj["right"])
-            if max(a, x) < min(b, y) or (a == b and x <= a <= y) or (x == y and a <= x <= b):
+            try:
+                x, y = self.locate_edit(text, other, obj)
+            except Conflict:
+                # Consider all exact possible spans of the broken item. It cannot
+                # block a disjoint new target merely because it shares the file.
+                needle = self.live_excerpt(other, obj)
+                possible = []
+                if needle:
+                    at = text.find(needle)
+                    while at >= 0:
+                        possible.append((at, at + len(needle)))
+                        at = text.find(needle, at + 1)
+                else:
+                    context = self.anchor_context(other, obj)
+                    for side in ('left', 'right'):
+                        value = context[side]
+                        if not value:
+                            continue
+                        at = text.find(value)
+                        while at >= 0:
+                            point = at + len(value) if side == 'left' else at
+                            possible.append((point, point))
+                            at = text.find(value, at + 1)
+                    if not context['left'] and not context['right']:
+                        possible.append((a, b))
+                if not any(max(a, x) < min(b, y) or a == b and x <= a <= y or x == y and a <= x <= b
+                           for x, y in possible):
+                    continue
+                raise OverlapConflict(id_, other['versions'][-1], rel)
+            if max(a, x) < min(b, y) or (a == b and x < a < y) or (x == y and a < x < b):
                 raise OverlapConflict(id_, other['versions'][-1], rel)
         deps = spec.get("deps", edit.get("deps", []) if rework else [])
         if any(d not in edits or d == rework for d in deps):
@@ -676,7 +807,7 @@ class Review:
             if deferred:
                 edit["deferred"] = True
             edits[id_] = edit
-        item = {"before": original, "after": after, "left": text[max(0, a - 120):a], "right": text[b:b + 120]}
+        item = {"before": original, "after": after, "left": text[max(0, a - max(120,len(left))):a], "right": text[b:b + max(120,len(right))]}
         if options:
             item['options'] = options
             item['fewer_options_reason'] = spec.get('fewer_options_reason', '')
@@ -693,7 +824,15 @@ class Review:
                 # No new notes means the last requirements remain useful to compare.
                 edit['previous_feedback'] = {'version': edit['versions'][-1], 'requests': copy.deepcopy(notes)}
         edit["versions"].append(commit)
+        if deferred:
+            self.bind(edit, text, a, b, len(item['left']), len(item['right']))
         edit.update({"deps": deps, "location": spec.get("location", edit.get("location", ""))})
+        if 'location_zh' in spec:
+            if not isinstance(spec['location_zh'], str):
+                raise Conflict('location_zh must be a string')
+            edit['location_zh'] = spec['location_zh']
+        elif 'location' in spec:
+            edit.pop('location_zh', None)
         if questions is not None:
             edit['questions'] = questions
         if rework:
@@ -743,66 +882,149 @@ class Review:
         return locate(text, item['before'])
 
     def decide(self, accept, reject, expected_versions=None, option=None):
+        previous = self.state
+        self.state = copy.deepcopy(previous)
+        try:
+            return self._decide(accept, reject, expected_versions, option)
+        except Exception:
+            # Restore the in-memory ledger too; no partial decisions on failure.
+            self.state = previous
+            raise
+
+    def _decide(self, accept, reject, expected_versions=None, option=None):
         self.assert_ready()
-        if not accept and not reject or set(accept) & set(reject):
+        ids = accept + reject
+        if not ids or len(set(ids)) != len(ids):
             raise Conflict("Specify distinct exact IDs")
-        updated = {}
-        accepted = {}
-        decisions = {}
+        updated, accepted, decisions, operations, conflicts = {}, {}, {}, {}, []
+        sources, spans = {}, {}
         inline_files = {e['file'] for e in self.state['edits'].values()
                         if e['status'] in PENDING and not e.get('deferred', False)}
-        for id_ in accept + reject:
-            edit = copy.deepcopy(self.state["edits"].get(id_))
-            if not edit or edit["status"] not in PENDING:
-                raise Conflict("ID is missing or already decided: " + id_)
-            if expected_versions and expected_versions.get(id_) != edit["versions"][-1]:
-                raise Conflict("Displayed candidate is stale; reopen the latest version before deciding")
-            rel = edit["file"]
-            text = updated.get(rel, self.read(rel))
-            item = self.payload(edit)
+        # All decisions are checked against the same source/state version.
+        for id_ in ids:
             try:
-                a, b = locate(text, self.live_excerpt(edit, item), item["left"], item["right"])
-            except Conflict as exc:
-                raise Conflict(f'当前正文失配：审核项 {id_}，文件 {rel}；{exc}') from exc
-            if id_ in accept:
-                if item.get('options') and option is None:
-                    raise Conflict('Choose an explicit option A/B/C before accepting')
-                if option is not None:
-                    item['after'] = self.option(item, option)['after']
-                    edit['accepted_option'] = option
-            if id_ in reject:
-                if not edit.get("deferred", False):
-                    updated[rel] = text[:a] + item["before"] + text[b:]
-                edit["status"] = "rejected"
-            else:
-                if edit.get("deferred", False):
-                    updated[rel] = text[:a] + item["after"] + text[b:]
-                if self.storage == 'files' and rel not in inline_files:
-                    # Current clean source is the author's working baseline,
-                    # including direct edits. Only the chosen span is replaced;
-                    # pending options/notes remain in their separate objects.
-                    accepted[rel] = updated[rel]
-                else:
-                    # Existing inline candidates must stay out of the projection.
-                    base = accepted.get(rel, self.contents(self.state["accepted"], rel))
+                edit = copy.deepcopy(self.state['edits'].get(id_))
+                if not edit or edit['status'] not in PENDING:
+                    raise Conflict('ID is missing or already decided')
+                if expected_versions is not None and expected_versions.get(id_) != edit['versions'][-1]:
+                    raise Conflict('Displayed candidate is stale; reopen the latest version before deciding')
+                rel = edit['file']
+                if rel not in sources:
+                    sources[rel] = self.read(rel)
+                text, item = sources[rel], self.payload(edit)
+                if id_ in accept or not edit.get('deferred', False):
                     try:
-                        x, y = self.projection_span(base, item)
-                    except Conflict as exc:
-                        raise Conflict(f'已接收投影失配：审核项 {id_}，文件 {rel}；{exc}') from exc
-                    accepted[rel] = base[:x] + item["after"] + base[y:]
-                edit["status"] = "accepted"
-            for request in edit.get("requests", []):
-                if request["status"] in ("open", "addressed-pending-review"):
-                    request["status"] = "closed-by-author-acceptance" if id_ in accept else "closed-by-author-rejection"
-            decisions[id_] = edit
+                        a, b = self.locate_edit(text, edit, item)
+                    except Conflict as error:
+                        raise Conflict(f'当前正文失配：审核项 {id_}，文件 {rel}；{error}') from error
+                    label = option.get(id_) if isinstance(option, dict) else option
+                    if id_ in accept:
+                        if item.get('options') and label is None:
+                            raise Conflict('Choose an explicit option A/B/C before accepting')
+                        if label is not None:
+                            item['after'] = self.option(item, label)['after']
+                            edit['accepted_option'] = label
+                    replacement = item['after'] if id_ in accept else item['before']
+                    if edit.get('deferred', False) or id_ in reject:
+                        operations.setdefault(rel, []).append((a, b, replacement, id_))
+                    spans[id_] = (a, b)
+                edit['status'] = 'accepted' if id_ in accept else 'rejected'
+                for request in edit.get('requests', []):
+                    if request['status'] in ('open', 'addressed-pending-review'):
+                        request['status'] = 'closed-by-author-acceptance' if id_ in accept else 'closed-by-author-rejection'
+                decisions[id_] = edit
+            except Conflict as error:
+                conflicts.append({'id': id_, 'error': str(error)})
+        for rel, ops in operations.items():
+            for i, (a, b, _, id_) in enumerate(ops):
+                for x, y, _, other in ops[i+1:]:
+                    if max(a, x) < min(b, y) or a == b and x < a < y or x == y and a < x < b:
+                        conflicts.append({'id': id_, 'other': other, 'error': 'Overlapping selected edits'})
+        if conflicts:
+            raise Conflict('Batch preflight failed; no decisions saved: ' + json.dumps(conflicts, ensure_ascii=False))
+        # Locate remaining items before applying any edits, then transform exact
+        # offsets through the verified patch. Same-point insertions follow request order.
+        remaining = {}
+        for id_, edit in self.state['edits'].items():
+            rel = edit['file']
+            if id_ in decisions or edit['status'] not in PENDING or rel not in operations:
+                continue
+            try:
+                remaining[id_] = self.locate_edit(sources[rel], edit)
+            except Conflict:
+                pass
+        for rel, ops in operations.items():
+            text = sources[rel]
+            # Reverse the complete stable order, including ties, so the first
+            # explicitly listed insertion remains first in the resulting source.
+            for a, b, replacement, _ in reversed(sorted(ops, key=lambda op: (op[0], op[1]))):
+                text = text[:a] + replacement + text[b:]
+            updated[rel] = text
+            shift = 0
+            for a, b, replacement, id_ in sorted(ops, key=lambda op: (op[0], op[1])):
+                if id_ in accept:
+                    context = self.anchor_context(decisions[id_], self.payload(decisions[id_]))
+                    self.bind(decisions[id_], text, a + shift, a + shift + len(replacement),
+                              max(120, len(context['left'])), max(120, len(context['right'])))
+                shift += len(replacement) - (b-a)
+        for id_ in accept:
+            edit, item = decisions[id_], self.payload(decisions[id_])
+            rel = edit['file']
+            if self.storage == 'files' and rel not in inline_files:
+                accepted[rel] = updated.get(rel, sources[rel])
+            else:
+                base = accepted.get(rel, self.contents(self.state['accepted'], rel))
+                try:
+                    x, y = self.projection_span(base, item)
+                except Conflict as error:
+                    raise Conflict(f'已接收投影失配：审核项 {id_}，文件 {rel}；{error}') from error
+                accepted[rel] = base[:x] + item['after'] + base[y:]
+        for id_, (a, b) in remaining.items():
+            edit = self.state['edits'][id_]
+            ops = operations[edit['file']]
+            if any(max(a, x) < min(b, y) or a == b and x < a < y or x == y and a < x < b for x, y, _, _ in ops):
+                edit['anchor'] = {'version': edit['versions'][-1], 'conflict': 'Source changed across this pending location; relocate explicitly'}
+                continue
+            start_shift = sum(len(value)-(y-x) for x,y,value,_ in ops if y <= a)
+            end_shift = sum(len(value)-(y-x) for x,y,value,_ in ops if y <= b and (x < b or a == b))
+            old = self.anchor_context(edit, self.payload(edit))
+            self.bind(edit, updated[edit['file']], a+start_shift, b+end_shift,
+                      max(120,len(old.get('left',''))), max(120,len(old.get('right',''))))
+        if accept and self.storage == 'files':
+            projection = self.state.get('auto_backup_projection', self.state['accepted'])
+            self.state.setdefault('auto_backup_base', projection)
+            projected, projection_ops = {}, {}
+            try:
+                if self.state.get('auto_backup_projection_error'):
+                    raise Conflict(self.state['auto_backup_projection_error'])
+                for id_ in accept:
+                    edit, item = decisions[id_], self.payload(decisions[id_])
+                    rel = edit['file']
+                    base = self.contents(projection, rel)
+                    a, b = self.locate_edit(base, self.state['edits'][id_], item)
+                    projection_ops.setdefault(rel, []).append((a, b, item['after']))
+                for rel, ops in projection_ops.items():
+                    base = self.contents(projection, rel)
+                    for a, b, value in reversed(sorted(ops, key=lambda op: (op[0], op[1]))):
+                        base = base[:a] + value + base[b:]
+                    projected[rel] = base
+                all_files = {p: (projected[p] if p in projected else self.contents(projection, p)).encode('utf-8')
+                             for p in self.state['rounds'][-1]['files']}
+                self.state['auto_backup_projection'] = self.snapshot(all_files, 'automatic accepted projection')
+                self.state['auto_backup_requested'] = self.state['auto_backup_projection']
+                self.state.setdefault('auto_backup_items', {}).update({i: decisions[i]['versions'][-1] for i in accept})
+                self.state.pop('auto_backup_projection_error', None)
+            except Conflict as error:
+                self.state['auto_backup_projection_error'] = str(error)
         if accepted:
-            files = {p: accepted.get(p, self.contents(self.state["accepted"], p)).encode("utf-8")
-                     for p in self.state["rounds"][-1]["files"]}
-            self.state["accepted"] = self.snapshot(files, "explicit author acceptance " + ",".join(accept))
+            files = {p: (accepted[p] if p in accepted else self.contents(self.state['accepted'], p)).encode('utf-8')
+                     for p in self.state['rounds'][-1]['files']}
+            self.state['accepted'] = self.snapshot(files, 'explicit author acceptance ' + ','.join(accept))
         self.state['edits'].update(decisions)
         if reject:
             self.stale(set(reject))
-        return updated, {"accepted": accept, "rejected": reject}
+        return updated, {'accepted': accept, 'rejected': reject,
+                         'accepted_source': self.state['accepted'] if accept else None}
 
     def inspect(self, id_, version=None, source=False):
         self.assert_ready()
@@ -817,23 +1039,25 @@ class Review:
         result = {"id": id_, "edit": copy.deepcopy(edit), "version": version, "sha256": digest(self.raw),
                   "original": self.contents(version, "original.tex"), "candidate": self.contents(version, "candidate.tex")}
         shown = json.loads(self.contents(version, 'span.json'))
+        started = time.perf_counter()
         result['options'] = [{**o, 'changes': word_changes(result['original'], o['after'])} for o in
                              shown.get('options', [{'label': 'A', 'after': result['candidate'], 'reason': '已有单方案；可由 AI 重新生成三方案'}])]
         result['fewer_options_reason'] = shown.get('fewer_options_reason', '')
         result['intent'] = shown.get('intent')
         for option in result['options']:
             option['scope'] = change_scope(result['original'], option['after'], option['changes'])
+        self.timings['diff_scope_s'] += time.perf_counter() - started
         if edit.get('accepted_option'):
             result['candidate'] = self.option(shown, edit['accepted_option'])['after']
         obj = self.payload(edit)
         try:
-            locate(self.read(edit["file"]), self.live_excerpt(edit, obj), obj["left"], obj["right"])
+            self.locate_edit(self.read(edit["file"]), edit, obj)
             result["source_match"] = True
         except Conflict as exc:
             result.update({"source_match": False, "conflict": str(exc)})
         if source and result["source_match"]:
-            raw = self.path(edit["file"]).read_bytes().decode("utf-8-sig")
-            start, end = locate(body(raw), self.live_excerpt(edit, obj), obj["left"], obj["right"])
+            raw = self._raw_sources[edit['file']]
+            start, end = self.locate_edit(body(raw), edit, obj)
             if BEGIN in raw:
                 prefix, block, _ = split_state(raw)
                 if start >= len(prefix):
@@ -897,7 +1121,7 @@ class Review:
             raise Conflict("A nonempty revision request is required")
         # Validate live source too: notes must not silently target a manually changed proposal.
         obj = self.payload(edit)
-        locate(self.read(edit["file"]), self.live_excerpt(edit, obj), obj["left"], obj["right"])
+        self.locate_edit(self.read(edit["file"]), edit, obj)
         if spec.get('request_id'):
             matches = [r for r in edit.get('requests', []) if r['id'] == spec['request_id']]
             if len(matches) != 1:
@@ -1024,11 +1248,12 @@ class Review:
             return {"initialized": False, "sha256": digest(self.raw)}
         result = copy.deepcopy(self.state)
         result["sha256"] = digest(self.raw)
+        result.update(self.backup_packet())
         for id_, edit in result["edits"].items():
             if edit["status"] in PENDING:
                 try:
                     obj = self.payload(edit)
-                    locate(self.read(edit["file"]), self.live_excerpt(edit, obj), obj["left"], obj["right"])
+                    self.locate_edit(self.read(edit["file"]), edit, obj)
                     edit["source_match"] = True
                 except Conflict as exc:
                     edit["source_match"] = False
@@ -1038,8 +1263,9 @@ class Review:
     def cards(self):
         """One read-only UI packet; shared source text occurs once per file."""
         self.assert_ready()
+        self._read_cache = {}
         result = copy.deepcopy(self.state)
-        result.update(sha256=digest(self.raw), cards={}, sources={})
+        result.update(sha256=digest(self.raw), cards={}, sources={}, **self.backup_packet())
         for id_, edit in result['edits'].items():
             if edit['status'] not in PENDING:
                 continue
@@ -1047,13 +1273,17 @@ class Review:
             edit['source_match'] = data['source_match']
             if not data['source_match']:
                 edit['conflict'] = data['conflict']
-                continue
+                data['source'] = {'start': 0, 'end': 0, 'side': 'original', 'text': self.original[edit['file']].decode('utf-8-sig')}
+                data['changes'] = word_changes(data['original'], data['candidate'])
             text = data['source'].pop('text')
             file = edit['file']
             if file in result['sources'] and result['sources'][file] != text:
                 raise Conflict('审核卡片读取期间原文发生变化，请重新打开；未修改正文或决定。')
             result['sources'][file] = text
             result['cards'][id_] = data
+        if any(self.path(rel).read_bytes() != raw for rel, raw in self.original.items()):
+            raise Conflict('审核卡片读取期间原文发生变化，请重新打开；未修改正文或决定。')
+        self._read_cache = None
         return result
 
     def feedback_context(self):
@@ -1151,6 +1381,10 @@ def main():
     p.add_argument("--reject", nargs="*", default=[])
     p.add_argument("--version", help="Displayed immutable version, for a single-item GUI decision")
     p.add_argument('--option', choices=list('ABC'), help='Explicit candidate option to accept')
+    sub.add_parser('decide-batch', help='UTF-8 JSON {items:[{id,version,option}]} in explicit insertion order')
+    p = sub.add_parser('relocate', help='Repair only the exact location; preserve candidate versions and annotations')
+    p.add_argument('--id', required=True)
+    p.add_argument('--version', required=True)
     sub.add_parser("status")
     sub.add_parser("cards", help="Read pending UI cards with shared live-source text; no PDF or writes")
     sub.add_parser('feedback-context', help='Read open notes with their exact original/candidate generation; no writes')
@@ -1170,7 +1404,10 @@ def main():
     with r.writer_lock() if args.apply else nullcontext():
         if args.apply:
             r = Review(args.repo, args.state, args.git)
+        started = time.perf_counter()
         result = dispatch(r, args)
+        if args.command != 'status':
+            result['timings'] = {**r.timings, **result.get('timings', {}), 'operation_s': time.perf_counter() - started}
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
@@ -1229,6 +1466,15 @@ def dispatch(r, args):
         elif args.command == 'link-questions':
             spec = json.loads(sys.stdin.read())
             updated, result = r.update_questions(args.id, args.version, spec['questions'], replace=args.replace)
+        elif args.command == 'relocate':
+            updated, result = r.relocate(args.id, args.version, json.loads(sys.stdin.read()))
+        elif args.command == 'decide-batch':
+            items = json.loads(sys.stdin.read())['items']
+            if not isinstance(items, list) or not items or any(not isinstance(i, dict) or
+                    not all(isinstance(i.get(k), str) and i[k] for k in ('id', 'version', 'option')) for i in items):
+                raise Conflict('Provide nonempty items with exact id/version/option')
+            updated, result = r.decide([i['id'] for i in items], [],
+                                      {i['id']: i['version'] for i in items}, {i['id']: i['option'] for i in items})
         else:
             ids = args.accept + args.reject
             if args.version and len(ids) != 1:
@@ -1237,7 +1483,9 @@ def dispatch(r, args):
                 raise Conflict('--option requires exactly one accepted ID')
             updated, result = r.decide(args.accept, args.reject, {ids[0]: args.version} if args.version else None, args.option)
         if args.apply:
+            started = time.perf_counter()
             r.persist(updated, args.expect)
+            result['timings'] = {'persistence_s': time.perf_counter() - started}
             if args.command in ('feedback', 'rework-options', 'edit-option'):
                 result['card'] = r.inspect(result['id'], source=True)
                 result['owner_text'] = r.encode(r.embedded()).decode('utf-8-sig')

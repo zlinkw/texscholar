@@ -6,6 +6,100 @@ const crypto = require('node:crypto');
 const {environment} = require('./core');
 const EXTENSIONS = new Set(['.tex','.bib','.bst','.sty','.cls','.clo','.bbx','.cbx','.cfg','.def','.fd',
     '.pdf','.png','.jpg','.jpeg','.eps','.svg','.drawio','.otf','.ttf','.tfm','.map','.enc','.csv','.dat']);
+const repositoryJobs = new Map(), automaticJobs = new Map(), automaticStates = new Map();
+function serializeGit(root, action) {
+    root = fs.realpathSync(root);
+    const previous = repositoryJobs.get(root) || Promise.resolve();
+    const task = previous.catch(() => {}).then(action);
+    repositoryJobs.set(root, task);
+    task.finally(() => {if (repositoryJobs.get(root) === task) repositoryJobs.delete(root);}).catch(() => {});
+    return task;
+}
+function automaticStatus(root) {return automaticStates.get(root) || {status: 'idle', message: '后台 Git 备份尚无任务'};}
+async function automaticBackup(root, owner, options, report = () => {}, execute = run) {
+    const started = performance.now();
+    root = fs.realpathSync(root);
+    const git = args => execute(options.git || 'git', args, root);
+    const helper = async (operation, input) => JSON.parse(await execute(options.python || 'python',
+        ['-X','utf8',path.join(__dirname,'auto_backup.py'),'--project',root,'--state',owner,'--git',options.git || 'git',operation],
+        root, input === undefined ? undefined : JSON.stringify(input)));
+    const notify = value => {value = {...value, elapsed_ms:performance.now()-started}; automaticStates.set(root, value); report(value);};
+    let source, local;
+    try {
+        let state = await helper('status');
+        source = state.job?.source;
+        if (state.job?.commit) local = {commit:state.job.commit};
+        if (state.projection_error) throw new Error('自动备份投影需核对：' + state.projection_error);
+        if (!state.job && (!state.requested || state.requested === state.done)) return {skipped:true};
+        if (!require('./tools').samePath(fs.realpathSync((await git(['rev-parse','--show-toplevel'])).trim()), root)) throw new Error('论文文件夹与 Git 根目录不一致');
+        if ((await git(['symbolic-ref','--short','HEAD'])).trim() !== 'master' || (await git(['rev-parse','--abbrev-ref','--symbolic-full-name','@{upstream}'])).trim() !== 'origin/master') throw new Error('请核对 master 与 origin/master 上游；不会自动切换');
+        const fetchUrls = (await git(['remote','get-url','--all','origin'])).trim().split(/\r?\n/);
+        const pushUrls = (await git(['remote','get-url','--push','--all','origin'])).trim().split(/\r?\n/);
+        if (fetchUrls.length !== 1 || pushUrls.length !== 1 || githubRepository(fetchUrls[0]).toLowerCase() !== githubRepository(pushUrls[0]).toLowerCase()) throw new Error('origin 获取和推送目标不一致');
+        for (const name of ['MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD','rebase-merge','rebase-apply','BISECT_LOG','index.lock']) {
+            const location = path.resolve(root, (await git(['rev-parse','--git-path',name])).trim());
+            if (fs.existsSync(location)) throw new Error('Git 正在进行其他操作：' + name);
+        }
+        await git(['var','GIT_AUTHOR_IDENT']);
+        const head = (await git(['rev-parse','HEAD'])).trim(), remote = (await git(['rev-parse','origin/master'])).trim();
+        if (!state.job) {
+            if (head !== remote) {
+                const commits = await git(['log','--format=%h %s','origin/master..HEAD']);
+                throw new Error('存在未归属本次成果的本地提交或远端推进；不会连带上传。请核对并自行同步后点重试。\n' + commits.trim());
+            }
+            state = await helper('prepare', {parent:head});
+        }
+        if (!state.job) return {skipped:true};
+        source = state.job.source;
+        notify({status:'running', source, message:'后台 Git 正在保存已接收成果；可继续审核和生成 PDF'});
+        await helper('update', {status:'running',source,message:'后台 Git 正在处理检查点'});
+        local = await helper('local');
+        await helper('update', {status:'local',source,commit:local.commit,message:'本地提交已保存；等待远端推送确认'});
+        notify({status:'local', source, commit:local.commit, message:'本地成果提交 ' + local.commit.slice(0,8) + ' 已保存；后台推送中'});
+        const plan = {root,git,execute,options,repository:githubRepository(pushUrls[0])};
+        // Neither fetch, privacy validation nor push holds the paper writer lock.
+        await verifyPrivate(plan);
+        await git(['fetch','origin','master']);
+        const actualRemote = (await git(['rev-parse','origin/master'])).trim();
+        if (![state.job.parent,local.commit].includes(actualRemote)) throw new Error('远端 master 已推进或分叉；请核对并自行同步，不自动合并或改写历史');
+        if ((await git(['rev-parse','HEAD'])).trim() !== local.commit) throw new Error('本地 HEAD 已变化，不上传未归属提交');
+        const pushed = await pushPrivate(plan);
+        if (pushed !== local.commit) throw new Error('推送后检查点不一致，未标记完成');
+        await helper('update', {status:'done',source,commit:pushed,message:'已接收成果已推送 ' + pushed.slice(0,8) + '；未决候选和批注保留'});
+        notify({status:'done', source, commit:pushed, message:'已接收成果已推送 ' + pushed.slice(0,8) + '；未决候选和批注保留'});
+        return {commit:pushed,source};
+    } catch (error) {
+        const value = {status:'failed', ...(source ? {source} : {}), ...(local ? {commit:local.commit} : {}),
+            message:(local ? '本地提交已保存，远端未确认。' : '') + '后台备份失败：' + error.message + '；接收和 PDF 不受影响，可核对后重试'};
+        try {await helper('update', value);} catch (recordError) {value.message += '\n备份状态落盘失败：' + recordError.message;}
+        notify(value);
+        throw new Error(value.message);
+    }
+}
+function enqueueAutomatic(root, owner, options, report = () => {}, execute = run) {
+    root = fs.realpathSync(root);
+    const previous = automaticJobs.get(root);
+    if (previous) {previous.again = true; return previous.promise;}
+    const entry = {again:false}; automaticJobs.set(root,entry);
+    automaticStates.set(root,{status:'queued',message:'后台 Git 备份排队中；可继续审核'});
+    report(automaticStates.get(root));
+    entry.promise = serializeGit(root, async () => {
+        do {
+            entry.again = false;
+            await automaticBackup(root,owner,options,report,execute);
+            // Durable source identity also catches acceptance during a network wait.
+            const state = JSON.parse(await execute(options.python || 'python',['-X','utf8',path.join(__dirname,'auto_backup.py'),
+                '--project',root,'--state',owner,'--git',options.git || 'git','status'],root));
+            entry.again ||= !!state.requested && state.requested !== state.done;
+        } while (entry.again);
+    }).catch(() => {entry.failed = true;}).finally(() => {
+        automaticJobs.delete(root);
+        // An acceptance can arrive after the final durable read but before this
+        // completion callback. Preserve that last enqueue without retrying failures.
+        if (entry.again && !entry.failed) enqueueAutomatic(root,owner,options,report,execute);
+    });
+    return entry.promise;
+}
 function run(executable, args, cwd, input) {
     return new Promise((resolve, reject) => {
         const child = cp.spawn(executable, args, {cwd, env: environment(), windowsHide: true, shell: false});
@@ -43,7 +137,8 @@ function githubRepository(url) {
     if (!match) throw new Error('备份只推送到已配置的 github.com 私有仓库；请核对 origin，不会自动改远端。');
     return match[1] + '/' + match[2];
 }
-async function inspectBackup(root, options, execute = run) {
+function inspectBackup(root, options, execute = run) {return serializeGit(root, () => inspectBackupUnlocked(root, options, execute));}
+async function inspectBackupUnlocked(root, options, execute = run) {
     root = fs.realpathSync(root);
     const git = (args, input) => execute(options.git, args, root, input);
     const actual = fs.realpathSync((await git(['rev-parse','--show-toplevel'])).trim());
@@ -106,7 +201,8 @@ async function pushPrivate(plan) {
     if (head !== remote) throw new Error('推送后本地与 origin/master 不一致，请检查；不自动改写历史。');
     return head;
 }
-async function backupProject(plan, entries, note) {
+function backupProject(plan, entries, note) {return serializeGit(plan.root, () => backupProjectUnlocked(plan, entries, note));}
+async function backupProjectUnlocked(plan, entries, note) {
     const {git,execute,root,options} = plan;
     if (!note?.trim()) throw new Error('请填写本次改动目的，便于之后检索版本。');
     if ((await git(['rev-parse','HEAD'])).trim() !== plan.head || (await git(['status','--porcelain=v1','-z','--untracked-files=all'])) !== plan.status) throw new Error('备份选择后文件或 Git 状态发生变化，请重新点备份；没有覆盖内容。');
@@ -145,9 +241,10 @@ async function backupProject(plan, entries, note) {
         throw new Error((commit ? `本地备份提交 ${commit.slice(0,8)} 已保留；远端备份未确认完成。` : '备份未完成，请检查暂存区；未自动回退。') + '\n' + error.message);
     }
 }
-async function finishReview(root, owner, options, note, execute = run) {
+function finishReview(root, owner, options, note, execute = run) {return serializeGit(root, () => finishReviewUnlocked(root, owner, options, note, execute));}
+async function finishReviewUnlocked(root, owner, options, note, execute = run) {
     if (!note?.trim()) throw new Error('请填写本次正文成果的实际改动目的。');
-    const plan = await inspectBackup(root, options, execute), {git} = plan;
+    const plan = await inspectBackupUnlocked(root, options, execute), {git} = plan;
     const helper = async (operation, input, expect) => {
         const args = ['-X','utf8',options.checkpointScript || path.join(__dirname,'review_checkpoint.py'),
             '--project',plan.root,'--state',owner,'--git',options.git];
@@ -264,7 +361,7 @@ function activate(context) {
         finally {busy = false;}
     }));
 }
-module.exports = {activate,inspectBackup,backupProject,finishReview,commitMessage,run};
+module.exports = {automaticBackup, enqueueAutomatic, automaticStatus, serializeGit, restoreAutomaticStatus(root, value) {if (value && !automaticJobs.has(root)) automaticStates.set(root,value);}, activate,inspectBackup,backupProject,finishReview,commitMessage,run};
 if (require.main === module) {
     if (process.argv.length !== 3 || process.argv[2] !== '--finish-review') {
         process.stderr.write('使用 --finish-review，并通过 UTF-8 stdin 提供 {project,state,purpose,git,gh,python}。\n');

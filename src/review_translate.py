@@ -17,7 +17,7 @@ PROVIDERS = {'google': 'Google', 'googleapi': 'Google（googleapis）', 'bing': 
 REQUEST_CHARS = 500
 
 
-def protect_tex(text):
+def protect_tex(text, title=False):
     prefix = 'TEXSCHOLARX'
     while prefix in text:
         prefix += 'X'
@@ -66,6 +66,10 @@ def protect_tex(text):
                         raise ValueError('待翻译引用或命令参数未闭合；未发送该项。')
         elif text[cursor] in '{}':
             end = cursor + 1
+        if title and end == cursor and (cursor == 0 or not text[cursor-1].isalnum()):
+            term = re.match(r'(?:R\d+-Q\d+|[IVXLCDM]+(?:-[A-Z])?|[A-Z][A-Z0-9]{1,}|(?:Eq\.|Fig\.)\s*\d+)(?![\w-])', text[cursor:])
+            if term:
+                end = cursor + len(term[0])
         if end > cursor:
             output.append(prefix + str(len(kept)) + 'XEND')
             kept.append(text[cursor:end])
@@ -200,8 +204,8 @@ class Provider:
         return value
 
 
-def translate_text(text, provider, warnings=None):
-    prepared, kept, pattern = protect_tex(text)
+def translate_text(text, provider, warnings=None, title=False):
+    prepared, kept, pattern = protect_tex(text, title)
     if not re.search(r'[A-Za-z]', pattern.sub('', prepared)):
         return text
     leading = re.match(r'^\s*', prepared)[0]
@@ -230,10 +234,11 @@ def translate_many(provider_name, items, proxy=None, provider=None):
     for index, item in enumerate(items):
         try:
             text = item['text']
-            if text not in translated:
+            key = (text, item.get('kind') == 'title')
+            if key not in translated:
                 notes = []
-                translated[text] = (translate_text(text, engine, notes), ' '.join(notes))
-            results[item['key']], note = translated[text]
+                translated[key] = (translate_text(text, engine, notes, title=key[1]), ' '.join(notes))
+            results[item['key']], note = translated[key]
             if note:
                 warnings[item['key']] = note
         except (ValueError, OSError) as error:

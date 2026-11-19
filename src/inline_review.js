@@ -121,6 +121,8 @@ function markedWords(data, side, style = reviewStyle.defaults) {
 
 function createInlineReview(vscode, context, execute = run) {
     const records = new Map();
+    const diagnostics = vscode.window.createOutputChannel?.('TeXScholar 接收与备份');
+    if (diagnostics) context.subscriptions.push(diagnostics);
     const style = () => reviewStyle.read(vscode.workspace.getConfiguration('localLatex'));
     let deleted = vscode.window.createTextEditorDecorationType({color: style().removedColor, textDecoration: style().strikeDeleted ? 'line-through' : 'none'});
     let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
@@ -129,8 +131,30 @@ function createInlineReview(vscode, context, execute = run) {
     const shownPanels = new Set(), openedPDFs = new Set(), pdfMetadata = new Map();
     const pdfRequests = new Map();
     let pdfRun;
+    const acceptedPDFPreparations = new Set();
     const previewChoices = new Map(), workbenchPDFStatus = new Map(), pdfIntents = new Map();
     let latestReviewState;
+    const titleTranslations = new Map();
+    let titleRun;
+    const locationTitle = edit => edit.location_zh || titleTranslations.get(edit.location) || edit.location;
+    function translateTitles(c, state) {
+        if (!config().get('translation.autoTranslate', true) || titleRun) return;
+        const texts = [...new Set(Object.values(state.edits).filter(e => OPEN.has(e.status) && !e.location_zh)
+            .map(e => e.location).filter(t => t && /[a-z]{3}/i.test(t) && !/[\u3400-\u9fff]/.test(t) && !titleTranslations.has(t)))];
+        if (!texts.length) return;
+        const provider = config().get('translation.provider', 'bing'), http = vscode.workspace.getConfiguration('http');
+        const proxy = ['google','googleapi'].includes(provider) ? null : http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;
+        titleRun = execute(config().get('pythonPath','python'), ['-X','utf8',path.join(__dirname,'review_translate.py')], c.repo,
+            {provider, proxy, items: texts.map((text,i) => ({key:String(i),text,kind:'title'}))}).then(raw => {
+            const result = JSON.parse(raw);
+            texts.forEach((text,i) => {if (result.results[String(i)]) titleTranslations.set(text,result.results[String(i)]);});
+            if (activeScope?.repo !== c.repo) return;
+            for (const record of records.values()) record.data.edit.display_location = locationTitle(record.data.edit);
+            updateList(); workbench.titles?.();
+            const errors = Object.values(result.errors || {});
+            if (errors.length) workbench.titleStatus?.('部分标题翻译失败：' + errors.join('；') + '。原始标题仍可查看。');
+        }).catch(error => workbench.titleStatus?.('标题翻译失败：' + error.message)).finally(() => {titleRun = undefined;});
+    }
     context.subscriptions.push(deleted);
     const config = () => vscode.workspace.getConfiguration('localLatex');
     const uri = (c, file) => vscode.Uri.file(path.join(c.repo, file));
@@ -145,7 +169,14 @@ function createInlineReview(vscode, context, execute = run) {
         const cfg = config(), argv = ['-X', 'utf8', path.join(__dirname, 'source_review.py'), '--project', c.repo,
             '--state', c.owner, '--git', cfg.get('gitPath', 'git')];
         if (expect) argv.push('--apply', '--expect', expect);
-        return JSON.parse(await execute(cfg.get('pythonPath', 'python'), [...argv, ...args], c.repo, input));
+        const started = performance.now();
+        const raw = await execute(cfg.get('pythonPath', 'python'), [...argv, ...args], c.repo, input);
+        const processMs = performance.now() - started, parseStarted = performance.now();
+        const result = JSON.parse(raw);
+        diagnostics?.appendLine(JSON.stringify({stage:'backend',operation:args[0],id:c.id,version:c.version,
+            ids:input?.items?.map(i=>({id:i.id,version:i.version,option:i.option})),
+            process_ms:processMs,json_parse_ms:performance.now()-parseStarted,timings:result.timings}));
+        return result;
     }
     function cleanBuffers(c, file) {
         for (const doc of vscode.workspace.textDocuments) {
@@ -154,13 +185,13 @@ function createInlineReview(vscode, context, execute = run) {
             }
         }
     }
-    async function readCurrent(c) {
+    async function readCurrent(c, requireMatch = true) {
         const data = await backend(c, ['inspect', '--id', c.id, '--source']);
         if (!OPEN.has(data.edit.status) || data.edit.versions.at(-1) !== c.version) {
             await refresh(c);
             throw new Error('该项已有新版或审核决定，显示已自动更新。请核对后再次操作；未代为接收或覆盖。');
         }
-        if (!data.source_match) throw new Error(`当前正文失配：审核项 ${c.id}，文件 ${data.edit.file}；原文被手动修改，需先核对；没有覆盖任何内容。`);
+        if (requireMatch && !data.source_match) throw new Error(`当前正文失配：审核项 ${c.id}，文件 ${data.edit.file}；原文被手动修改，需先核对；没有覆盖任何内容。`);
         return data;
     }
     async function current(c) {
@@ -229,7 +260,7 @@ function createInlineReview(vscode, context, execute = run) {
                 group.children = []; files.set(file, group);
             }
             const notes = (data.edit.requests || []).filter(n => n.status === 'open');
-            const item = new vscode.TreeItem(`${c.id} · ${data.edit.location || file}`,
+            const item = new vscode.TreeItem(`${c.id} · ${locationTitle(data.edit) || file}`,
                 notes.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
             item.id = JSON.stringify([c.repo, c.owner, batch, c.id]);
             const state = notes.length || data.edit.status === 'rework' ? '返修' : '待审';
@@ -345,9 +376,13 @@ function createInlineReview(vscode, context, execute = run) {
         return task;
     }
     async function renderRefresh(c, explicitPanel = false) {
+        const started = performance.now();
         watchScope(c);
         const state = await backend(c, ['cards']);
         latestReviewState = state;
+        require('./backup').restoreAutomaticStatus(c.repo, state.auto_backup);
+        workbench.backupStatus?.(require('./backup').automaticStatus(c.repo));
+        if (state.auto_backup_requested && state.auto_backup?.status !== 'failed') scheduleBackup(c);
         reviewFiles.clear(); deferredFiles.clear();
         for (const edit of Object.values(state.edits)) if (OPEN.has(edit.status)) reviewFiles.add(path.join(c.repo, edit.file));
         if (batch && batch !== state.session) {
@@ -376,6 +411,11 @@ function createInlineReview(vscode, context, execute = run) {
             const edit = data.edit;
             if (!OPEN.has(edit.status)) continue;
             const selected = {...c, id, version: edit.versions.at(-1)};
+            if (!data.source_match) {
+                data.source.text = state.sources[edit.file];
+                records.set(id, {c: selected, data, displayConflict: true});
+                continue;
+            }
             data.source.text = state.sources[edit.file];
             if (!documents.has(edit.file)) documents.set(edit.file, await vscode.workspace.openTextDocument(uri(c, edit.file)));
             const doc = documents.get(edit.file);
@@ -396,10 +436,12 @@ function createInlineReview(vscode, context, execute = run) {
         });
         if (presentationChanged) for (const record of records.values()) workbenchPDFStatus.delete(choiceKey(record.c));
         renderedOwnerHash = state.sha256;
-        workbench.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), c);
+        workbench.sync(new Map(records), c);
+        translateTitles(c, state);
         decorate();
         await setContext();
         await showPanel(c.repo, explicitPanel);
+        diagnostics?.appendLine(JSON.stringify({stage:'host_cards_refresh',ms:performance.now()-started,items:records.size}));
     }
     function relocateDocument(document) {
         const text = document.getText(), currentView = positions.view(text), oldViews = new Map();
@@ -416,7 +458,7 @@ function createInlineReview(vscode, context, execute = run) {
         if (!affected) return;
         if (document.isDirty) deferredFiles.add(document.uri.fsPath);
         updateList();
-        workbench.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), watchedScope);
+        workbench.sync(new Map(records), watchedScope);
     }
     function decorate() {
         for (const editor of vscode.window.visibleTextEditors) {
@@ -458,24 +500,72 @@ function createInlineReview(vscode, context, execute = run) {
             return numericX !== numericY ? (numericX ? -1 : 1) : x.length - y.length || x.localeCompare(y);
         });
     }
+    function decisionContext(arg) {
+        const c = arg === undefined ? (workbench.active || contextFor()) : arg;
+        if (!c || !['repo', 'owner', 'id', 'version'].every(k => typeof c[k] === 'string' && c[k])) throw new Error('接收目标缺少明确 ID/version；操作已停止，请重新打开审核项。');
+        return {...c};
+    }
     async function accept(arg) {
-        const c = contextFor(arg), data = await current(c);
+        const c = decisionContext(arg), data = await current(c);
         if (data.options?.length > 1 && !c.option) {await openWorkbench(c); return;}
         const navigation = pdfMetadata.get(c.repo + '|' + c.id) || context.workspaceState?.get('reviewPDFMeta', {})[c.repo + '|' + c.id];
         const ordered = orderedRecords(), index = ordered.findIndex(record => record.c.id === c.id);
         const following = ordered.slice(index + 1).map(record => record.c.id);
         await backend(c, ['decide', '--accept', c.id, '--version', c.version, ...(data.options?.length && data.options.length > 1 ? ['--option', c.option || 'A'] : data.options?.length && c.option ? ['--option', c.option] : [])], undefined, data.sha256);
+        vscode.window.showInformationMessage(`${c.id} 已接收并保存；Git 备份已在后台排队，未决批注保留。`);
+        scheduleBackup(c);
         await refresh(c);
         const next = following.map(id => records.get(id)).find(Boolean);
         if (next && !c.workbench) await openWorkbench(next.c);
-        if (navigation && config().get('reviewPDF.autoUpdateAfterAccept', true)) await queueAcceptedPDF(c, navigation);
-        vscode.window.showInformationMessage(`${c.id} 已接收并替换正文；未提交 Git 或推送。`);
+        if (navigation && config().get('reviewPDF.autoUpdateAfterAccept', true)) scheduleAcceptedPDF(c, navigation);
     }
     async function reject(arg) {
-        const c = contextFor(arg), data = await current(c);
+        const c = decisionContext(arg), data = await readCurrent(c, false);
+        cleanBuffers(c, data.edit.file);
         await backend(c, ['decide', '--reject', c.id, '--version', c.version], undefined, data.sha256);
         await refresh(c);
         vscode.window.showInformationMessage(`${c.id} 候选已拒绝，原文保留；不代表科学问题已解决，未提交 Git 或推送。`);
+    }
+    function scheduleBackup(c) {
+        if (!c?.repo || !c.owner) return;
+        const cfg = config();
+        require('./backup').enqueueAutomatic(c.repo, c.owner,
+            {git: cfg.get('gitPath', 'git'), gh: cfg.get('ghPath', 'gh'), python: cfg.get('pythonPath', 'python')},
+            value => {workbench.backupStatus?.(value); diagnostics?.appendLine(JSON.stringify({stage:'git_backup',...value}));});
+    }
+    async function acceptBatch(items) {
+        if (!Array.isArray(items) || !items.length) throw new Error('请明确选择接收项及方案。');
+        const c = decisionContext(items[0]);
+        if (items.some(i => i.repo !== c.repo || i.owner !== c.owner)) throw new Error('批量接收不能跨论文项目。');
+        const state = await backend(c, ['cards']);
+        for (const item of items) {
+            decisionContext(item);
+            const edit = state.edits[item.id];
+            if (!edit || !OPEN.has(edit.status) || edit.versions.at(-1) !== item.version) throw new Error('选中项已变化：' + item.id + '；未接收任何项。');
+            cleanBuffers(c, edit.file);
+        }
+        const result = await backend(c, ['decide-batch'], {items: items.map(({id, version, option}) => ({id, version, option}))}, state.sha256);
+        vscode.window.showInformationMessage('已接收并保存 ' + result.accepted.join(', ') + '；后台备份已排队。');
+        scheduleBackup(c);
+        await refresh(c);
+        const navigation = items.map(i => pdfMetadata.get(i.repo + '|' + i.id)).find(Boolean);
+        if (navigation && config().get('reviewPDF.autoUpdateAfterAccept', true)) scheduleAcceptedPDF(c, navigation);
+        return result;
+    }
+    async function relocate(c) {
+        c = decisionContext(c);
+        const data = await readCurrent(c, false), editor = vscode.window.activeTextEditor;
+        if (!editor || !sameFile(editor.document.uri.fsPath, path.join(c.repo, data.edit.file))) throw new Error('先打开 ' + data.edit.file + '，选择准确原文；插入项请放置光标，再点修复位置。');
+        cleanBuffers(c, data.edit.file);
+        const text = editor.document.getText(), a = editor.document.offsetAt(editor.selection.start), b = editor.document.offsetAt(editor.selection.end);
+        if (text.slice(a,b) !== data.original) throw new Error('所选原文与候选原文不完全相同；未修复。插入项需要空选区。');
+        const view = positions.view(text);
+        if (!view || view.start !== undefined && (a < view.end && b >= view.start)) throw new Error('不能在审核运行状态块内定位。');
+        const offset = x => view.end !== undefined && x >= view.end ? x - (view.end-view.start) : x;
+        await backend(c, ['relocate', '--id', c.id, '--version', c.version],
+            {before: data.original, left: view.body.slice(0,offset(a)), right: view.body.slice(offset(b))}, data.sha256);
+        await refresh(c);
+        return readCurrent(c, false);
     }
     async function annotate(arg) {
         const c = contextFor(arg), data = await current(c), editor = vscode.window.activeTextEditor;
@@ -488,7 +578,7 @@ function createInlineReview(vscode, context, execute = run) {
             selected = {side: 'original', value, start: data.original.slice(0, start).replace(/\r\n/g, '\n').length,
                 end: data.original.slice(0, end).replace(/\r\n/g, '\n').length};
         }
-        workbench.setRecords(new Map(orderedRecords().filter(r => !r.displayConflict).map(r => [r.c.id, r])));
+        workbench.setRecords(new Map(orderedRecords().map(r => [r.c.id, r])));
         await workbench.annotate(c, selected);
     }
     async function saveNote(c, note, text) {
@@ -523,7 +613,7 @@ function createInlineReview(vscode, context, execute = run) {
             const {delta, boundary} = offsets.get(source.text), shift = source.start >= boundary ? delta : 0;
             records.set(id, {...peer, data: {...peer.data, source: {...source, text: saved.owner_text, start: source.start + shift, end: source.end + shift}}});
         }
-        workbench.sync(new Map([...records].filter(([, r]) => !r.displayConflict)), c);
+        workbench.sync(new Map(records), c);
     }
     async function exclusive(action) {
         if (busy) throw new Error('当前审核操作尚未结束。');
@@ -536,9 +626,10 @@ function createInlineReview(vscode, context, execute = run) {
         return saved?.version === c.version ? saved.option : 'A';
     }
     const workbench = require('./review_workbench').createWorkbench(vscode, context, {
-        style, read: readCurrent, selection: selectedOption, activeChanged: selectReviewItem,
+        style, read: c => readCurrent(c, false), selection: selectedOption, activeChanged: selectReviewItem,
+        trace: value => diagnostics?.appendLine(JSON.stringify(value)),
         directory: () => Object.entries(latestReviewState?.edits || {}).map(([id, edit]) => ({id, file: edit.file, kind: edit.kind, status: edit.status,
-            location: edit.location, summary: displayText(records.get(id)?.data?.options?.[0]?.after || '').replace(/\s+/g, ' ').slice(0, 140), questions: (edit.questions || []).map(q => q.id), requests: (edit.requests || []).filter(n => n.status === 'open').length})),
+            version: edit.versions.at(-1), source_match: edit.source_match, options: records.get(id)?.data?.options?.map(o => o.label), manual_options: records.get(id)?.data?.options?.filter(o => o.manually_edited).map(o => o.label), option: selectedOption({...activeScope, id, version: edit.versions.at(-1)}), location: locationTitle(edit), summary: displayText(records.get(id)?.data?.options?.[0]?.after || '').replace(/\s+/g, ' ').slice(0, 140), questions: (edit.questions || []).map(q => q.id), requests: (edit.requests || []).filter(n => n.status === 'open').length})),
         pdfStatus: c => {
             const entry = workbenchPDFStatus.get(choiceKey(c));
             return entry?.version === c.version && entry.option === selectedOption(c) ? entry.text : 'PDF 尚未核对／待更新';
@@ -563,6 +654,10 @@ function createInlineReview(vscode, context, execute = run) {
         }),
         note: (c, selected, text) => exclusive(() => saveNote(c, selected, text)),
         accept: c => exclusive(() => accept(c)), reject: c => exclusive(() => reject(c)),
+        acceptBatch: items => exclusive(() => acceptBatch(items)),
+        relocate: c => exclusive(() => relocate(c)),
+        backupStatus: () => require('./backup').automaticStatus(activeScope?.repo),
+        retryBackup: () => scheduleBackup(activeScope),
         saved(c, option, compare) {if (selectedOption(c) === option) requestWorkbenchPDF(c, option, compare, false);},
         preview: requestWorkbenchPDF,
         locate: async (c, option) => {
@@ -571,8 +666,9 @@ function createInlineReview(vscode, context, execute = run) {
             await require('./pdf_navigation').locate(vscode, context, navigation, {...c, option});
         },
         source: async c => {
-            const data = await current(c), doc = await vscode.workspace.openTextDocument(uri(c, data.edit.file));
+            const data = await readCurrent(c, false), doc = await vscode.workspace.openTextDocument(uri(c, data.edit.file));
             const editor = await vscode.window.showTextDocument(doc, {preview: false, viewColumn: vscode.ViewColumn.One});
+            if (!data.source_match) {vscode.window.showInformationMessage('请选择准确原文或插入点，再回审核页点“修复位置”。'); return;}
             const at = range(doc, data); editor.selection = new vscode.Selection(at.start, at.start);
             editor.revealRange(at, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
         },
@@ -602,9 +698,9 @@ function createInlineReview(vscode, context, execute = run) {
         const c = arg?.repo ? arg : workbench.active || orderedRecords()[0]?.c;
         if (!c) return vscode.window.showInformationMessage('没有待审候选。可先把插件三方案规则交给 AI 创建候选。');
         trusted(c);
-        if (arg?.repo && arg.version) await readCurrent(c);
+        if (arg?.repo && arg.version) await readCurrent(c, false);
         if (arg?.option) previewChoices.set(choiceKey(c), {version: c.version, option: arg.option});
-        workbench.setRecords(new Map(orderedRecords().filter(r => !r.displayConflict).map(r => [r.c.id, r])));
+        workbench.setRecords(new Map(orderedRecords().map(r => [r.c.id, r])));
         await workbench.show(c);
     }
     function pdfStatus(c, text, option = selectedOption(c)) {
@@ -670,6 +766,11 @@ function createInlineReview(vscode, context, execute = run) {
             }
         }).finally(() => {pdfRun = undefined; if (pdfRequests.size) startPDFQueue();});
     }
+    function scheduleAcceptedPDF(c, navigation) {
+        const task = queueAcceptedPDF(c, navigation).catch(error => vscode.window.showErrorMessage(error.message));
+        acceptedPDFPreparations.add(task);
+        task.finally(() => acceptedPDFPreparations.delete(task));
+    }
     async function queueAcceptedPDF(c, navigation) {
         const saved = JSON.parse(await fs.readFile(navigation, 'utf8'));
         if (!saved.document) {
@@ -688,6 +789,7 @@ function createInlineReview(vscode, context, execute = run) {
         return schedulePDF(document, () => generatePDF(c, document, false));
     }
     async function generatePDF(c, document, automatic, requestFile) {
+        const started = performance.now();
         const cfg = config();
         await vscode.window.withProgress({location: vscode.ProgressLocation.Notification,
             title: automatic ? '接收后更新审核 PDF（后台，不阻塞下一项）' : '生成／更新完整论文审核 PDF'}, async () => {
@@ -696,6 +798,7 @@ function createInlineReview(vscode, context, execute = run) {
                 '--git', cfg.get('gitPath', 'git'), '--latexdiff', cfg.get('latexdiffPath'), '--latexmk', cfg.get('latexmkPath'),
                 '--style', JSON.stringify(style()), ...(automatic ? ['--refresh-accepted'] : []), ...(requestFile ? ['--request-file', requestFile] :
                     ['--choices', JSON.stringify(Object.fromEntries(orderedRecords().filter(r => r.c.repo === c.repo).map(r => [r.c.id, {version: r.c.version, option: selectedOption(r.c)}])))])], c.repo));
+            diagnostics?.appendLine(JSON.stringify({stage:'pdf_build',id:c.id,version:c.version,ms:performance.now()-started,automatic}));
             if (!automatic) await current(c);
             if (result.navigation) {
                 const saved = {...context.workspaceState?.get('reviewPDFMeta', {})};
@@ -760,6 +863,9 @@ function createInlineReview(vscode, context, execute = run) {
     }
     function command(name, handler, displayOnly = false) {
         context.subscriptions.push(vscode.commands.registerCommand(name, async (...args) => {
+            if (['localLatex.inlineAccept', 'localLatex.inlineReject'].includes(name)) {
+                try {args = [decisionContext(args[0])];} catch (error) {return vscode.window.showErrorMessage(error.message);}
+            }
             await startup;
             if (busy && !displayOnly) return vscode.window.showWarningMessage('当前审核操作尚未结束。');
             if (!displayOnly) busy = true;
@@ -796,14 +902,14 @@ function createInlineReview(vscode, context, execute = run) {
         if (OPEN.has(picked.edit.status)) return open(target);
         if (!target.version) throw new Error('该已完结记录已精简；请到 Git 查看已备份成果。');
         const data = await backend(target, ['inspect', '--id', target.id, '--version', target.version, '--source']);
-        if (!data.source_match) throw new Error('该位置后来发生变化，无法精确定位；请查看文件或 Git，不猜测跳转。');
+        if (requireMatch && !data.source_match) throw new Error('该位置后来发生变化，无法精确定位；请查看文件或 Git，不猜测跳转。');
         const editor = await vscode.window.showTextDocument(uri(target, data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
         if (editor.document.getText() !== data.source.text) throw new Error('编辑区内容与定位快照不同，请先保存并重新核对位置。');
         const at = range(editor.document, data);
         editor.selection = new vscode.Selection(at.start, at.end);
         editor.revealRange(at, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     }, true);
-    command('localLatex.inlinePreview', preview);
+    command('localLatex.inlinePreview', preview, true);
     command('localLatex.inlineLocatePDF', async arg => {
         const c = contextFor(arg);
         await current(c);
@@ -890,7 +996,8 @@ function createInlineReview(vscode, context, execute = run) {
     startup = enableReview().catch(error => {vscode.window.showErrorMessage(error.message);});
     return {open, refresh, accept, reject, annotate, preview, addRequests, reviewList, listProvider, records,
         whenTranslationIdle: () => workbench.whenTranslationIdle(),
-        workbench, whenPDFIdle: () => pdfRun || Promise.resolve(), ready: startup};
+        whenPDFPrepared: () => Promise.all([...acceptedPDFPreparations]),
+        workbench, whenPDFIdle: async () => {await Promise.all([...acceptedPDFPreparations]); await pdfRun;}, ready: startup};
 }
 function activate(context) { return createInlineReview(require('vscode'), context); }
 module.exports = {activate, createInlineReview, markedWords, displayText, summary, deletionPreview};

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
-const {inspectBackup,backupProject,finishReview,run} = require('./backup');
+const {inspectBackup,backupProject,finishReview,automaticBackup,enqueueAutomatic,run} = require('./backup');
 const GIT = process.env.LOCAL_LATEX_GIT;
 async function fixture(label) {
     const parent = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT,label+'-'));
@@ -36,11 +36,15 @@ async function fixture(label) {
 
 const PYTHON = process.env.LOCAL_LATEX_PYTHON;
 const SCRIPTS = fs.existsSync(path.join(__dirname,'source_review.py')) ? __dirname : path.resolve(__dirname,'../../scripts');
-async function reviewFixture(label, dependency = false, previousFeedback = false) {
+async function reviewFixture(label, dependency = false, previousFeedback = false, crlf = false) {
     const f = await fixture(label);
     fs.writeFileSync(path.join(f.root,'main.tex'),'% CODEX-RULES-BEGIN\n% 保留写作规则。\n% CODEX-RULES-END\n\\documentclass{article}\n\\begin{document}\nThe model is strong and fast.\n\\end{document}\n','utf8');
     fs.writeFileSync(path.join(f.root,'reply.tex'),'% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-NEXT manuscript=1 response=a\n% CODEX-REVIEW-STATE-END\n\\documentclass{article}\n\\begin{document}\nThank you.\n\\end{document}\n','utf8');
     fs.writeFileSync(path.join(f.root,'.gitignore'),'.codex-review/\n.latex-build/\nclean_dir/\n','utf8');
+    if (crlf) {
+        await f.git(['config','core.autocrlf','true']);
+        for (const name of ['main.tex','reply.tex']) fs.writeFileSync(path.join(f.root,name),'\uFEFF'+fs.readFileSync(path.join(f.root,name),'utf8').replace(/\n/g,'\r\n'),'utf8');
+    }
     await f.git(['add','--','main.tex','reply.tex','.gitignore']);
     await f.git(['commit','-m','paper sources before local review']); await f.git(['push','origin','master']);
     f.baseline = (await f.git(['rev-parse','HEAD'])).trim();
@@ -73,6 +77,132 @@ async function reviewFixture(label, dependency = false, previousFeedback = false
     const options = {git:GIT,gh:'fixture-gh',python:PYTHON,checkpointScript:path.join(SCRIPTS,'review_checkpoint.py')};
     return {...f,status,backend,common,options};
 }
+test('automatic accepted-only checkpoint preserves delayed notes, manual source and staging', async () => {
+    const f = await reviewFixture('auto-partial');
+    await f.backend(['decide','--accept','1']);
+    const rawOwner = fs.readFileSync(path.join(f.root,'reply.tex'));
+    const source = fs.readFileSync(path.join(f.root,'main.tex'),'utf8');
+    fs.writeFileSync(path.join(f.root,'main.tex'),source.replace('The model','The author manually edited model'),'utf8');
+    const before = await f.status();
+    const events = [];
+    const result = await automaticBackup(f.root,'reply.tex',f.options,e=>events.push(e),f.execute);
+    const committed = await f.git(['show',result.commit+':main.tex']);
+    assert(committed.includes('reliable')); assert(committed.includes('strong') === false);
+    assert(committed.includes('fast')); assert(!committed.includes('manually edited'));
+    assert(fs.readFileSync(path.join(f.root,'main.tex'),'utf8').includes('manually edited'));
+    const after = await f.status();
+    assert.deepEqual(after.edits['2'],before.edits['2']);
+    assert.deepEqual(after.edits.a,before.edits.a);
+    assert(after.edits['2'].requests[0].text.includes('PRIVATE'));
+    assert.equal(after.auto_backup_done,result.source);
+    assert(fs.readFileSync(path.join(f.root,'reply.tex')).equals(rawOwner), 'background progress never invalidates a foreground state-file receipt');
+    assert(events.some(e=>e.status==='local')); assert.equal(events.at(-1).status,'done');
+    assert.equal((await f.git(['diff','--cached','--name-only'])).trim(),'');
+    const again = await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
+    assert.equal(again.skipped,true);
+});
+
+test('offline automatic push preserves one local commit and retries while later acceptance remains queued', async () => {
+    const f = await reviewFixture('auto-offline');
+    await f.backend(['decide','--accept','1']);
+    const offline = (exe,args,cwd,input) => args[0]==='fetch' ? Promise.reject(new Error('fixture offline credentials')) : f.execute(exe,args,cwd,input);
+    await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,()=>{},offline),/offline credentials/);
+    const local = (await f.git(['rev-parse','HEAD'])).trim();
+    const failed = await f.status();
+    assert.equal(failed.auto_backup.status,'failed'); assert.equal(failed.auto_backup_job.commit,local);
+    await f.backend(['decide','--accept','a']);
+    const pending = await f.status();
+    assert.notEqual(pending.auto_backup_requested,pending.auto_backup_job.source);
+    await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),local,'retry never duplicates the saved commit');
+    assert.notEqual((await f.status()).auto_backup_requested,(await f.status()).auto_backup_done);
+    const next = await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
+    assert.notEqual(next.commit,local);
+    assert.equal((await f.status()).edits['2'].status,'rework');
+    assert((await f.git(['show',next.commit+':reply.tex'])).includes('Thank you for this useful comment.'));
+    assert(!(await f.git(['show',next.commit+':reply.tex'])).includes('CODEX-REVIEW-DATA'));
+});
+
+test('automatic backup refuses manual ahead commits and existing staging without blocking decisions', async () => {
+    const f = await reviewFixture('auto-ahead');
+    await f.backend(['decide','--accept','1']);
+    fs.writeFileSync(path.join(f.root,'unrelated.txt'),'unrelated','utf8');
+    await f.git(['add','unrelated.txt']); await f.git(['commit','-m','unrelated local commit']);
+    const head = (await f.git(['rev-parse','HEAD'])).trim();
+    await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute),/不会连带上传/);
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),head);
+    await f.backend(['decide','--accept','a']);
+    assert.equal((await f.status()).edits.a.status,'accepted');
+    const g = await reviewFixture('auto-staging');
+    await g.backend(['decide','--accept','1']);
+    fs.writeFileSync(path.join(g.root,'unrelated.txt'),'manual staging','utf8');
+    await g.git(['add','unrelated.txt']);
+    const index = fs.readFileSync(path.join(g.root,'.git/index'));
+    await assert.rejects(automaticBackup(g.root,'reply.tex',g.options,()=>{},g.execute),/暂存/);
+    assert(fs.readFileSync(path.join(g.root,'.git/index')).equals(index));
+    assert(!fs.existsSync(path.join(g.root,'.git/index.lock')));
+});
+
+test('automatic checkpoint refuses remote advancement and hook rejection with a visible recoverable status', async () => {
+    const f = await reviewFixture('auto-remote');
+    await f.backend(['decide','--accept','1']);
+    const other = path.join(path.dirname(f.root),'remote-editor');
+    await run(GIT,['clone',f.remote,other],path.dirname(f.root));
+    await run(GIT,['config','user.name','Remote author'],other);
+    await run(GIT,['config','user.email','remote@example.invalid'],other);
+    fs.writeFileSync(path.join(other,'remote.txt'),'Remote advance','utf8');
+    await run(GIT,['add','remote.txt'],other); await run(GIT,['commit','-m','remote advance'],other); await run(GIT,['push','origin','master'],other);
+    await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute),/远端 master 已推进/);
+    assert.equal((await f.status()).auto_backup.status,'failed');
+    await f.backend(['decide','--accept','a']);
+    assert.equal((await f.status()).edits.a.status,'accepted');
+    const g = await reviewFixture('auto-hook');
+    await g.backend(['decide','--accept','1']);
+    const head = (await g.git(['rev-parse','HEAD'])).trim();
+    fs.writeFileSync(path.join(g.root,'.git/hooks/pre-commit'),'#!/bin/sh\necho fixture-hook-denied >&2\nexit 1\n','utf8');
+    await assert.rejects(automaticBackup(g.root,'reply.tex',g.options,()=>{},g.execute),/fixture-hook-denied/);
+    assert.equal((await g.git(['rev-parse','HEAD'])).trim(),head);
+    assert(!fs.existsSync(path.join(g.root,'.git/index.lock')));
+});
+
+test('acceptance during a background network wait completes and the queue backs up both checkpoints', async () => {
+    const f = await reviewFixture('auto-continuous');
+    await f.backend(['decide','--accept','1']);
+    let entered, release, held = false;
+    const waiting = new Promise(resolve=>{entered=resolve;});
+    const gate = new Promise(resolve=>{release=resolve;});
+    const execute = async (exe,args,cwd,input) => {
+        if (args[0]==='fetch' && !held) {held=true;entered();await gate;}
+        return f.execute(exe,args,cwd,input);
+    };
+    const queue = enqueueAutomatic(f.root,'reply.tex',f.options,()=>{},execute);
+    await Promise.race([waiting,queue.then(()=>{throw new Error('backup ended before the network gate');})]);
+    const before = await f.status();
+    await f.backend(['decide','--accept','a']);
+    assert.equal((await f.status()).edits.a.status,'accepted','foreground writer is not held by a network wait');
+    enqueueAutomatic(f.root,'reply.tex',f.options,()=>{},execute);
+    release(); await queue;
+    const after = await f.status();
+    assert.equal(after.auto_backup.status,'done');
+    assert.equal(after.auto_backup_done,after.auto_backup_requested);
+    assert.deepEqual(after.edits['2'],before.edits['2']);
+    assert((await f.git(['show','HEAD:reply.tex'])).includes('Thank you for this useful comment.'));
+    assert.equal(Number((await f.git(['rev-list','--count',f.baseline+'..HEAD'])).trim()),2);
+});
+
+test('automatic checkpoint preserves UTF-8 BOM and honors existing Git CRLF normalization', async () => {
+    const f = await reviewFixture('auto-crlf',false,false,true);
+    await f.backend(['decide','--accept','1']);
+    const result = await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
+    const committed = await f.git(['show',result.commit+':main.tex']);
+    assert.equal(committed.charCodeAt(0),0xFEFF);
+    assert(committed.includes('reliable'));
+    assert(!committed.includes('\r\n'));
+    const working = fs.readFileSync(path.join(f.root,'main.tex'),'utf8');
+    assert.equal(working.charCodeAt(0),0xFEFF); assert(working.includes('\r\n'));
+    assert.equal((await f.git(['diff','--cached','--name-only'])).trim(),'');
+});
+
 test('project backup commits meaningful searchable notes, pushes normally and excludes private review/build files',async () => {
     const f = await fixture('backup-success'); f.edit();
     fs.writeFileSync(path.join(f.root,'refs.bib'),'@article{fixture,title={Fixture}}\n','utf8');

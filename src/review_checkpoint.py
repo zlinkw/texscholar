@@ -40,7 +40,7 @@ def plan(r):
     sources, manual = {}, []
     for name in r.state['rounds'][-1]['files']:
         current = r.read(name)
-        approved = r.contents(r.state['accepted'], name)
+        approved = r.contents(r.backup_status().get('done') or r.state['accepted'], name)
         if source_text(current) != source_text(approved):
             manual.append(name)
         # Pending options live outside the source. The author's explicit backup
@@ -134,6 +134,14 @@ def compact(r):
     active['ids'] = [id_ for id_ in active['ids'] if id_ in edits]
     r.state['rounds'] = [active]
     r.state['checkpoint'] = {'commit': commit}
+    # Explicit author-reviewed backup also resolves automatic attribution blockers.
+    r.state['auto_backup_projection'] = r.state['accepted']
+    r.state['auto_backup_base'] = r.state['accepted']
+    r.state['auto_backup_requested'] = r.state['accepted']
+    r.state['auto_backup_done'] = r.state['accepted']
+    r.state['auto_backup_items'] = {}
+    r.state.pop('auto_backup_job', None)
+    r.state.pop('auto_backup_projection_error', None)
     del r.state['pending_backup']
     return {}, {'checkpoint': commit, 'removed_ids': sorted(removed), 'dependency_ids': sorted(minimal),
                 'pending_ids': [id_ for id_, e in edits.items() if e['status'] in PENDING]}
@@ -165,6 +173,7 @@ def referenced_objects(r):
         elif isinstance(value, str) and re.fullmatch(r'[a-f0-9]{64}', value) and (r.object_root / (value + '.json')).exists():
             used.add(value)
     references(r.state)
+    references(r.backup_status())
     return used
 
 
@@ -287,6 +296,12 @@ def dispatch(r, args):
         if args.apply:
             r.persist(updated, args.expect)
             r = Review(args.project, args.state, args.git)
+            if args.operation == 'compact':
+                journal = r.object_root.parent / 'automatic-backup.json'
+                if journal.is_symlink() or journal.is_junction() or journal.exists() and not journal.is_file():
+                    raise Conflict('后台备份日志不是普通文件')
+                r.write(journal, json.dumps({'session': r.state['session'], 'done': r.state['accepted'],
+                    'status': {'status': 'done', 'commit': r.state['checkpoint']['commit'], 'message': '作者核对的成果备份已完成'}}, ensure_ascii=False).encode('utf-8'))
         result['sha256'] = digest(r.raw)
         result['applied'] = args.apply
         if args.operation == 'compact':

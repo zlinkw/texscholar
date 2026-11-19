@@ -1,6 +1,33 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html, filterItems} = require('./review_workbench');
+
+test('out-of-order reads and retired page messages cannot change the clicked decision identity', async () => {
+    let receive, resolveOld;
+    const messages = [], accepted = [];
+    const make = id => ({c:{repo:'/identity',owner:'reply.tex',id,version:'version-'+id},data:{id,version:'version-'+id,
+        original:'',source_match:true,edit:{file:'reply.tex',kind:'response',versions:['version-'+id],requests:[]},
+        options:[{label:'A',after:id,reason:'Explicit identity',changes:[]}]}});
+    const records = new Map(['dp','dq','dr','ds'].map(id=>[id,make(id)]));
+    const delayed = new Promise(resolve=>{resolveOld=resolve;});
+    const vscode = {Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{
+        cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services = {read:c=>c.id==='dp'?delayed:Promise.resolve(structuredClone(records.get(c.id).data)),
+        style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,
+        directory:()=>[...records].map(([id,r])=>({id,version:r.c.version,...r.data.edit})),
+        accept:async c=>{accepted.push({...c});records.delete(c.id);view.sync(records,c);}};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(records);
+    const old=view.show(records.get('dp').c);await view.show(records.get('ds').c);resolveOld(records.get('dp').data);await old;
+    assert.equal(view.active.id,'ds');
+    await receive({type:'ready',instance:'current-page'});
+    for (const extra of [{id:'dp'},{version:'expired'},{instance:'retired-page'}]) {
+        await receive({type:'accept',id:'ds',version:'version-ds',instance:'current-page',option:'A',...extra});
+        assert.equal(accepted.length,0);
+    }
+    await receive({type:'accept',id:'ds',version:'version-ds',instance:'current-page',option:'A'});
+    assert.deepEqual(accepted.map(c=>[c.id,c.version]),[['ds','version-ds']]);
+    assert(records.has('dp')&&records.has('dq')&&records.has('dr'));
+});
 test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts and next acceptance', async () => {
     let receive, creations = 0, htmlWrites = 0, confirmation, disposed, panel, changed;
     const messages = [], events = [], original = 'The model is strong.';
@@ -13,7 +40,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
             reveal() {panel.visible = true;}, onDidChangeViewState(fn) {changed = fn;}, dispose() {}, onDidDispose(fn) {disposed = fn;}, webview: {
             cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}),
             set html(value) {htmlWrites++; assert(value.includes('Content-Security-Policy'));},
-            onDidReceiveMessage: fn => {receive = fn;}, postMessage: async value => messages.push(value)}};}}};
+            onDidReceiveMessage: fn => {let pageInstance; receive = message => {if (message.type === 'ready') pageInstance = message.instance; return fn({...message, instance: message.instance ?? pageInstance});};}, postMessage: async value => messages.push(value)}};}}};
     const services = {read: async c => {const record = records.get(c.id); assert.equal(c.version, record.c.version); return structuredClone(record.data);},
         style: () => require('./review_style').defaults, selection: () => 'A', pdfStatus: () => '待更新', autoTranslate: () => false,
         directory: () => [...records.values()].map(r => ({id: r.c.id, ...r.data.edit})),
@@ -262,7 +289,7 @@ test('filtered navigation and own saves preserve exact note bindings without acc
             r.c.version = r.data.version = 'v' + ++version; r.data.edit.versions.push(r.c.version); view.sync(records, c); return structuredClone(r.data);}, saved() {},
         accept: async c => {writes.push('accept'); records.delete(c.id); view.sync(records, c);}};
     const vscode = {Uri: {file: fsPath => ({fsPath})}, ViewColumn: {One: 1}, window: {createWebviewPanel: () => ({visible: true, reveal() {}, dispose() {},
-        onDidDispose() {}, onDidChangeViewState() {}, webview: {asWebviewUri: uri => uri.fsPath, onDidReceiveMessage: fn => {receive = fn;}, postMessage: m => messages.push(m)}})}};
+        onDidDispose() {}, onDidChangeViewState() {}, webview: {asWebviewUri: uri => uri.fsPath, onDidReceiveMessage: fn => {let pageInstance; receive = message => {if (message.type === 'ready') pageInstance = message.instance; return fn({...message, instance: message.instance ?? pageInstance});};}, postMessage: m => messages.push(m)}})}};
     const view = createWorkbench(vscode, {subscriptions: []}, services);
     view.setRecords(records); await view.show(records.get('1').c); await receive({type: 'ready'});
     const send = (type, extra = {}) => receive({type, id: view.active.id, version: view.active.version, ...extra});
@@ -304,7 +331,7 @@ test('filtered navigation and own saves preserve exact note bindings without acc
     await send('backRelated'); assert.equal(view.active.id, '1');
     assert.match(messages.findLast(m => m.type === 'result').message, /不再可用/);
     records.set('b', {c: {repo: '/fixture', owner: 'reply.tex', id: 'b', version: 'v1'}, data: structuredClone(records.get('1').data)});
-    records.get('b').data.edit.kind = 'response';
+    records.get('b').data.edit.kind = 'response'; records.get('b').data.version = 'v1';
     await send('switch', {target: 'b'});
     await send('accept', {option: 'A'}); assert.equal(view.active.id, 'b', 'do not escape filter after its last item');
     await send('filter', {filter: {query: '', kind: '', notes: false}});

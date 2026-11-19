@@ -13,6 +13,143 @@ ROOT = Path(os.environ['SOURCE_REVIEW_FIXTURES']); ROOT.mkdir(parents=True, exis
 
 
 class NativeReview(unittest.TestCase):
+    def insertions(self):
+        text = self.review().read('main.tex')
+        point = text.index('The model')
+        ids = []
+        for label in ['Title.', 'Quote.', r'\[x=1\]', 'Variables.']:
+            ids.append(self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': '',
+                'left': text[:point], 'right': text[point:], 'after': label + '\n'})['id'])
+        return ids
+
+    def test_adjacent_insertions_remain_locatable_in_either_order(self):
+        ids = self.insertions()
+        for id_ in reversed(ids):
+            self.apply('decide', [id_], [])
+            for other in ids:
+                if self.review().state['edits'][other]['status'] == 'pending':
+                    self.assertTrue(self.review().inspect(other)['source_match'])
+
+    def test_batch_insertions_preserve_explicit_order_and_selected_options(self):
+        ids = self.insertions()
+        before = self.review().read('main.tex')
+        versions = {i: self.review().state['edits'][i]['versions'][-1] for i in ids}
+        self.apply('decide', ids[1::2], [], {i: versions[i] for i in ids[1::2]})
+        current = self.review()
+        self.assertLess(current.read('main.tex').index('Quote.'), current.read('main.tex').index('Variables.'))
+        for i in ids[::2]:
+            self.assertTrue(current.inspect(i)['source_match'])
+            self.assertEqual(current.state['edits'][i]['versions'][-1], versions[i])
+        self.apply('decide', ids[::2], [])
+        text = self.review().read('main.tex')
+        for value in ['Title.', 'Quote.', r'\[x=1\]', 'Variables.']:
+            self.assertEqual(text.count(value), 1)
+        self.assertIn(before[:before.index('The model')], text)
+
+    def test_all_insertions_accept_together_in_explicit_reverse_order(self):
+        ids = self.insertions()
+        before = self.review().read('main.tex')
+        point = before.index('The model')
+        self.apply('decide', list(reversed(ids)), [])
+        self.assertEqual(self.review().read('main.tex'), before[:point] +
+            'Variables.\n' + r'\[x=1\]' + '\nQuote.\nTitle.\n' + before[point:])
+
+    def test_relocation_preserves_version_notes_and_long_unique_context(self):
+        id_ = self.proposal()
+        r = self.review()
+        version = r.state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id': id_, 'version': version, 'side': 'original', 'start': 0, 'end': 0, 'quote': '', 'text': 'Delay until a later batch.'})
+        edit = self.review().state['edits'][id_]
+        text = self.review().read('main.tex')
+        source = ('Repeated excerpt. ' * 20) + text + '\n' + text
+        (self.root / 'main.tex').write_text(source, encoding='utf-8', newline='')
+        r = self.review()
+        self.assertFalse(r.inspect(id_)['source_match'])
+        point = source.index('The model')
+        self.apply('relocate', id_, version, {'before': 'The model is strong and fast.',
+            'left': source[:point], 'right': source[point+len('The model is strong and fast.'):]})
+        repaired = self.review()
+        self.assertTrue(repaired.inspect(id_)['source_match'])
+        self.assertEqual(repaired.state['edits'][id_]['versions'], edit['versions'])
+        self.assertEqual(repaired.state['edits'][id_]['requests'], edit['requests'])
+        self.assertGreater(len(repaired.anchor_context(repaired.state['edits'][id_], {})['left']), 120)
+
+    def test_batch_stale_item_saves_no_subset_or_source(self):
+        ids = self.insertions()
+        r = self.review()
+        before, raw, state = r.read('main.tex'), r.raw, json.loads(json.dumps(r.state))
+        versions = {i: r.state['edits'][i]['versions'][-1] for i in ids}
+        versions[ids[-1]] = 'expired'
+        with self.assertRaisesRegex(Conflict, 'stale'):
+            r.decide(ids, [], versions)
+        self.assertEqual(r.state, state)
+        self.assertEqual(r.state_path.read_bytes(), raw)
+        self.assertEqual(r.read('main.tex'), before)
+
+    def test_thirty_item_partial_batch_keeps_delayed_feedback_and_choices(self):
+        import time
+        source = '\n\n'.join('Repeated background excerpt. ' * 6 + f'Item {i} original.' for i in range(30))
+        (self.root / 'main.tex').write_text(source, encoding='utf-8', newline='')
+        ids = []
+        for i in range(30):
+            options = [{'label': label, 'after': f'Item {i} choice {label}.', 'reason': 'Explicit choice'} for label in 'ABC']
+            ids.append(self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': f'Item {i} original.', 'options': options})['id'])
+        last = ids[-1]
+        self.apply('feedback', {'id': last, 'version': self.review().state['edits'][last]['versions'][-1],
+            'side': 'original', 'start': 0, 'end': 0, 'quote': '', 'text': 'Deferred scientific question.'})
+        delayed = self.review().state['edits'][last]
+        selected = ids[:-1]
+        r = self.review()
+        start = time.perf_counter()
+        updated, _ = r.decide(selected, [], {i: r.state['edits'][i]['versions'][-1] for i in selected}, {i: 'B' for i in selected})
+        decision_time = time.perf_counter() - start
+        start = time.perf_counter()
+        r.persist(updated, digest(r.raw))
+        persist_time = time.perf_counter() - start
+        start = time.perf_counter()
+        cards = self.review().cards()
+        print(f'29 of 30 items: preflight/apply/snapshot {decision_time:.4f}s; persistence {persist_time:.4f}s; read/cards {time.perf_counter()-start:.4f}s')
+        self.assertEqual({k:v for k,v in self.review().state['edits'][last].items() if k != 'anchor'},
+                         {k:v for k,v in delayed.items() if k != 'anchor'})
+        self.assertIn(last, cards['cards'])
+        for i in range(29):
+            self.assertIn(f'Item {i} choice B.', self.review().read('main.tex'))
+        self.assertIn('Item 29 original.', self.review().read('main.tex'))
+
+    def test_single_acceptance_within_author_five_second_budget_at_thirty_items(self):
+        import time
+        source = '\n\n'.join('Repeated context. ' * 10 + f'Item {i} original.' for i in range(30))
+        (self.root / 'main.tex').write_text(source,encoding='utf-8',newline='')
+        for i in range(30):
+            self.apply('propose', {'file':'main.tex','kind':'manuscript','before':f'Item {i} original.',
+                'options':[{'label':l,'after':f'Item {i} choice {l}.','reason':'Explicit choice'} for l in 'ABC']})
+        common = [sys.executable,'-X','utf8',str(Path(__file__).with_name('source_review.py')),
+                  '--project',str(self.root),'--state','reply.tex']
+        def call(args):
+            process = subprocess.run([*common,*args],capture_output=True,text=True,encoding='utf-8')
+            self.assertEqual(process.returncode,0,process.stderr)
+            return json.loads(process.stdout)
+        start = time.perf_counter()
+        shown = call(['inspect','--id','1','--source'])
+        call(['--apply','--expect',shown['sha256'],'decide','--accept','1','--version',shown['version'],'--option','B'])
+        cards = call(['cards'])
+        elapsed = time.perf_counter()-start
+        self.assertEqual(cards['edits']['1']['accepted_option'],'B')
+        self.assertEqual(len(cards['cards']),29)
+        self.assertLess(elapsed,5.0,'Author budget: inspect, durable acceptance and card refresh must finish within 5 seconds')
+        print(f'30-item isolated single acceptance: {elapsed:.4f}s (author budget <5s; excludes native VS Code, PDF and Git)')
+
+    def test_conflicted_item_is_visible_and_can_be_rejected_without_source_write(self):
+        id_ = self.proposal()
+        file = self.root / 'main.tex'
+        file.write_text('Author changed the entire source.\n', encoding='utf-8')
+        before = file.read_bytes()
+        card = self.review().cards()['cards'][id_]
+        self.assertFalse(card['source_match'])
+        self.apply('decide', [], [id_])
+        self.assertEqual(file.read_bytes(), before)
+        self.assertEqual(self.review().state['edits'][id_]['status'], 'rejected')
+
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix='no-git-', dir=ROOT))
         (self.root / 'main.tex').write_text('\\documentclass{article}\n\\begin{document}\nUnchanged context before.\n\nThe model is strong and fast.\n\nUnchanged context after.\n\\end{document}\n', encoding='utf-8')
@@ -301,7 +438,8 @@ class NativeReview(unittest.TestCase):
         main.write_text(text.replace('Unchanged context after.', 'Author manually changed this sentence.'), encoding='utf-8')
         packet = self.review().cards()
         self.assertIn(first, packet['cards'])
-        self.assertNotIn(second, packet['cards'])
+        self.assertIn(second, packet['cards'])
+        self.assertFalse(packet['cards'][second]['source_match'])
         self.assertFalse(packet['edits'][second]['source_match'])
         main.write_text(text, encoding='utf-8')
         owner = (self.root / 'reply.tex').read_bytes()

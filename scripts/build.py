@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', 'menu_commands.js',
            'chktex_actions.js', 'chktex_messages.js', 'chktex_filter.py', 'inline_review.js', 'review_positions.js', 'candidate_panel.js', 'review_pdf.py', 'review_translate.py', 'tools.js',
            'setup.js', 'questions.js', 'writing.js', 'ai_setup.js', 'review_style.js', 'pdf_navigation.js', 'writing-guide.md', 'question-linking-guide.md', 'writing-presets.json',
-           'paper.code-snippets', 'document_roles.py', 'document_roles.js', 'source_review.py', 'review_checkpoint.py',
+           'paper.code-snippets', 'document_roles.py', 'document_roles.js', 'source_review.py', 'review_checkpoint.py', 'auto_backup.py',
            'review.svg', 'review_math.js', 'review_workbench.js', 'review_workbench_client.js', 'collaboration-guide.md', 'mcp_server.py', 'mcp_config.py', 'mcp_setup.js',
            'mcp_runtime.py', 'mcp_clients.py', 'mcp_version.js', 'updates.js', 'update_check.py', 'ai_context.py', 'reference_context.py')
 

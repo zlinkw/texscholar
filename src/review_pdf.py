@@ -913,7 +913,7 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
             continue
         text = body(files[rel].decode('utf-8-sig'))
         actual = review.payload(edit)
-        start, end = locate(text, review.live_excerpt(edit, actual), actual['left'], actual['right'])
+        start, end = review.locate_edit(text, edit, actual)
         item = inputs['items'][id__]['payload']
         grouped.setdefault(rel, []).append({'id': id__, 'start': start, 'end': end, 'item': item, 'deferred': edit.get('deferred', False)})
     header, reused_fragments = None, 0

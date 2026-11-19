@@ -45,7 +45,7 @@ REFERENCES = {'type': 'array', 'items': schema({'kind': {'type': 'string', 'enum
 READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS, 'scopes': SCOPES, 'known_feedback': FEEDBACK_RECEIPTS, 'references': REFERENCES}
 SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'response']},
         'intent': schema({'goal': STRING, 'preserve': STRING}, ['goal', 'preserve']),
-        'before': STRING, 'left': STRING, 'right': STRING, 'location': STRING,
+        'before': STRING, 'left': STRING, 'right': STRING, 'location': {**STRING, 'description': '默认中文的简短位置标题；仅保留必要符号、编号和专有名词英文。'}, 'location_zh': STRING,
         'options': {'type': 'array', 'items': OPTION, 'minItems': 1, 'maxItems': 3},
         'fewer_options_reason': STRING, 'questions': {'type': 'array', 'items': QUESTION}, 'question_refs': STRINGS,
         'deps': {'type': 'array', 'items': STRING}, 'discard_annotations': {'type': 'boolean'},
@@ -60,6 +60,10 @@ TOOLS = [
      schema({**WRITE, 'spec': schema(SPEC, ['file', 'kind', 'before', 'options'])}, ['project', 'state', 'expected_sha256', 'spec']), False),
     ('rework_options', 'Replace pending A/B/C under SAME ID/version. On success old actionable notes are cleared by default; the latest requirements remain read-only in the UI. Failure preserves state. Explicit discard_annotations=false retains actionable notes; resolve_requests supports selective handling. No acceptance. Chain returned sha256/version.',
      schema({**WRITE, 'id': STRING, 'version': STRING, 'spec': schema(SPEC, ['options'])}, ['project', 'state', 'expected_sha256', 'id', 'version', 'spec']), False),
+    ('relocate_options', 'Repair exact pending location only. Preserve ID/version/options/notes/decisions. Inspect with read_context first; before must equal the immutable live excerpt.',
+     schema({**WRITE, 'id': STRING, 'version': STRING, 'spec': schema({'before': STRING, 'left': STRING, 'right': STRING}, ['before'])}, ['project', 'state', 'expected_sha256', 'id', 'version', 'spec']), False),
+    ('reject_options', 'Only on explicit author request: reject one pending item without replacing deferred source. No acceptance or scientific issue closure.',
+     schema({**WRITE, 'id': STRING, 'version': STRING}, ['project', 'state', 'expected_sha256', 'id', 'version']), False),
     ('link_questions', 'Append/deduplicate exact verified original reviewer quotes or explicit question_pool references. Explicit replace only. No other changes; never auto-pair.',
      schema({**WRITE, 'id': STRING, 'version': STRING, 'questions': {'type': 'array', 'items': QUESTION}, 'question_refs': STRINGS, 'replace': {'type': 'boolean', 'default': False}},
             ['project', 'state', 'expected_sha256', 'id', 'version']), False),
@@ -251,7 +255,7 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
             continue
         payload = review.payload(edit)
         try:
-            a, b = locate(read(edit['file']), review.live_excerpt(edit, payload), payload['left'], payload['right'])
+            a, b = review.locate_edit(read(edit['file']), edit, payload)
             matches = any(max(a, s['start']) < min(b, s['end']) or (s['start'] == s['end'] and a <= s['start'] <= b)
                           or (a == b and s['start'] <= a <= s['end']) for s in relevant)
         except Conflict:
@@ -306,7 +310,7 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
             item['feedback_reused'] = True
         text = read(edit['file'])
         try:
-            start, end = locate(text, review.live_excerpt(edit, payload), payload['left'], payload['right'])
+            start, end = review.locate_edit(text, edit, payload)
             item['source_match'] = True
         except Conflict as error:
             item.update(source_match=False, conflict=str(error))
@@ -406,9 +410,9 @@ class Server:
             return {'owner': state, 'context': result, 'file_roles': role_packet(roles), **rule_packet(rules), 'plugin_version': VERSION, **references}
         if name == 'read_feedback':
             return {**feedback_packet(review, args.get('ids')), 'plugin_version': VERSION}
-        if name not in {'begin_review', 'propose_options', 'rework_options', 'link_questions'}:
+        if name not in {'begin_review', 'propose_options', 'rework_options', 'link_questions', 'relocate_options', 'reject_options'}:
             raise Conflict('Unknown or unavailable AI tool; decisions remain author actions')
-        for key in ['expected_sha256', *(['id', 'version'] if name in ('rework_options', 'link_questions') else [])]:
+        for key in ['expected_sha256', *(['id', 'version'] if name in ('rework_options', 'link_questions', 'relocate_options', 'reject_options') else [])]:
             if not isinstance(args.get(key), str) or not args[key]:
                 raise FieldConflict(key, 'Provide the current nonempty value for ' + key)
         if name in ('propose_options', 'rework_options'):
@@ -432,7 +436,7 @@ class Server:
             if args['expected_sha256'] != digest(r.raw):
                 raise ToolConflict('State changed; reread the affected scope before writing', 'state_changed',
                                    {'action': 'read_context', **({'ids': [args['id']]} if 'id' in args else {'files': [args['spec']['file']]} if 'spec' in args else {}), 'automatic_retry': False})
-            if name in {'rework_options', 'link_questions'}:
+            if name in {'rework_options', 'link_questions', 'relocate_options', 'reject_options'}:
                 edit = r.state['edits'].get(args['id']) if r.state else None
                 if not edit:
                     raise ToolConflict('Review ID no longer exists in this batch', 'review_item_missing', {'action': 'read_context', 'automatic_retry': False})
@@ -443,6 +447,10 @@ class Server:
                 r.snapshot = lambda files, label: '0' * 40
             if name == 'begin_review':
                 updated, result = r.begin(args['round'], args['files'], args.get('submission'))
+            elif name == 'relocate_options':
+                updated, result = r.relocate(args['id'], args['version'], args['spec'])
+            elif name == 'reject_options':
+                updated, result = r.decide([], [args['id']], {args['id']: args['version']})
             elif name in {'propose_options', 'rework_options'}:
                 spec = args['spec']
                 if name == 'rework_options' and 'discard_annotations' not in spec and not spec.get('resolve_requests'):

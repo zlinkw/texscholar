@@ -15,6 +15,28 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_exact_relocation_and_safe_rejection_keep_versions_and_delayed_notes(self):
+        id_ = self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'The model is strong and fast.', 'after':'The model is reliable.'})['id']
+        r = self.review()
+        version = r.state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id':id_, 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'Keep until later.'})
+        old = self.review().state['edits'][id_]
+        source = self.review().read('main.tex')
+        (self.root/'main.tex').write_text(source + source,encoding='utf-8',newline='')
+        r = self.review()
+        server = self.server()
+        base = {'project':str(self.root),'state':'reply.tex','id':id_,'version':version}
+        point = source.index('The model')
+        result = server.call('relocate_options', {**base,'expected_sha256':digest(r.raw),'spec':{
+            'before':'The model is strong and fast.', 'left':source[:point], 'right':(source+source)[point+len('The model is strong and fast.'):]}})
+        self.assertEqual(result['version'],version)
+        self.assertEqual(self.review().state['edits'][id_]['requests'],old['requests'])
+        (self.root/'main.tex').write_text('Author replaced source.',encoding='utf-8')
+        raw=(self.root/'main.tex').read_bytes()
+        result=server.call('reject_options',{**base,'expected_sha256':digest(self.review().raw)})
+        self.assertEqual(self.review().state['edits'][id_]['status'],'rejected')
+        self.assertEqual((self.root/'main.tex').read_bytes(),raw)
+
     def test_managed_client_ownership_is_platform_aware_and_excludes_other_mcp_services(self):
         from mcp_clients import classify
         windows = [

@@ -33,7 +33,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     fs.writeFileSync(file, value, 'utf8');
     if (state) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n% CODEX-REVIEW-STATE-END', 'utf8');
     const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [], reveals = [];
-    let receive, panels = 0, provider, fileChanged, configurationChanged, selectionHandler, sourceValue, cardsHook;
+    let receive, panels = 0, provider, fileChanged, configurationChanged, selectionHandler, sourceValue, cardsHook, pdfHook;
     const original = value, edit = {file: path.basename(file), kind: 'manuscript', deferred: true, status: 'pending', versions: ['v1'], requests: [], questions: []};
     const start = Array.from(original.slice(0, original.indexOf('First'))).length;
     const data = {version: 'v1', edit, original: 'First sentence.', candidate: 'Better sentence.', options: [
@@ -98,6 +98,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
             if (edit.status === 'accepted') value = value.replace(data.original, data.options.find(o => o.label === args.at(-1)).after);
             return '{}';}
         if (args.some(x => String(x).endsWith('review_pdf.py'))) {
+            if (pdfHook) await pdfHook(args);
             const navigation = path.join(root, 'review.json'), pdf = path.join(root, 'review.pdf');
             fs.writeFileSync(navigation, JSON.stringify({document: file}), 'utf8'); fs.writeFileSync(pdf, 'viewer fixture', 'utf8');
             return JSON.stringify({pdf, navigation, shown_ids: ['1']});
@@ -106,11 +107,36 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     };
     const ui = createInlineReview(vscode, {subscriptions: []}, backend);
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
-        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;},
+        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set pdfHook(fn) {pdfHook = fn;},
         rows: () => provider.getChildren(), receive: m => receive(m),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
         changed: () => fileChanged(uri(owner)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
 }
+
+test('manual PDF commands coalesce with accepted refresh without holding the decision busy state', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    const c = f.rows()[0].children[0].command.arguments[0];
+    await f.ui.preview(c); // Establish the document association before the next compilation.
+    let release, started;
+    const running = new Promise(resolve => {started = resolve;});
+    const gate = new Promise(resolve => {release = resolve;});
+    let builds = 0;
+    f.pdfHook = async () => {if (++builds === 1) {started(); await gate;}};
+    const preview = f.handlers.get('localLatex.inlinePreview');
+    const first = preview(c); await running;
+    const second = preview(c), third = preview(c);
+    await new Promise(resolve => setImmediate(resolve));
+    try {
+        await f.handlers.get('localLatex.inlineAccept')({...c, option: 'B'});
+        assert.equal(f.edit.status, 'accepted', 'acceptance completes while the compiler is still waiting');
+        assert.equal(builds, 1, 'pending manual and automatic requests cannot run alongside the active build');
+        await f.ui.whenPDFPrepared();
+    } finally {release();}
+    await Promise.all([first, second, third]); await f.ui.whenPDFIdle();
+    assert.equal(builds, 2, 'only the active build and latest pending document update run');
+    assert(!f.notices.some(m => /当前审核操作尚未结束/.test(m)));
+    assert(f.backendCalls.findLast(call => call.args.some(a => String(a).endsWith('review_pdf.py'))).args.includes('--refresh-accepted'));
+});
 
 for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]) test(`fixed review ${decision}, auto PDF ${autoPDF}, exact notes and handoff without native boxes`, async () => {
     const f = hostFixture({autoPDF}); await f.ui.ready;
@@ -197,6 +223,22 @@ test('new bottom panel is declared and no native comment toolbar remains', () =>
     assert(!manifest.contributes.menus['comments/commentThread/context']);
     assert(!manifest.contributes.commands.some(c => /inline(Post|Cancel)Comment$/.test(c.command)));
     assert(manifest.contributes.keybindings.some(b => b.command === 'localLatex.inlinePreview' && b.key === 'ctrl+alt+d'));
+});
+
+test('accept shortcut binds the visible card instead of an unrelated editor cursor', async () => {
+    const f = hostFixture({autoPDF:false}); await f.ui.ready;
+    f.allCards.ds = structuredClone(f.data);
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const row = f.rows()[0].children.find(r=>r.command.arguments[0].id==='ds');
+    await f.handlers.get(row.command.command)(row.command.arguments[0]);
+    assert.equal(f.ui.workbench.active.id,'ds');
+    // The source editor still points at item 1; it must not choose the decision.
+    await f.handlers.get('localLatex.inlineAccept')();
+    assert.equal(f.ui.workbench.active.id,'ds','shortcut may reopen the choice, never the cursor target');
+    await f.receive({type:'accept',id:'ds',version:'v1',option:'B'});
+    const call = f.backendCalls.findLast(c=>c.args.includes('decide'));
+    assert.equal(call.args[call.args.indexOf('--accept')+1],'ds');
+    assert.equal(call.args[call.args.indexOf('--version')+1],'v1');
 });
 
 test('same-line items have separate IDs and event-driven versions switch one page without source navigation', async () => {

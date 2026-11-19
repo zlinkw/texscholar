@@ -11,6 +11,18 @@ from review_translate import Provider, chunks, protect_tex, restore_tex, transla
 
 
 class Translation(unittest.TestCase):
+    def test_chinese_titles_preserve_reviewer_section_and_model_terms(self):
+        class Engine:
+            def translate(self, text):
+                self.prepared = text
+                return text.replace('contribution response', '贡献回复')
+        engine = Engine()
+        text = 'R2-Q1 / IV-C / GMP and GMM contribution response'
+        result = translate_many('bing', [{'key': 'title', 'text': text, 'kind': 'title'}], provider=engine)
+        self.assertEqual(result['results']['title'], 'R2-Q1 / IV-C / GMP and GMM 贡献回复')
+        for term in ['R2-Q1', 'IV-C', 'GMP', 'GMM']:
+            self.assertNotIn(term, engine.prepared)
+
     def test_default_proxy_uses_os_settings_despite_inherited_proxy_environment(self):
         system = {'http': 'http://system-proxy.invalid:8000', 'https': 'http://system-proxy.invalid:8000'}
         for platform, lookup in [('win32', 'getproxies_registry'), ('darwin', 'getproxies_macosx')]:
