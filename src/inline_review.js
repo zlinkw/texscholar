@@ -130,7 +130,9 @@ function createInlineReview(vscode, context, execute = run) {
     const changedFiles = new Set(), reviewFiles = new Set(), deferredFiles = new Set();
     const shownPanels = new Set(), openedPDFs = new Set(), pdfMetadata = new Map();
     const pdfRequests = new Map();
+    const pdfGenerations = new Map();
     let pdfRun;
+    let pdfRequestWrites = Promise.resolve();
     const acceptedPDFPreparations = new Set();
     const previewChoices = new Map(), workbenchPDFStatus = new Map(), pdfIntents = new Map();
     let latestReviewState;
@@ -191,7 +193,11 @@ function createInlineReview(vscode, context, execute = run) {
             await refresh(c);
             throw new Error('该项已有新版或审核决定，显示已自动更新。请核对后再次操作；未代为接收或覆盖。');
         }
-        if (requireMatch && !data.source_match) throw new Error(`当前正文失配：审核项 ${c.id}，文件 ${data.edit.file}；原文被手动修改，需先核对；没有覆盖任何内容。`);
+        if (requireMatch && !data.source_match) {
+            const cause = data.conflict || '定位校验失败';
+            const reason = /\(0 matches\)/.test(cause) ? '未找到位置；' : /\(\d+ matches\)/.test(cause) ? '存在多个匹配；' : '';
+            throw new Error(`当前正文失配（候选定位阶段）：审核项 ${c.id}，文件 ${data.edit.file}；${reason}${cause}；没有覆盖任何内容。`);
+        }
         return data;
     }
     async function current(c) {
@@ -707,26 +713,29 @@ function createInlineReview(vscode, context, execute = run) {
         workbenchPDFStatus.set(choiceKey(c), {version: c.version, option, text});
         workbench.status(c, text);
     }
-    async function resolvePDFDocument(c) {
-        const data = await current(c);
+    async function resolvePDFDocument(c, sourceOnly = false) {
+        const data = sourceOnly ? await backend(c, ['inspect', '--id', c.id, '--source']) : await current(c);
+        if (sourceOnly) cleanBuffers(c, data.edit.file);
         const registered = await require('./document_roles').confirmedRoot(vscode, c.repo, path.join(c.repo, data.edit.file), execute);
         if (registered) return registered;
-        if (/^\s*\\documentclass\b/m.test(data.source.text)) return path.join(c.repo, data.edit.file);
+        const text = data.source?.text ?? await fs.readFile(path.join(c.repo, data.edit.file), 'utf8');
+        if (/^\s*\\documentclass\b/m.test(text)) return path.join(c.repo, data.edit.file);
         const files = await vscode.workspace.findFiles(new vscode.RelativePattern(c.repo, '**/*.tex'), EXCLUDE);
         const roots = [];
         for (const file of files) if (/^\s*\\documentclass\b/m.test(await fs.readFile(file.fsPath, 'utf8'))) roots.push({label: path.relative(c.repo, file.fsPath), file: file.fsPath});
         return (roots.length === 1 ? roots[0] : await vscode.window.showQuickPick(roots, {placeHolder: '选择实际所属的可编译主文档'}))?.file;
     }
-    async function requestWorkbenchPDF(c, option, compare, force) {
+    async function requestWorkbenchPDF(c, option, compare, force, sourceOnly = false) {
+        const intent = crypto.randomUUID(); pdfIntents.set(c.repo, intent);
         try {
-            const intent = crypto.randomUUID(); pdfIntents.set(c.repo, intent);
             previewChoices.set(choiceKey(c), {version: c.version, option});
-            pdfStatus(c, 'PDF 待更新：' + c.id + ' · ' + option);
+            pdfStatus(c, sourceOnly ? '正式 PDF 待更新' : 'PDF 待更新：' + c.id + ' · ' + option);
             if (!force && !config().get('reviewPDF.followPreview', true)) return;
-            const document = await resolvePDFDocument(c);
+            const document = await resolvePDFDocument(c, sourceOnly);
             if (!document) return;
             if (pdfIntents.get(c.repo) !== intent) return;
-            await schedulePDF(document, async () => {
+            const write = pdfRequestWrites.then(async () => {
+                if (pdfIntents.get(c.repo) !== intent) return;
                 const directory = path.join(path.dirname(document), '.latex-build', 'review-diff');
                 await fs.mkdir(directory, {recursive: true});
                 for (const folder of [path.dirname(directory), directory]) {
@@ -735,22 +744,31 @@ function createInlineReview(vscode, context, execute = run) {
                 }
                 const choices = Object.fromEntries(orderedRecords().filter(r => r.c.repo === c.repo && r.c.owner === c.owner)
                     .map(r => [r.c.id, {version: r.c.version, option: selectedOption(r.c)}]));
-                const requestFile = path.join(directory, path.basename(document, '.tex') + '-selection.json');
+                const requestFile = path.join(directory, path.basename(document, '.tex') + (sourceOnly ? '-source-selection.json' : '-selection.json'));
                 try {const info = await fs.lstat(requestFile); if (!info.isFile() || info.isSymbolicLink()) throw new Error('PDF 请求目标不是普通文件。');} catch (e) {if (e.code !== 'ENOENT') throw e;}
                 const temporary = requestFile + '.write-' + crypto.randomUUID();
                 await fs.writeFile(temporary, JSON.stringify({token: crypto.randomUUID(), choices, compare_id: compare ? c.id : null}), {encoding: 'utf8', flag: 'wx'});
                 await fs.rename(temporary, requestFile);
-                pdfStatus(c, 'PDF 正在更新；可以继续审核');
-                await generatePDF(c, document, false, requestFile);
-                if (!pdfRequests.has(document) && pdfIntents.get(c.repo) === intent) pdfStatus(c, 'PDF 最新');
+                return requestFile;
             });
-        } catch (error) {pdfStatus(c, 'PDF 更新失败，仍显示旧版：' + error.message);}
+            pdfRequestWrites = write.catch(() => {}); // The caller below reports the original write error.
+            const requestFile = await write;
+            if (!requestFile || pdfIntents.get(c.repo) !== intent) return;
+            await schedulePDF((sourceOnly ? 'source|' : '') + document, async isCurrent => {
+                if (!isCurrent() || pdfIntents.get(c.repo) !== intent) return;
+                pdfStatus(c, (sourceOnly ? '正式 PDF' : '审核 PDF') + ' 正在更新；可以继续审核');
+                await generatePDF(c, document, false, requestFile, sourceOnly, isCurrent);
+                if (isCurrent() && pdfIntents.get(c.repo) === intent) pdfStatus(c, sourceOnly ? '正式 PDF 最新；不含未接收候选' : 'PDF 最新');
+            });
+        } catch (error) {if (pdfIntents.get(c.repo) === intent) pdfStatus(c, (sourceOnly ? '正式 PDF' : '审核 PDF') + ' 更新失败；已有 PDF 为旧版：' + error.message);}
     }
     function schedulePDF(document, action) {
+        const generation = (pdfGenerations.get(document) || 0) + 1;
+        pdfGenerations.set(document, generation);
         const previous = pdfRequests.get(document);
         const waiters = previous?.waiters || [];
         const result = new Promise((resolve, reject) => waiters.push({resolve, reject}));
-        pdfRequests.set(document, {action, waiters});
+        pdfRequests.set(document, {action: () => action(() => pdfGenerations.get(document) === generation), waiters});
         startPDFQueue();
         return result;
     }
@@ -777,30 +795,44 @@ function createInlineReview(vscode, context, execute = run) {
             vscode.window.showInformationMessage('此审核 PDF 来自旧版，请手动生成一次以建立自动更新关联。');
             return;
         }
-        schedulePDF(saved.document, async () => {
+        const status = text => {
+            pdfStatus(c, text);
+            for (const record of records.values()) if (pdfMetadata.get(record.c.repo + '|' + record.c.id) === navigation)
+                pdfStatus(record.c, text);
+        };
+        schedulePDF(saved.document, async isCurrent => {
             if (!config().get('reviewPDF.autoUpdateAfterAccept', true)) return;
-            await generatePDF(c, saved.document, true);
-        }).catch(error => vscode.window.showErrorMessage('接收已保存，但审核 PDF 自动更新失败：' + error.message));
+            status('接收已保存；PDF 正在后台更新');
+            try {await generatePDF(c, saved.document, true, undefined, false, isCurrent);}
+            catch (error) {
+                if (!isCurrent()) return;
+                const message = '接收已保存；已有 PDF 为旧版：' + error.message;
+                status(message); vscode.window.showErrorMessage(message);
+                throw error;
+            }
+        }).catch(() => {}); // The active build above reports failure once, including coalesced waiters.
     }
     async function preview(arg) {
         const c = contextFor(arg), data = await current(c);
         const document = await resolvePDFDocument(c);
         if (!document) return;
-        return schedulePDF(document, () => generatePDF(c, document, false));
+        return schedulePDF(document, isCurrent => generatePDF(c, document, false, undefined, false, isCurrent));
     }
-    async function generatePDF(c, document, automatic, requestFile) {
+    async function generatePDF(c, document, automatic, requestFile, sourceOnly = false, isCurrent = () => true) {
         const started = performance.now();
         const cfg = config();
         await vscode.window.withProgress({location: vscode.ProgressLocation.Notification,
-            title: automatic ? '接收后更新审核 PDF（后台，不阻塞下一项）' : '生成／更新完整论文审核 PDF'}, async () => {
+            title: sourceOnly ? '编译正式源码 PDF（不应用未接收候选）' : automatic ? '接收后更新审核 PDF（后台，不阻塞下一项）' : '生成／更新完整论文审核 PDF'}, async () => {
             const result = JSON.parse(await execute(cfg.get('pythonPath', 'python'), ['-X', 'utf8', path.join(__dirname, 'review_pdf.py'),
                 '--repo', c.repo, '--state', c.owner, '--document', document, '--id', c.id, '--version', c.version,
                 '--git', cfg.get('gitPath', 'git'), '--latexdiff', cfg.get('latexdiffPath'), '--latexmk', cfg.get('latexmkPath'),
-                '--style', JSON.stringify(style()), ...(automatic ? ['--refresh-accepted'] : []), ...(requestFile ? ['--request-file', requestFile] :
+                '--style', JSON.stringify(style()), ...(sourceOnly ? ['--source-only'] : []), ...(automatic ? ['--refresh-accepted'] : []), ...(requestFile ? ['--request-file', requestFile] :
                     ['--choices', JSON.stringify(Object.fromEntries(orderedRecords().filter(r => r.c.repo === c.repo).map(r => [r.c.id, {version: r.c.version, option: selectedOption(r.c)}])))])], c.repo));
             diagnostics?.appendLine(JSON.stringify({stage:'pdf_build',id:c.id,version:c.version,ms:performance.now()-started,automatic}));
-            if (!automatic) await current(c);
-            if (result.navigation) {
+            if (!isCurrent()) return;
+            if (!automatic && !sourceOnly) await current(c);
+            if (result.warning) vscode.window.showWarningMessage(result.warning);
+            if (result.navigation && !sourceOnly) {
                 const saved = {...context.workspaceState?.get('reviewPDFMeta', {})};
                 for (const [key, file] of Object.entries(saved)) if (file === result.navigation) delete saved[key];
                 for (const [key, file] of pdfMetadata) if (file === result.navigation) pdfMetadata.delete(key);
@@ -819,7 +851,7 @@ function createInlineReview(vscode, context, execute = run) {
                 await require('./pdf_navigation').openFloating(vscode, vscode.Uri.file(result.pdf), true);
                 openedPDFs.add(result.pdf);
                 if (context.workspaceState) await context.workspaceState.update('reviewPDFs', [...new Set([...context.workspaceState.get('reviewPDFs', []), result.pdf])]);
-            } else if (!automatic) vscode.window.showInformationMessage(result.reused_pdf ? '审核内容未变化，已复用核验后的 PDF，没有重新编译。'
+            } else if (!automatic) vscode.window.showInformationMessage(sourceOnly ? '正式源码 PDF 已更新；不含未接收候选。' : result.reused_pdf ? '审核内容未变化，已复用核验后的 PDF，没有重新编译。'
                 : '已更新同一份审核 PDF；现有预览窗口会重新加载。窗口已关闭时，可用“重新打开审核 PDF 窗口”。');
         });
     }

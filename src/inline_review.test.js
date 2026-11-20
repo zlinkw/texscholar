@@ -12,12 +12,13 @@ const {view, locateDisplay} = require('./review_positions');
 test('one PDF queue coalesces pending document updates and preserves running work and errors', async () => {
     const text = fs.readFileSync(require.resolve('./inline_review'), 'utf8');
     const scheduler = text.slice(text.indexOf('    function schedulePDF('), text.indexOf('    async function queueAcceptedPDF('));
-    const schedule = new Function('const pdfRequests = new Map(); let pdfRun; ' + scheduler + '; return schedulePDF;')();
-    const events = []; let release;
-    const running = schedule('paper', async () => {events.push('running'); await new Promise(r => {release = r;});});
+    const schedule = new Function('const pdfRequests = new Map(), pdfGenerations = new Map(); let pdfRun; ' + scheduler + '; return schedulePDF;')();
+    const events = []; let release, runningCurrent;
+    const running = schedule('paper', async isCurrent => {runningCurrent = isCurrent; events.push('running'); await new Promise(r => {release = r;});});
     await Promise.resolve();
     const obsolete = schedule('paper', async () => events.push('obsolete manual'));
-    const latest = schedule('paper', async () => events.push('latest accepted'));
+    const latest = schedule('paper', async isCurrent => {assert(isCurrent()); events.push('latest accepted');});
+    assert.equal(runningCurrent(), false, 'an older completion cannot mark the newer PDF request current');
     const other = schedule('response', async () => events.push('response'));
     release(); await Promise.all([running, obsolete, latest, other]);
     assert.deepEqual(events, ['running', 'latest accepted', 'response']);
@@ -136,6 +137,26 @@ test('manual PDF commands coalesce with accepted refresh without holding the dec
     assert.equal(builds, 2, 'only the active build and latest pending document update run');
     assert(!f.notices.some(m => /当前审核操作尚未结束/.test(m)));
     assert(f.backendCalls.findLast(call => call.args.some(a => String(a).endsWith('review_pdf.py'))).args.includes('--refresh-accepted'));
+});
+
+test('formal PDF action remains available for a conflicted candidate and never changes its decision', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    const c = f.rows()[0].children[0].command.arguments[0];
+    f.data.source_match = false; f.data.conflict = 'Exact anchored span is missing or ambiguous (0 matches)';
+    await f.ui.open(c);
+    await f.receive({type: 'ready'});
+    await f.receive({type: 'sourcePDF', id: c.id, version: c.version, option: 'B'});
+    assert(f.packets.some(m => m.type === 'actionResult' && m.action === 'sourcePDF'), 'the nonblocking action releases its own button');
+    // Resolving the root and writing the request happen before the queued compiler.
+    await new Promise(resolve => {
+        f.pdfHook = async () => {resolve();};
+    });
+    await f.ui.whenPDFIdle();
+    const call = f.backendCalls.find(call => call.args.some(a => String(a).endsWith('review_pdf.py')));
+    assert(call.args.includes('--source-only'));
+    assert.equal(f.edit.status, 'pending');
+    assert.equal(f.value, f.original);
+    assert(!f.notices.some(message => /当前正文失配/.test(message)));
 });
 
 for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]) test(`fixed review ${decision}, auto PDF ${autoPDF}, exact notes and handoff without native boxes`, async () => {

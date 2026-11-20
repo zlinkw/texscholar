@@ -308,6 +308,134 @@ class ReviewPDF(unittest.TestCase):
     apply = NativeReview.apply
     proposal = NativeReview.proposal
 
+    def test_source_pdf_ignores_unrelated_broken_candidates_and_preserves_old_pdf_on_failure(self):
+        import review_pdf
+        from unittest.mock import patch
+        first = self.proposal()
+        other = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'Unchanged context after.', 'after': 'Revised final context.'})['id']
+        item = self.review().inspect(other)
+        self.apply('feedback', {'id': other, 'version': item['version'], 'side': 'original',
+            'start': 0, 'end': 9, 'quote': 'Unchanged', 'text': '保留此项，稍后再处理。'})
+        main = self.root / 'main.tex'
+        main.write_bytes(main.read_bytes().replace(b'Unchanged context after.', b'Author changed the final paragraph.'))
+        before = {p: p.read_bytes() for p in [main, self.root / 'reply.tex']}
+        args = (self.root, 'reply.tex', main, first, self.review().inspect(first)['version'],
+                'missing-git', str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        with self.assertRaisesRegex(ValueError, '候选定位.*main.tex.*' + other + '.*未找到位置.*0 matches'):
+            preview(*args)
+        result = preview(*args, source_only=True)
+        self.assertEqual(result['shown_ids'], [])
+        self.assertEqual(result['kind'], 'formal-source')
+        text = ' '.join(p.extract_text() for p in PdfReader(result['pdf']).pages)
+        self.assertIn('Author changed the final paragraph.', text)
+        self.assertIn('strong and fast', text)
+        self.assertNotIn('reliable and compact', text)
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        current = self.review()
+        self.assertFalse(current.inspect(other)['source_match'])
+        self.assertEqual(current.state['edits'][other]['requests'][0]['text'], '保留此项，稍后再处理。')
+        first_data = current.inspect(first)
+        self.apply('feedback', {'id': first, 'version': first_data['version'], 'side': 'original',
+            'start': 13, 'end': 19, 'quote': 'strong', 'text': '仅批注变化，不应阻断正式编译。'})
+        self.assertTrue(preview(*args, source_only=True)['reused_pdf'])
+        stable = {Path(result[k]): Path(result[k]).read_bytes() for k in ['pdf', 'navigation']}
+        stable[Path(result['pdf']).with_suffix('.synctex.gz')] = Path(result['pdf']).with_suffix('.synctex.gz').read_bytes()
+        main.write_bytes(main.read_bytes() + b'\n% Recompile isolated source.\n')
+        execute = review_pdf.command
+        def fail(args, cwd, log):
+            if args[0] == str(BIN / ('latexmk' + EXE)):
+                raise ValueError('isolated source compiler failure')
+            return execute(args, cwd, log)
+        with patch.object(review_pdf, 'command', fail):
+            with self.assertRaisesRegex(ValueError, 'LaTeX 编译.*main.tex.*isolated source compiler failure'):
+                preview(*args, source_only=True)
+        self.assertEqual({p: p.read_bytes() for p in stable}, stable)
+
+    def test_selected_missing_and_ambiguous_positions_report_file_id_and_stage_without_writes(self):
+        from unittest.mock import patch
+        import review_pdf
+        first = self.proposal()
+        main = self.root / 'main.tex'
+        original = main.read_bytes()
+        args = (self.root, 'reply.tex', main, first, self.review().inspect(first)['version'],
+                'missing-git', str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        body_text = original.split(b'\\begin{document}')[1].split(b'\\end{document}')[0]
+        cases = [(original.replace(b'The model is strong and fast.', b'No original target remains.'), '未找到位置.*0 matches'),
+                 (original.replace(body_text, body_text * 3), '存在多个匹配.*2 matches')]
+        for raw, reason in cases:
+            with self.subTest(reason=reason):
+                main.write_bytes(raw)
+                before = main.read_bytes(), (self.root / 'reply.tex').read_bytes()
+                with patch.object(review_pdf, 'command') as compiler:
+                    with self.assertRaisesRegex(ValueError, '候选定位.*main.tex.*' + first + '.*' + reason):
+                        preview(*args)
+                    compiler.assert_not_called()
+                self.assertEqual((main.read_bytes(), (self.root / 'reply.tex').read_bytes()), before)
+
+    def test_acceptance_keeps_other_locations_and_notes_usable_by_the_pdf_renderer(self):
+        first = self.proposal()
+        other = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript',
+            'before': 'Unchanged context after.', 'after': 'Revised final context.'})['id']
+        item = self.review().inspect(other)
+        self.apply('feedback', {'id': other, 'version': item['version'], 'side': 'original',
+            'start': 0, 'end': 9, 'quote': 'Unchanged', 'text': '延期批注不能丢失。'})
+        notes = self.review().state['edits'][other]['requests']
+        self.apply('decide', [first], [])
+        current = self.review()
+        self.assertTrue(current.inspect(other)['source_match'])
+        self.assertEqual(current.state['edits'][other]['requests'], notes)
+        result = preview(self.root, 'reply.tex', self.root / 'main.tex', first, current.inspect(first)['version'],
+            'missing-git', str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)), refresh_accepted=True)
+        self.assertEqual(result['shown_ids'], [other])
+        self.assertEqual(self.review().state['edits'][other]['requests'], notes)
+
+    def test_new_pdf_request_during_compile_cannot_replace_the_published_generation(self):
+        import review_pdf
+        from unittest.mock import patch
+        first = self.proposal()
+        args = (self.root, 'reply.tex', self.root / 'main.tex', first, self.review().inspect(first)['version'],
+                'missing-git', str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        initial = preview(*args)
+        stable = {Path(initial[k]): Path(initial[k]).read_bytes() for k in ['pdf', 'navigation']}
+        stable[Path(initial['pdf']).with_suffix('.synctex.gz')] = Path(initial['pdf']).with_suffix('.synctex.gz').read_bytes()
+        request = Path(initial['output']).parent / 'main-selection.json'
+        request.write_text(json.dumps({'token': 'first', 'choices': {}}), encoding='utf-8')
+        execute = review_pdf.command
+        def newer(args, cwd, log):
+            result = execute(args, cwd, log)
+            if args[0] == str(BIN / ('latexmk' + EXE)):
+                request.write_text(json.dumps({'token': 'newer', 'choices': {}}), encoding='utf-8')
+            return result
+        with patch.object(review_pdf, 'command', newer):
+            with self.assertRaisesRegex(ValueError, 'PDF 结果协调.*main.tex.*已有更新的 PDF 请求'):
+                preview(*args, style={'addedColor': '#008844'}, request_file=request)
+        self.assertEqual({p: p.read_bytes() for p in stable}, stable)
+        latest = preview(*args, style={'addedColor': '#008844'}, request_file=request)
+        self.assertTrue(Path(latest['pdf']).is_file())
+
+    def test_relocating_same_version_invalidates_the_pdf_and_moves_its_navigation_target(self):
+        main = self.root / 'main.tex'
+        main.write_bytes(main.read_bytes().replace(b'Unchanged context after.', b'The model is strong and fast.'))
+        before = 'The model is strong and fast.'
+        initial_text = self.review().read('main.tex')
+        id_ = self.apply('propose', {'file': 'main.tex', 'kind': 'manuscript', 'before': before,
+            'left': initial_text[:initial_text.index(before)], 'after': 'The model is reliable and compact.'})['id']
+        version = self.review().inspect(id_)['version']
+        args = (self.root, 'reply.tex', main, id_, version, 'missing-git',
+                str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)))
+        first = preview(*args)
+        target = json.loads(Path(first['navigation']).read_text(encoding='utf-8'))['targets'][id_]
+        raw = main.read_bytes()
+        text = self.review().read('main.tex')
+        second = text.rindex(before)
+        self.apply('relocate', id_, version, {'before': before, 'left': text[:second], 'right': text[second+len(before):]})
+        moved = preview(*args)
+        self.assertFalse(moved['reused_pdf'], 'a new exact location must not reuse the old comparison')
+        self.assertNotEqual(json.loads(Path(moved['navigation']).read_text(encoding='utf-8'))['targets'][id_]['line'], target['line'])
+        self.assertEqual(main.read_bytes(), raw)
+        self.assertEqual(self.review().inspect(id_)['version'], version)
+
     def test_custom_response_container_renders_independent_items_without_state_changes(self):
         path = self.root / 'reply.tex'
         path.write_text(path.read_text(encoding='utf-8').replace(r'\begin{document}',

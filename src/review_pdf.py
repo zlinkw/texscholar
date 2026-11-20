@@ -164,8 +164,8 @@ def delta_fragment(before, after, preamble, source_dir, out, name, latexdiff, pr
     return header, content, reused
 
 
-def previous_build(parent, document):
-    navigation = parent / 'current' / (document.stem + '-review.json')
+def previous_build(parent, document, source_only=False):
+    navigation = parent / 'current' / (document.stem + ('-source.json' if source_only else '-review.json'))
     if not navigation.exists():
         return None
     if navigation.is_symlink() or navigation.is_junction():
@@ -205,7 +205,7 @@ def prune_build_cache(review, parent, document):
         raise ValueError('审核编译缓存根目录或发布目录异常。')
     navigation = {}
     protected = set()
-    for file in current.glob('*-review.json'):
+    for file in [*current.glob('*-review.json'), *current.glob('*-source.json')]:
         if file.is_symlink() or file.is_junction() or not file.is_file():
             raise ValueError('审核 PDF 导航不是普通文件。')
         raw = file.read_bytes()
@@ -231,7 +231,7 @@ def prune_build_cache(review, parent, document):
         saved = json.loads(metadata.read_text(encoding='utf-8'))
         if not isinstance(saved, dict):
             raise ValueError('审核编译缓存归属记录无效：' + str(metadata))
-        if saved.get('kind') != 'full-paper-sentence-review':
+        if saved.get('kind') not in ('full-paper-sentence-review', 'formal-source'):
             continue
         if not isinstance(saved.get('output'), str) or Path(saved['output']) != folder or not re.fullmatch(r'[0-9a-z]+-[a-z0-9_]{8}', folder.name):
             raise ValueError('审核编译缓存归属不明确：' + str(folder))
@@ -257,7 +257,7 @@ def prune_build_cache(review, parent, document):
         snapshots.append((kind, target, cache_tree(target, parent.stat().st_dev)))
     removed = []
     for kind, target, snapshot in snapshots:
-        if set(current.glob('*-review.json')) != set(navigation) or any(p.read_bytes() != raw for p, raw in navigation.items()):
+        if set([*current.glob('*-review.json'), *current.glob('*-source.json')]) != set(navigation) or any(p.read_bytes() != raw for p, raw in navigation.items()):
             raise ValueError('缓存清理期间 PDF 引用已变化，停止后续删除。')
         direct_parent = parent if kind == 'directory' else current
         if target.parent != direct_parent or target.resolve(strict=True).parent != direct_parent.resolve(strict=True) or cache_tree(target, parent.stat().st_dev) != snapshot:
@@ -789,7 +789,7 @@ def reverse_source_map(original, rendered, anchors=None):
     return {'source_digest': digest(source.encode('utf-8')), 'lines': lines}
 
 
-def preview(repo, state, document, id_, version, git, latexdiff, latexmk, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None):
+def preview(repo, state, document, id_, version, git, latexdiff, latexmk, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None, source_only=False):
     # Forward and reverse fragments have separate inputs/logs and no shared
     # mutable state. Two workers bound local CPU/process use for personal review.
     review = Review(repo, state, git)
@@ -802,13 +802,28 @@ def preview(repo, state, document, id_, version, git, latexdiff, latexmk, style=
     if not parent.resolve(strict=True).is_relative_to(review.repo):
         raise ValueError('审核 PDF 输出越出论文目录。')
     with writer_lock_at(parent), ThreadPoolExecutor(max_workers=2) as differences:
-        return _preview(review, document, id_, version, latexdiff, latexmk, differences, style, refresh_accepted, choices, compare_id, request_file)
+        return _preview(review, document, id_, version, latexdiff, latexmk, differences, style, refresh_accepted, choices, compare_id, request_file, source_only)
 
 
-def _preview(review, document, id_, version, latexdiff, latexmk, differences, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None):
-    data = review.inspect(id_, version, source=True)
+def _preview(review, document, id_, version, latexdiff, latexmk, differences, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None, source_only=False):
+    context = {'stage': '状态协调', 'file': document.relative_to(review.repo).as_posix(), 'id': '不涉及' if source_only else id_}
+    try:
+        return _render(review, document, id_, version, latexdiff, latexmk, differences, style, refresh_accepted, choices, compare_id, request_file, source_only, context)
+    except (ValueError, OSError) as error:
+        count = re.search(r'\((\d+) matches\)', str(error))
+        reason = ('未找到位置；' if count[1] == '0' else '存在多个匹配；') if count else ''
+        error_type = OSError if isinstance(error, OSError) else ValueError
+        raise error_type(f"PDF {context['stage']}失败；文件 {context['file']}；候选 {context['id']}：{reason}{error}") from error
+
+
+def _render(review, document, id_, version, latexdiff, latexmk, differences, style, refresh_accepted, choices, compare_id, request_file, source_only, context):
+    relative = document.relative_to(review.repo)
+    data = {'edit': {'file': relative.as_posix()}} if source_only else review.inspect(id_, version, source=True)
     allowed = PENDING | {'accepted'} if refresh_accepted else PENDING
-    if version != data['edit']['versions'][-1] or not data['source_match'] or data['edit']['status'] not in allowed:
+    if not source_only and not data['source_match']:
+        context.update(stage='候选定位', file=data['edit']['file'])
+        raise Conflict(data['conflict'])
+    if not source_only and (version != data['edit']['versions'][-1] or data['edit']['status'] not in allowed):
         raise ValueError('候选或原文已经变化，请刷新原文卡片。')
     appearance, preview_macros, preview_legend = display_style(style)
     request_raw = None
@@ -823,7 +838,7 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
     choices = choices or {}
     if not isinstance(choices, dict):
         raise ValueError('PDF choices must be an ID-to-version/option object')
-    relative = document.relative_to(review.repo)
+    context.update(stage='预览源码生成')
     files = {}
     for folder, directories, leaves in os.walk(review.repo, followlinks=False):
         directories[:] = [name for name in directories if name not in EXCLUDED]
@@ -837,7 +852,7 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
     if relative not in files:
         raise ValueError('主文档没有进入源码快照，请检查文件类型与路径。')
     parent = document.parent / '.latex-build' / 'review-diff'
-    previous = previous_build(parent, document)
+    previous = previous_build(parent, document, source_only)
     prune_build_cache(review, parent, document)
     previous_diff = None
     previous_result = None
@@ -852,11 +867,13 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
     normalized_files = {rel: body(raw.decode('utf-8-sig')).encode('utf-8') if rel.suffix.lower() == '.tex' else raw
                         for rel, raw in files.items()}
     scope = source_graph(relative, files)
-    inputs = {'renderer': digest(Path(__file__).read_bytes()), 'document': relative.as_posix(),
+    inputs = {'renderer': digest(Path(__file__).read_bytes()), 'document': relative.as_posix(), 'source_only': source_only,
               'commands': [latexdiff, *DIFF_OPTIONS, latexmk], 'style': appearance,
               'files': {rel.as_posix(): digest(raw) for rel, raw in normalized_files.items()}, 'items': {}, 'compare_id': compare_id}
-    for item_id, edit in review.state['edits'].items():
+    located = {}
+    for item_id, edit in ([] if source_only else review.state['edits'].items()):
         if edit['status'] in PENDING and Path(edit['file']) in scope:
+            context.update(stage='状态协调', file=edit['file'], id=item_id)
             review.question_links(edit.get('questions', []))
             item = review.payload(edit)
             choice = choices.get(item_id, {'version': edit['versions'][-1], 'option': 'A'})
@@ -868,6 +885,21 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
             inputs['items'][item_id] = {'file': edit['file'], 'version': edit['versions'][-1],
                                        'payload': item, 'option': choice['option'], 'deferred': edit.get('deferred', False),
                                        'questions': edit.get('questions', [])}
+            context.update(stage='候选定位')
+            located[item_id] = review.locate_edit(body(files[Path(edit['file'])].decode('utf-8-sig')), edit)
+            inputs['items'][item_id]['span'] = list(located[item_id])
+    context.update(stage='预览源码生成', file=relative.as_posix(), id='不涉及' if source_only else id_)
+    def assert_current():
+        if request_file and request_path.read_bytes() != request_raw:
+            raise ValueError('已有更新的 PDF 请求（选择已变化）；此旧任务未替换 PDF。')
+        if not source_only and review.state_path.read_bytes() != review.raw:
+            raise ValueError('编译期间候选或批注发生变化；此旧任务未替换 PDF，请重新预览。')
+        for rel, raw in files.items():
+            current = (review.repo / rel).read_bytes()
+            if source_only and rel.suffix.lower() == '.tex':
+                current, raw = body(current.decode('utf-8-sig')), body(raw.decode('utf-8-sig'))
+            if current != raw:
+                raise ValueError('编译期间源码发生变化：' + rel.as_posix() + '；此旧任务未替换 PDF。')
     dependency_stamps = previous_result.get('dependencies') if previous_result else None
     dependencies_unchanged = dependency_stamps is not None
     for name, stamp in (dependency_stamps or {}).items():
@@ -880,18 +912,18 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
             dependencies_unchanged = False
             break
     if previous_result and previous_result.get('inputs') == inputs and dependencies_unchanged:
-        navigation = parent / 'current' / (document.stem + '-review.json')
-        visible = parent / 'current' / (document.stem + '-review.pdf')
+        navigation = parent / 'current' / (document.stem + ('-source.json' if source_only else '-review.json'))
+        visible = navigation.with_suffix('.pdf')
         nav = json.loads(navigation.read_text(encoding='utf-8'))
         if visible.is_symlink() or visible.is_junction() or (visible.exists() and not visible.is_file()):
             raise ValueError('已有审核 PDF 不是普通文件。')
         sync = visible.with_suffix('.synctex.gz')
         if visible.is_file() and digest(visible.read_bytes()) == nav['pdf_digest'] and sync.is_file() and digest(sync.read_bytes()) == nav.get('synctex_digest'):
-            if (request_file and request_path.read_bytes() != request_raw) or review.state_path.read_bytes() != review.raw or any((review.repo / rel).read_bytes() != raw for rel, raw in files.items()):
-                raise ValueError('审核 PDF 复用核验期间源文件或候选已变化，请重新生成。')
+            assert_current()
             return {**previous_result, 'id': id_, 'version': version, 'reused_pdf': True}
     out = Path(tempfile.mkdtemp(prefix=id_ + '-', dir=parent))
-    (out / 'comparison.json').write_text(json.dumps({'kind': 'full-paper-sentence-review', 'output': str(out),
+    kind = 'formal-source' if source_only else 'full-paper-sentence-review'
+    (out / 'comparison.json').write_text(json.dumps({'kind': kind, 'output': str(out),
                                                    'document': relative.as_posix(), 'status': 'building'}), encoding='utf-8')
     source_dir = out / 'source'
     for rel, raw in files.items():
@@ -907,17 +939,14 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
     if Path(data['edit']['file']) not in scope:
         raise ValueError('所选主文档没有通过普通 input/include/subfile 包含该修改文件；请选择实际主文档。动态宏包含需先核对项目结构。')
     grouped, shown = {}, []
-    for id__, edit in review.state['edits'].items():
+    for id__, (start, end) in located.items():
+        edit = review.state['edits'][id__]
         rel = Path(edit['file'])
-        if edit['status'] not in PENDING or rel not in scope:
-            continue
-        text = body(files[rel].decode('utf-8-sig'))
-        actual = review.payload(edit)
-        start, end = review.locate_edit(text, edit, actual)
         item = inputs['items'][id__]['payload']
         grouped.setdefault(rel, []).append({'id': id__, 'start': start, 'end': end, 'item': item, 'deferred': edit.get('deferred', False)})
     header, reused_fragments = None, 0
     for rel, edits in grouped.items():
+        context.update(file=rel.as_posix(), id=','.join(e['id'] for e in edits))
         live = body(files[rel].decode('utf-8-sig'))
         original = live
         for edit in sorted(edits, key=lambda e: e['start'], reverse=True):
@@ -998,7 +1027,7 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
             display = ''.join(chunks)
             reviewed = reviewed[:a] + display + reviewed[b:]
         write_review_file(source_dir / rel, reviewed.encode('utf-8'), previous / 'source' / rel if previous else None)
-    if header is None and not refresh_accepted:
+    if header is None and not refresh_accepted and not source_only:
         raise ValueError('没有可预览的待审正文修改。')
     reviewed_main = (source_dir / relative).read_bytes().decode('utf-8')
     reviewed_body = reviewed_main.partition(r'\begin{document}')[2]
@@ -1010,6 +1039,7 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
     seed_compiler_cache(previous, out)
     # A fresh generation needs fresh SyncTeX paths. -gt requests one
     # TeX pass, not forced BibTeX/all rules; latexmk still settles real changes.
+    context.update(stage='LaTeX 编译', file=relative.as_posix(), id='不涉及' if source_only else ','.join(located) or id_)
     command([latexmk, '-pdf', '-gt', '-synctex=1', '-interaction=nonstopmode', '-file-line-error', '-jobname=review',
              '-outdir=' + str(pdf_dir), str(derived)], derived.parent, out / 'compile')
     pdf = pdf_dir / 'review.pdf'
@@ -1031,8 +1061,8 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
     if Path(data['edit']['file']) not in included:
         raise ValueError('所选主文档没有包含该修改所在文件；请选择实际所属的手稿或回复信主文档。')
     shown = [id__ for id__ in dict.fromkeys(shown) if Path(review.state['edits'][id__]['file']) in included]
-    if (request_file and request_path.read_bytes() != request_raw) or review.state_path.read_bytes() != review.raw or any((review.repo / rel).read_bytes() != raw for rel, raw in files.items()):
-        raise ValueError('编译期间源码或批注发生变化；生成的快照已保留，请刷新后重新预览。')
+    context.update(stage='结果协调')
+    assert_current()
     # Keep the viewer on one stable artifact. Failed builds never replace the
     # last successful PDF; snapshots/logs still belong to their own generation.
     current = parent / 'current'
@@ -1042,7 +1072,7 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
     current.mkdir(exist_ok=True)
     if not current.resolve(strict=True).is_relative_to(review.repo):
         raise ValueError('审核 PDF 输出越出论文目录。')
-    visible = current / (document.stem + '-review.pdf')
+    visible = current / (document.stem + ('-source.pdf' if source_only else '-review.pdf'))
     if visible.is_symlink() or visible.is_junction() or (visible.exists() and not visible.is_file()):
         raise ValueError('审核 PDF 目标不是普通文件。')
     with tempfile.NamedTemporaryFile(prefix=document.stem + '-', suffix='.pdf.tmp', dir=current, delete=False) as stream:
@@ -1101,10 +1131,13 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
         temporary = Path(stream.name)
     prior_metadata = {target: target.read_bytes() if target.exists() else None for target in (navigation, sync)}
     published = []
+    context.update(stage='替换')
     try:
-        os.replace(temporary, navigation); published.append(navigation)
-        os.replace(temporary_sync, sync); published.append(sync)
-        os.replace(temporary_pdf, visible)
+        with review.writer_lock():
+            assert_current()
+            os.replace(temporary, navigation); published.append(navigation)
+            os.replace(temporary_sync, sync); published.append(sync)
+            os.replace(temporary_pdf, visible)
     except OSError as error:
         # A locked Windows PDF must not leave the old viewer pointing at a new
         # generation's SyncTeX files, which the next cache rotation could remove.
@@ -1116,14 +1149,14 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
                 stream.write(prior_metadata[target]); restore = Path(stream.name)
             os.replace(restore, target)
         raise OSError('审核 PDF 发布失败，已保留上一份 PDF 及已有定位信息：' + str(error)) from error
-    result = {'pdf': str(pdf), 'navigation': str(navigation), 'output': str(out), 'id': id_, 'version': version, 'kind': 'full-paper-sentence-review', 'shown_ids': shown,
+    result = {'pdf': str(pdf), 'navigation': str(navigation), 'output': str(out), 'id': id_, 'version': version, 'kind': kind, 'shown_ids': shown,
               'reused_fragments': reused_fragments, 'reused_auxiliary': previous is not None, 'diff_command': [latexdiff, *DIFF_OPTIONS],
               'inputs': inputs, 'dependencies': dependencies, 'reused_pdf': False}
     (out / 'comparison.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     try:
         result['removed_cache'] = prune_build_cache(review, parent, document)
     except (ValueError, OSError) as error:
-        raise ValueError('审核 PDF 已更新；旧编译缓存清理停止：' + str(error)) from error
+        result['warning'] = 'PDF 已更新；旧编译缓存清理停止：' + str(error)
     return result
 
 
@@ -1136,6 +1169,7 @@ if __name__ == '__main__':
     parser.add_argument('--choices', type=json.loads)
     parser.add_argument('--compare-id')
     parser.add_argument('--request-file')
+    parser.add_argument('--source-only', action='store_true', help='Compile formal source without applying or locating review candidates')
     args = vars(parser.parse_args())
     args['id_'] = args.pop('id')
     try:

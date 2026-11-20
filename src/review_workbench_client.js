@@ -16,11 +16,11 @@ let comparison = 'original', draftFrame;
 const math = globalThis.TeXScholarMath;
 const instance = crypto.randomUUID();
 let rendering = false, stateFrame, restoration, toolbarSize;
-const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'start', 'checkUpdates']);
+const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'start', 'checkUpdates', 'sourcePDF']);
 const sideBusy = new Set();
 const actionNames = {save: '保存候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
     next: '切换审核项', previous: '切换审核项', switch: '切换审核项', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
-    configuration: '检查配置', checkUpdates: '检查插件更新', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', related: '定位关联改动'};
+    configuration: '检查配置', checkUpdates: '检查插件更新', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', sourcePDF: '编译正式 PDF', related: '定位关联改动'};
 function fitToolbar() {
     const header = document.querySelector('header'), home = $('toolbarExtras');
     document.documentElement.style.setProperty('--toolbar-height', header.offsetHeight + 'px');
@@ -39,8 +39,9 @@ new ResizeObserver(fitToolbar).observe(document.querySelector('header'));
 document.fonts.ready.then(fitToolbar);
 function pdfStatus(message) {
     const node = $('pdfStatus'); node.title = message || '';
-    node.textContent = /失败|错误/.test(message) ? 'PDF 更新失败' : /正在|生成中/.test(message) ? 'PDF 生成中'
-        : /待更新|变更/.test(message) ? 'PDF 待更新' : /最新/.test(message) ? 'PDF 最新' : 'PDF 未核对';
+    const label = /^正式 PDF/.test(message) ? '正式 PDF' : '审核 PDF';
+    node.textContent = label + (/失败|错误/.test(message) ? ' 更新失败' : /正在|生成中/.test(message) ? ' 生成中'
+        : /待更新|变更/.test(message) ? ' 待更新' : /最新/.test(message) ? ' 最新' : ' 未核对');
     node.style.color = /失败|错误/.test(message) ? 'var(--vscode-errorForeground)' : '';
     $('pdfError').hidden = !/失败|错误/.test(message);
     $('pdfError').textContent = $('pdfError').hidden ? '' : message;
@@ -273,7 +274,7 @@ function filterDirectory() {
     $('directoryResults').replaceChildren();
     for (const item of found) {
         const node = document.createElement('button'); node.className = 'secondary'; node.dataset.action = 'switch'; node.dataset.target = item.id;
-        node.textContent = item.id + ' · ' + (item.source_match === false ? '定位冲突' : item.status === 'rework' ? '返修' : '待审') + ' · ' + item.file + (item.location ? ' · ' + item.location : '') + (item.requests ? ' · 批注 ' + item.requests : '') + (item.summary ? '\n' + item.summary : '');
+        node.textContent = item.id + ' · ' + (item.source_match === false ? '定位冲突（需要重新定位）' : item.status === 'rework' ? '返修' : '待审') + ' · ' + item.file + (item.location ? ' · ' + item.location : '') + (item.requests ? ' · 批注 ' + item.requests : '') + (item.summary ? '\n' + item.summary : '');
         node.disabled = !!waiting;
         const row = document.createElement('div'), check = document.createElement('input'), choice = document.createElement('select');
         check.type = 'checkbox'; check.setAttribute('aria-label', '选择 ' + item.id);
@@ -755,7 +756,7 @@ window.addEventListener('message', ({data: message}) => {
     if (message.type === 'pdfStatus') {pdfStatus(message.message); return;}
     if (message.type === 'locationStatus') {data.source_match = message.source_match; data.conflict = message.conflict;
         $('locationConflict').hidden = message.source_match !== false;
-        $('locationConflict').textContent = message.source_match === false ? '定位冲突：' + message.conflict + '。候选仍保留；可修复位置或安全拒绝。' : '';
+        $('locationConflict').textContent = message.source_match === false ? '定位冲突（需要重新定位）：' + message.conflict + '。候选仍保留；可修复位置或安全拒绝。' : '';
         buttons(); return;}
     if (message.type === 'titles') {data.edit.location = message.location; $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (message.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length; renderDirectory(message.directory); return;}
     if (message.type === 'titleStatus') {$('titleStatus').textContent = message.message; return;}
@@ -795,7 +796,7 @@ window.addEventListener('message', ({data: message}) => {
         $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length;
         pdfStatus(message.pdfStatus);
         $('locationConflict').hidden = data.source_match !== false;
-        $('locationConflict').textContent = data.source_match === false ? '定位冲突：' + data.conflict + '。候选仍保留；可查看、修复位置或安全拒绝。' : '';
+        $('locationConflict').textContent = data.source_match === false ? '定位冲突（需要重新定位）：' + data.conflict + '。候选仍保留；可查看、修复位置或安全拒绝。' : '';
         renderDirectory(message.directory);
         if (!saved) {
             editingNote = undefined; $('noteComposer').hidden = true; placeComposer(); $('noteScopeControls').hidden = false;
