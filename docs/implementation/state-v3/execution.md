@@ -131,3 +131,5 @@ MCP 同步预览、应用和不变内容收据检查 `mcp-sync` 退出码 0。�
 总控最终通过后，将唯一版本来源 `package.json` 更新为 0.9.50；纯 JavaScript/Python 无独立转译，打包直接组装已验证源码。版本相关 MCP 定向 2 项 `mcp-version-8f8232a4a3db40a2954f54dd655fad8e` 与发行工具 12 项 `release-version-36fdeebf85584d68b93face40d218e17` 均退出 0。打包、推送、发行及安装结果以随后实际回执为准。
 
 `python -X utf8 scripts/build.py --output dist/v0.9.50` 退出 0，日志 `package-c59cf0a85280439fa22a8676b9770b04`。VSIX SHA256 `793305532135c17452f292a816a3e37ca4669c99f00333d46a754c4b80f45e47`；源码包 SHA256 `7f47ed96ad8130d1cf08fae1eb355b15353d4b1d43ff509cd3d88424f9950f2c`。发行和安装复用这两份已生成产物，不重打包。
+
+源码提交 `b35bd331409a6f70898cb6595e7a8f9272ba852a` 已普通推送 `origin/master`，fetch 后两者相同；附注标签 `v0.9.50` 指向该提交并记录两包摘要。`scripts/publish_release.py` 退出 0，正式版设为 Latest，GitHub 返回三项附件摘要与本地产物一致；日志 `publish-5c82a18c06da41d0a9a84bd415390f4b`。VS Code CLI 安装前核对同一 VSIX 摘要，安装退出 0，日志 `install-4d741de5761d4c97a220d9e736895a27`，包含 Node 依赖弃用警告。未额外做包后冒烟或自动重载。
