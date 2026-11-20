@@ -8,7 +8,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 GROUPS = {
-    'editor': ['core.test.js', 'extension.test.js', 'navigation.test.js', 'chktex_actions.test.js',
+    'editor': ['review_host_edit.test.js', 'review_host_registry.test.js', 'review_host_transaction.test.js', 'review_host_legacy.test.js', 'core.test.js', 'extension.test.js', 'navigation.test.js', 'chktex_actions.test.js',
                'document_roles.test.js', 'inline_review.test.js', 'candidate_panel.test.js', 'review_workbench.test.js', 'review_math.test.js', 'setup.test.js', 'questions.test.js', 'writing.test.js', 'pdf_navigation.test.js', 'menu_commands.test.js'],
     'backup': ['backup.test.js'],
     'backend': ['document_roles_test', 'native_review_test', 'source_review_test', 'mcp_test'],
@@ -26,8 +26,10 @@ if 'LOCAL_LATEX_TEST_ROOT' not in env or 'latex-writing-checks' not in env['LOCA
 out = Path(env['LOCAL_LATEX_TEST_ROOT']) / (args.group + '-' + uuid.uuid4().hex)
 out.mkdir(parents=True)
 env.setdefault('SOURCE_REVIEW_FIXTURES', str(out / 'fixtures'))
-env['PYTHONPATH'] = str(ROOT / 'src')
+env['PYTHONPATH'] = (str(ROOT / 'src') if args.group == 'editor' else
+                     os.pathsep.join((str(ROOT / 'scripts' / 'test-support'), str(ROOT / 'src'))))
 env['PYTHONUTF8'] = '1'
+env['LOCAL_LATEX_PYTHON'] = sys.executable
 command = ([args.node, '--test', '--test-concurrency=1', *GROUPS[args.group]] if args.group in ('editor', 'backup')
            else [sys.executable, '-X', 'utf8', '-m', 'unittest', *GROUPS[args.group], '-v'])
 result = subprocess.run(command, cwd=ROOT / 'src', env=env, capture_output=True)

@@ -3,6 +3,8 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs/promises'), path = require('node:path');
 const {activate, confirmedRoot, structuralText} = require('./document_roles');
 const {run} = require('./backup');
+// This UI fixture has no VS Code extension host; exercise the real host separately.
+process.env.PYTHONPATH = [path.join(__dirname, '..', 'scripts', 'test-support'), __dirname].join(path.delimiter);
 const dispose = () => ({dispose() {}});
 
 async function fixture(tex = true) {

@@ -164,6 +164,8 @@ class ReviewUnits(unittest.TestCase):
         paired = 'Opening stays.\n% TEXSCHOLAR-SYNC-BEGIN 1\nOriginal sentence.\nCandidate marked.\n% TEXSCHOLAR-SYNC-END 1\nTail stays.\n'
         mapping = reverse_source_map(original, paired, {'1': 2})
         self.assertEqual(mapping['lines'][2:4], [2, 2], 'both original and candidate point to the same real review location')
+        retained = reverse_source_map(original, original, preserve_header=True)
+        self.assertEqual(retained['lines'], [1, 2, 3, 4, 5, 6])
     def test_prose_environments_do_not_expand_a_sentence_to_the_complete_abstract(self):
         for environment in ['abstract', 'quote', 'quotation']:
             opening, closing = '\\begin{' + environment + '}\n', '\\end{' + environment + '}'
@@ -307,6 +309,17 @@ class ReviewPDF(unittest.TestCase):
     review = NativeReview.review
     apply = NativeReview.apply
     proposal = NativeReview.proposal
+
+    def test_formal_source_compiles_with_incomplete_migration_state(self):
+        state = self.root / '.codex-review' / 'state.json'
+        state.write_bytes(b'{"schema":3,"transaction":')
+        main = self.root / 'main.tex'
+        result = preview(self.root, '.codex-review/state.json', main, 'formal', None, 'missing-git',
+                         str(BIN / ('latexdiff' + EXE)), str(BIN / ('latexmk' + EXE)), source_only=True)
+        self.assertEqual(result['kind'], 'formal-source')
+        text = ' '.join(page.extract_text() for page in PdfReader(result['pdf']).pages)
+        self.assertIn('strong and fast', text)
+        self.assertEqual(state.read_bytes(), b'{"schema":3,"transaction":')
 
     def test_source_pdf_ignores_unrelated_broken_candidates_and_preserves_old_pdf_on_failure(self):
         import review_pdf

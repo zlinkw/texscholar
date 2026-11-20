@@ -16,9 +16,13 @@ let comparison = 'original', draftFrame;
 const math = globalThis.TeXScholarMath;
 const instance = crypto.randomUUID();
 let rendering = false, stateFrame, restoration, toolbarSize;
+let sourceDraftStale = false, candidateDraftStale = false;
+let selectedBlockRevision;
+$('currentBlock').addEventListener('pointerup', () => {selectedBlockRevision = data?.block?.source_revision;});
+$('currentBlock').addEventListener('keyup', () => {selectedBlockRevision = data?.block?.source_revision;});
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'start', 'checkUpdates', 'sourcePDF']);
 const sideBusy = new Set();
-const actionNames = {save: '保存候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
+const actionNames = {save: '保存候选', saveSource: '保存当前原文', syncBlock: '同步候选', repairBlock: '修复审核块', manualRebase: '人工更新候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
     next: '切换审核项', previous: '切换审核项', switch: '切换审核项', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', checkUpdates: '检查插件更新', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', sourcePDF: '编译正式 PDF', related: '定位关联改动'};
 function fitToolbar() {
@@ -74,7 +78,7 @@ function readingAnchor() {
     return node ? {id: node.id, top: node.getBoundingClientRect().top} : undefined;
 }
 function snapshot() {
-    return {c: {...current}, drafts: Object.fromEntries(drafts), note: $('note').value, selected, editingNote,
+    return {c: {...current}, drafts: Object.fromEntries(drafts), blockDraft: data?.block || sourceDraftStale ? $('blockSource').value : undefined, sourceDraftStale, candidateDraftStale, note: $('note').value, selected, editingNote,
         composer: !$('noteComposer').hidden, scope: $('scopeChoice').value, selectionStale, sourceMode, chinese, focused, comparison,
         compare: $('compare').checked, scrollTop: restoration?.scrollTop ?? window.scrollY, anchor: restoration?.anchor ?? readingAnchor(), focus: document.activeElement?.id,
         editors: options.filter(o => !$('editor-' + o.label).hidden).map(o => o.label),
@@ -153,11 +157,22 @@ function feedbackFor(button) {
             : undefined)};
 }
 function dirty() {
-    const changed = options.some(o => drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n'));
+    const candidateDirty = options.some(o => drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n'));
+    if (!candidateDirty) candidateDraftStale = false;
+    if (sourceDraftStale && data?.block && $('blockSource').value === data.block.text.replace(/\r\n/g, '\n')) sourceDraftStale = false;
+    draftWarning();
+    const changed = candidateDirty || sourceDraftStale ||
+        !!data?.block && $('blockSource').value !== data.block.text.replace(/\r\n/g, '\n');
     send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim() || !!editingNote, state: remember(false)}, false); buttons(); return changed;
+}
+function draftWarning() {
+    $('draftStale').hidden = !sourceDraftStale && !candidateDraftStale;
+    $('draftStale').textContent = [sourceDraftStale && '原文草稿基于旧正文，已保留；请复制或放弃后载入最新。', candidateDraftStale && '候选草稿基于旧正文，已保留；请核对后人工更新。'].filter(Boolean).join(' ');
+    $('resetSourceDraft').hidden = !sourceDraftStale || !data?.block;
 }
 function buttons() {
     $('note').readOnly = !!waiting;
+    $('blockSource').readOnly = !!waiting;
     for (const b of document.querySelectorAll('[data-action="newNote"],[data-action="cancelNote"],[data-action="editNoteOpen"]')) b.disabled = waiting;
     for (const button of document.querySelectorAll('button[data-write]')) button.disabled = waiting || unavailable || conflict;
     for (const button of document.querySelectorAll('button[data-action]')) {
@@ -436,7 +451,7 @@ function renderNotes(requests) {
         if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
         const context = n.display_context;
         const origin = noteOrigin(n);
-        node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + '</strong><div class="review-text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
+        node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + (n.source_stale ? ' · 原批注，内容已变' : '') + '</strong><div class="review-text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
             (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '');
     }
     placeComposer();
@@ -714,6 +729,14 @@ document.addEventListener('click', event => {
     if (type === 'whole') {$('scopeChoice').value = 'group'; scope(); return;}
     if (type === 'optionNote') {if (!canChangeNote()) return; $('scopeChoice').value = option; scope(); openComposer(); $('note').focus(); return;}
     if (type === 'editToggle') {$('editor-' + option).hidden = !$('editor-' + option).hidden; if (!$('editor-' + option).hidden) $('edit-' + option).focus(); return;}
+    if (type === 'resetSourceDraft') {$('blockSource').value = data.block.text.replace(/\r\n/g, '\n'); sourceDraftStale = false; draftWarning(); dirty(); return;}
+    if (type === 'manualRebase') {
+        if (!data?.block || selectedBlockRevision !== data.block.source_revision) {status('请先在最新正文块中选择范围或插入位置。', true); return;}
+        const field = $('currentBlock'), start = Array.from(field.value.slice(0, field.selectionStart)).length, end = Array.from(field.value.slice(0, field.selectionEnd)).length;
+        send(type, {source_revision:data.block.source_revision, block_id:data.block.id, start, end, quote:Array.from(field.value).slice(start,end).join(''),
+            options:options.map(o => ({label:o.label, after:drafts.get(o.label) ?? o.after.replace(/\r\n/g, '\n')}))}); return;
+    }
+    if (type === 'saveSource') {send(type, {value: $('blockSource').value}); return;}
     if (type === 'note' || type === 'noteHandoff') {
         const handoff = type === 'noteHandoff';
         if (editingNote) {send('editNote', {request: editingNote.id, text: $('note').value, previousText: editingNote.previousText, handoff}); return;}
@@ -754,10 +777,22 @@ window.addEventListener('message', ({data: message}) => {
     }
     if (message.type === 'translationStatus') {$('translateStatus').textContent = message.message; return;}
     if (message.type === 'pdfStatus') {pdfStatus(message.message); return;}
-    if (message.type === 'locationStatus') {data.source_match = message.source_match; data.conflict = message.conflict;
+    if (message.type === 'locationStatus') {
+        const oldBlock = data.block, changed = oldBlock?.text !== message.block?.text;
+        const sourceDirty = oldBlock && $('blockSource').value !== oldBlock.text.replace(/\r\n/g, '\n');
+        if (changed && sourceDirty) sourceDraftStale = true;
+        if (changed && options.some(o => drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n'))) candidateDraftStale = true;
+        selectedBlockRevision = undefined;
+        data.block = message.block; data.source_match = message.source_match; data.conflict = message.conflict;
+        if (data.block && !sourceDraftStale) $('blockSource').value = data.block.text.replace(/\r\n/g, '\n');
+        $('blockEditor').hidden = !data.block && !sourceDraftStale;
+        $('currentBlockPanel').hidden = !data.block || message.source_match !== false;
+        $('currentBlock').value = data.block?.text.replace(/\r\n/g, '\n') || '';
         $('locationConflict').hidden = message.source_match !== false;
-        $('locationConflict').textContent = message.source_match === false ? '定位冲突（需要重新定位）：' + message.conflict + '。候选仍保留；可修复位置或安全拒绝。' : '';
-        buttons(); return;}
+        $('locationConflict').textContent = message.source_match === false ? '正文或审核块需核对：' + message.conflict + '。候选和批注仍保留。' : '';
+        $('syncBlock').hidden = !data.block || message.source_match !== false;
+        $('repairBlock').hidden = current.owner !== '.codex-review/state.json' || !data.edit.block_id || message.source_match !== false;
+        draftWarning(); dirty(); return;}
     if (message.type === 'titles') {data.edit.location = message.location; $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (message.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length; renderDirectory(message.directory); return;}
     if (message.type === 'titleStatus') {$('titleStatus').textContent = message.message; return;}
     if (message.type === 'backupStatus') {$('backupStatus').textContent = message.message || '后台 Git 备份尚无任务'; return;}
@@ -784,6 +819,8 @@ window.addEventListener('message', ({data: message}) => {
         const oldOptions = options;
         current = message.c; data = message.data; options = message.options;
         const resume = message.resume;
+        selectedBlockRevision = undefined;
+        sourceDraftStale = !!resume?.sourceDraftStale; candidateDraftStale = !!resume?.candidateDraftStale;
         showRelatedReturn(message.relatedReturn);
         navigationFilter = message.navigationFilter;
         $('directoryQuery').value = navigationFilter.query; $('directoryKind').value = navigationFilter.kind; $('directoryNotes').checked = navigationFilter.notes;
@@ -796,7 +833,15 @@ window.addEventListener('message', ({data: message}) => {
         $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length;
         pdfStatus(message.pdfStatus);
         $('locationConflict').hidden = data.source_match !== false;
-        $('locationConflict').textContent = data.source_match === false ? '定位冲突（需要重新定位）：' + data.conflict + '。候选仍保留；可查看、修复位置或安全拒绝。' : '';
+        $('locationConflict').textContent = data.source_match === false ? '正文或审核块需核对：' + data.conflict + '。候选和批注仍保留。' : '';
+        $('syncBlock').hidden = !data.block || data.source_match !== false;
+        $('repairBlock').hidden = current.owner !== '.codex-review/state.json' || !data.edit.block_id || data.source_match !== false;
+        document.querySelector('[data-action="relocate"]').hidden = current.owner === '.codex-review/state.json';
+        $('blockEditor').hidden = !data.block && !sourceDraftStale;
+        $('blockSource').value = resume?.blockDraft ?? data.block?.text.replace(/\r\n/g, '\n') ?? '';
+        $('currentBlockPanel').hidden = !data.block || data.source_match !== false;
+        $('currentBlock').value = data.block?.text.replace(/\r\n/g, '\n') || '';
+        draftWarning();
         renderDirectory(message.directory);
         if (!saved) {
             editingNote = undefined; $('noteComposer').hidden = true; placeComposer(); $('noteScopeControls').hidden = false;

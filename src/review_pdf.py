@@ -769,9 +769,9 @@ def source_graph(root, files):
     return included
 
 
-def reverse_source_map(original, rendered, anchors=None):
+def reverse_source_map(original, rendered, anchors=None, preserve_header=False):
     """Map derived TeX lines back to source, never to a disposable review copy."""
-    source = body(original).replace('\r\n', '\n')
+    source = (original if preserve_header else body(original)).replace('\r\n', '\n')
     before, after = source.splitlines(), rendered.splitlines()
     lines = [1] * len(after)
     for kind, a, b, x, y in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
@@ -789,10 +789,34 @@ def reverse_source_map(original, rendered, anchors=None):
     return {'source_digest': digest(source.encode('utf-8')), 'lines': lines}
 
 
+class FormalSource:
+    """Formal compilation depends on source files, not review-state availability."""
+    path = Review.path
+
+    def __init__(self, repo, state, git):
+        self.repo = Path(repo).resolve(strict=True)
+        self.state_rel = state
+        self.sidecar = True
+        self.git_exe = git
+        self.env = {key:value for key,value in os.environ.items() if not key.upper().startswith('GIT_')}
+        self.env['GIT_OPTIONAL_LOCKS'] = '0'
+
+    def writer_lock(self):
+        return writer_lock_at(self.repo / '.codex-review')
+
+
+def formal_source(raw):
+    """Ignore only mechanical review metadata when comparing formal inputs."""
+    text = raw.decode('utf-8-sig')
+    return ''.join(('\r\n' if line.endswith('\r\n') else '\n' if line.endswith('\n') else '')
+                   if line.startswith(('% CODEX-REVIEW-DATA ', '% CODEX-REVIEW-NEXT ')) else line
+                   for line in text.splitlines(keepends=True)).encode('utf-8')
+
+
 def preview(repo, state, document, id_, version, git, latexdiff, latexmk, style=None, refresh_accepted=False, choices=None, compare_id=None, request_file=None, source_only=False):
     # Forward and reverse fragments have separate inputs/logs and no shared
     # mutable state. Two workers bound local CPU/process use for personal review.
-    review = Review(repo, state, git)
+    review = FormalSource(repo, state, git) if source_only else Review(repo, state, git)
     document = review.path(str(Path(document).resolve(strict=True).relative_to(review.repo)))
     parent = document.parent / '.latex-build' / 'review-diff'
     for component in (parent.parent, parent, parent / 'current'):
@@ -864,7 +888,7 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
                 previous_diff = previous
     # Compare the actual snapshot inputs, not the owner's changing notes/history.
     # The renderer version and tool commands invalidate reuse after upgrades.
-    normalized_files = {rel: body(raw.decode('utf-8-sig')).encode('utf-8') if rel.suffix.lower() == '.tex' else raw
+    normalized_files = {rel: (formal_source(raw) if source_only else (raw.decode('utf-8-sig') if review.sidecar else body(raw.decode('utf-8-sig'))).encode('utf-8')) if rel.suffix.lower() == '.tex' else raw
                         for rel, raw in files.items()}
     scope = source_graph(relative, files)
     inputs = {'renderer': digest(Path(__file__).read_bytes()), 'document': relative.as_posix(), 'source_only': source_only,
@@ -886,7 +910,8 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
                                        'payload': item, 'option': choice['option'], 'deferred': edit.get('deferred', False),
                                        'questions': edit.get('questions', [])}
             context.update(stage='候选定位')
-            located[item_id] = review.locate_edit(body(files[Path(edit['file'])].decode('utf-8-sig')), edit)
+            text = files[Path(edit['file'])].decode('utf-8-sig')
+            located[item_id] = review.locate_edit(text if review.sidecar else body(text), edit)
             inputs['items'][item_id]['span'] = list(located[item_id])
     context.update(stage='预览源码生成', file=relative.as_posix(), id='不涉及' if source_only else id_)
     def assert_current():
@@ -897,7 +922,7 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
         for rel, raw in files.items():
             current = (review.repo / rel).read_bytes()
             if source_only and rel.suffix.lower() == '.tex':
-                current, raw = body(current.decode('utf-8-sig')), body(raw.decode('utf-8-sig'))
+                current, raw = formal_source(current), formal_source(raw)
             if current != raw:
                 raise ValueError('编译期间源码发生变化：' + rel.as_posix() + '；此旧任务未替换 PDF。')
     dependency_stamps = previous_result.get('dependencies') if previous_result else None
@@ -931,7 +956,8 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
         destination.parent.mkdir(parents=True, exist_ok=True)
         write_review_file(destination, normalized_files[rel],
                           previous / 'source' / rel if previous else None)
-    main_text = body(files[relative].decode('utf-8-sig'))
+    main_raw = files[relative].decode('utf-8-sig')
+    main_text = main_raw if review.sidecar else body(main_raw)
     preamble, marker, _ = main_text.partition(r'\begin{document}')
     if not marker:
         raise ValueError('所选文件不是可编译主文档。')
@@ -947,7 +973,8 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
     header, reused_fragments = None, 0
     for rel, edits in grouped.items():
         context.update(file=rel.as_posix(), id=','.join(e['id'] for e in edits))
-        live = body(files[rel].decode('utf-8-sig'))
+        live_raw = files[rel].decode('utf-8-sig')
+        live = live_raw if review.sidecar else body(live_raw)
         original = live
         for edit in sorted(edits, key=lambda e: e['start'], reverse=True):
             if not edit['deferred']:
@@ -1094,8 +1121,9 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
             continue
         content = tex.read_bytes().decode('utf-8')
         original = files[rel].decode('utf-8-sig')
-        anchors = {edit['id']: body(original).count('\n', 0, edit['live_start']) + 1 for edit in grouped.get(rel, [])}
-        reverse[str(tex)] = {'file': str(review.repo / rel), **reverse_source_map(original, content, anchors)}
+        source_for_offsets = original if review.sidecar else body(original)
+        anchors = {edit['id']: source_for_offsets.count('\n', 0, edit['live_start']) + 1 for edit in grouped.get(rel, [])}
+        reverse[str(tex)] = {'file': str(review.repo / rel), **reverse_source_map(original, content, anchors, review.sidecar)}
         review_lines, active_id, active_option = {}, None, None
         for line, row in enumerate(content.splitlines(), 1):
             if row.startswith('% TEXSCHOLAR-SYNC-BEGIN '):

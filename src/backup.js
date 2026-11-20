@@ -323,11 +323,14 @@ function activate(context) {
         for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.toString() === folder.uri.toString() && doc.isDirty && !await doc.save()) throw new Error('论文保存失败，未开始成果提交。');
         const files = await vscode.workspace.findFiles(new vscode.RelativePattern(folder.uri.fsPath,'**/*.tex'),'**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**');
         const owners = files.filter(file => /^% CODEX-REVIEW-DATA /m.test(fs.readFileSync(file.fsPath,'utf8')));
-        if (owners.length !== 1) throw new Error('需先核对唯一的本地审核状态，不能猜测提交范围。');
+        const sidecar = path.join(folder.uri.fsPath, '.codex-review', 'state.json');
+        const external = fs.existsSync(sidecar);
+        if (external && owners.length || !external && owners.length !== 1) throw new Error('需先核对唯一的本地审核状态，不能猜测提交范围。');
+        const state = external ? '.codex-review/state.json' : path.relative(folder.uri.fsPath,owners[0].fsPath).split(path.sep).join('/');
         const note = await vscode.window.showInputBox({title:'Git 备份已接收修改',prompt:'备份已接收成果及当前轮源码中的手动修改；未接收候选和批注保留本地。请填写改动目的',validateInput:value => value.trim() ? undefined : '请填写成果说明。'});
         if (note === undefined) return;
         const cfg = vscode.workspace.getConfiguration('localLatex');
-        const result = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'备份已接收成果及手动修改，推送成功后精简已完结记录'},() => finishReview(folder.uri.fsPath,path.relative(folder.uri.fsPath,owners[0].fsPath).split(path.sep).join('/'),
+        const result = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'备份已接收成果及手动修改，推送成功后精简已完结记录'},() => finishReview(folder.uri.fsPath,state,
             {git:cfg.get('gitPath','git'),gh:cfg.get('ghPath','gh'),python:cfg.get('pythonPath','python')},note));
         if (result.skipped) return vscode.window.showInformationMessage(result.reason);
         vscode.window.showInformationMessage(`已接收成果 ${result.accepted_ids.join(', ') || '无'}；手动修改文件 ${result.manual_files.join(', ') || '无'}。源码已推送至私有 GitHub；已精简 ${result.removed_ids.length} 条已完结记录，删除 ${result.deleted_objects.length} 个无引用旧缓存；未决候选和批注保留。`);
@@ -336,6 +339,26 @@ function activate(context) {
         if (busy) return vscode.window.showWarningMessage('Git 备份尚未结束。');
         busy = true;
         try {await finishAction();} catch(error) {vscode.window.showErrorMessage(error.message);} finally {busy=false;}
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('localLatex.exportCleanSource',async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!vscode.workspace.isTrusted || editor?.document.uri.scheme !== 'file') return vscode.window.showWarningMessage('请在受信任的论文文件夹打开源码。');
+        const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+        if (!folder) return vscode.window.showWarningMessage('请先打开论文文件夹。');
+        if (vscode.workspace.textDocuments.some(doc => doc.uri.scheme === 'file' && doc.isDirty && vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.toString() === folder.uri.toString()))
+            return vscode.window.showWarningMessage('论文中有未保存的编辑，请先核对并保存后再导出。');
+        const versions = new Map(vscode.workspace.textDocuments.filter(doc => doc.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.toString() === folder.uri.toString()).map(doc => [doc.uri.toString(),doc.version]));
+        const root = folder.uri.fsPath;
+        const target = await vscode.window.showSaveDialog({title:'选择尚不存在的投稿源码目录',saveLabel:'创建导出目录',
+            defaultUri:vscode.Uri.file(path.join(path.dirname(root), path.basename(root) + '-submission'))});
+        if (!target) return;
+        try {
+            const python = vscode.workspace.getConfiguration('localLatex').get('pythonPath','python');
+            const result = JSON.parse(await run(python, ['-X','utf8',path.join(__dirname,'review_archive.py'),'export','--repo',root,'--destination',target.fsPath], root));
+            if (result.source_changed_during_export.length || vscode.workspace.textDocuments.some(doc => doc.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.toString() === folder.uri.toString() && (doc.isDirty || versions.has(doc.uri.toString()) && versions.get(doc.uri.toString()) !== doc.version)))
+                return vscode.window.showWarningMessage(`导出期间论文发生变化；副本已生成在 ${result.exported}，请核对后重新导出到新目录。`);
+            vscode.window.showInformationMessage(`已导出 ${result.files.length} 个论文源码和常见资源文件。请核对其他自定义依赖；工作稿和审核决定未改变。`);
+        } catch (error) {vscode.window.showErrorMessage('投稿源码导出失败：' + error.message);}
     }));
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.backupProject',async () => {
         if (busy) return vscode.window.showWarningMessage('Git 备份尚未结束。');
@@ -348,7 +371,7 @@ function activate(context) {
             for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.toString() === folder.uri.toString() && doc.isDirty && !await doc.save()) throw new Error('论文文件保存失败，未开始备份。');
             const cfg = vscode.workspace.getConfiguration('localLatex');
             const plan = await inspectBackup(folder.uri.fsPath,{git:cfg.get('gitPath','git'),gh:cfg.get('ghPath','gh')});
-            if ([...plan.bytes].some(([name,raw]) => /\.tex$/i.test(name) && raw?.includes(Buffer.from('% CODEX-REVIEW-DATA ')))) return await finishAction();
+            if (fs.existsSync(path.join(folder.uri.fsPath, '.codex-review', 'state.json')) || [...plan.bytes].some(([name,raw]) => /\.tex$/i.test(name) && raw?.includes(Buffer.from('% CODEX-REVIEW-DATA ')))) return await finishAction();
             if (!plan.entries.length && plan.head === plan.remoteHead) return vscode.window.showInformationMessage('没有符合备份范围的论文文件变更，也没有待推送提交；未创建空提交。');
             const picked = plan.entries.length ? await vscode.window.showQuickPick(plan.entries.map(entry => ({label:entry.status+' '+entry.file,picked:true,entry})),{canPickMany:true,placeHolder:'备份整个论文项目的这些文件；可取消勾选，不包含私有审核对象与编译缓存'}) : [];
             if (!picked) return;

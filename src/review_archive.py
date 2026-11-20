@@ -19,6 +19,11 @@ import zipfile
 from source_review import Review, Conflict, digest
 from review_checkpoint import referenced_objects
 
+PAPER_EXTENSIONS = {'.tex', '.bib', '.cls', '.clo', '.sty', '.bst', '.bbx', '.cbx', '.cfg', '.def', '.fd',
+                    '.map', '.enc', '.tfm', '.otf', '.ttf', '.pdf', '.png', '.jpg', '.jpeg', '.eps', '.svg', '.ps',
+                    '.drawio', '.csv', '.dat'}
+EXCLUDED = {'.git', '.codex-review', '.latex-build', 'clean_dir', 'node_modules'}
+
 
 def safe_name(name):
     p = PurePosixPath(name)
@@ -150,20 +155,21 @@ def backup(repo, state, output, git="git", extras=()):
 
 def backup_files(r, output, extras):
     """Private review snapshots and paper assets; independent of Git installation."""
-    extensions = {'.tex', '.bib', '.cls', '.sty', '.bst', '.bbx', '.cbx', '.cfg', '.def', '.fd',
-                  '.map', '.enc', '.tfm', '.otf', '.ttf', '.pdf', '.png', '.jpg', '.jpeg', '.eps', '.svg', '.ps'}
-    excluded = {'.git', '.codex-review', '.latex-build', 'clean_dir', 'node_modules'}
     names = {r.state_rel, *extras}
     for folder, directories, leaves in os.walk(r.repo, followlinks=False):
-        directories[:] = [name for name in directories if name not in excluded]
+        directories[:] = [name for name in directories if name.casefold() not in EXCLUDED]
         for name in leaves:
             p = Path(folder) / name
-            if p.suffix.lower() in extensions:
+            if p.suffix.lower() in PAPER_EXTENSIONS:
                 names.add(p.relative_to(r.repo).as_posix())
     for oid in referenced_objects(r):
         names.add('.codex-review/objects/' + oid + '.json')
+    journal = '.codex-review/automatic-backup.json'
+    if r.sidecar and plain_file(r.repo, journal, missing=True):
+        names.add(journal)
     files = {name: plain_file(r.repo, name).read_bytes() for name in sorted(names)}
-    if files[r.state_rel] != r.raw or any(e.get('source_match') is False for e in r.status()['edits'].values()):
+    conflicts = [id_ for id_, edit in r.status()['edits'].items() if edit.get('source_match') is False]
+    if files[r.state_rel] != r.raw or (conflicts and not r.sidecar):
         raise Conflict('Reconcile source/review changes before backup')
     out = Path(output).resolve()
     if out.exists() or out.is_relative_to(r.repo):
@@ -172,6 +178,8 @@ def backup_files(r, output, extras):
     manifest = {'schema': 2, 'type': 'codex-review-backup', 'state': r.state_rel,
                 'session': r.state['session'], 'files': {n: digest(b) for n, b in files.items()},
                 'exclusions': 'Git history/config, build outputs, request attachments, caches and unselected non-paper files.'}
+    if r.sidecar:
+        manifest['source_conflicts'] = conflicts
     for name, raw in files.items():
         if plain_file(r.repo, name).read_bytes() != raw:
             raise Conflict('Source changed during backup; retry after edits stop')
@@ -181,6 +189,60 @@ def backup_files(r, output, extras):
             z.writestr('working/' + name, raw)
     return {'archive': str(out), 'sha256': digest(out.read_bytes()), 'files': len(files),
             'source_modified': False, 'uploaded': False, 'git_required': False}
+
+
+def export_sources(repo, destination, extras=()):
+    """Create a clean source copy; never change the working paper or review state."""
+    from review_blocks import index, MARKER
+    from review_checkpoint import source_text
+    root, dest = Path(repo).resolve(strict=True), Path(destination).resolve()
+    if dest.exists() or dest.is_relative_to(root):
+        raise Conflict('Clean export requires an absent destination outside the project')
+    names = set(extras)
+    if any(any(part.casefold() in EXCLUDED for part in PurePosixPath(safe_name(name)).parts) for name in names):
+        raise Conflict('Clean export cannot include review state, Git data or build caches')
+    for folder, directories, leaves in os.walk(root, followlinks=False):
+        directories[:] = [name for name in directories if name.casefold() not in EXCLUDED]
+        for name in leaves:
+            file = Path(folder) / name
+            if file.suffix.lower() in PAPER_EXTENSIONS:
+                names.add(file.relative_to(root).as_posix())
+    if not any(Path(name).suffix.lower() == '.tex' for name in names):
+        raise Conflict('Clean export requires at least one TeX source')
+    originals = {name: plain_file(root, name).read_bytes() for name in sorted(names)}
+    files = {}
+    for name, raw in originals.items():
+        if Path(name).suffix.lower() == '.tex':
+            text = raw.decode('utf-8-sig')
+            if re.search(r'(?m)^% CODEX-REVIEW-DATA ', text):
+                raise Conflict('Clean export requires legacy embedded review state to be migrated first: ' + name)
+            try:
+                index(text)
+            except ValueError as error:
+                raise Conflict('Clean export blocked by invalid block markers in ' + name + ': ' + str(error)) from error
+            text = MARKER.sub('', source_text(text, sidecar=True))
+            raw = (b'\xef\xbb\xbf' if raw.startswith(b'\xef\xbb\xbf') else b'') + text.encode('utf-8')
+        files[name] = raw
+    for name, raw in originals.items():
+        if plain_file(root, name).read_bytes() != raw:
+            raise Conflict('Source changed during clean export: ' + name)
+    dest.mkdir(parents=True, exist_ok=False)
+    try:
+        for name, raw in files.items():
+            path = dest / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('xb') as stream:
+                stream.write(raw)
+    except OSError as error:
+        raise Conflict('Partial export retained at ' + str(dest) + ': ' + str(error)) from error
+    try:
+        changed = [name for name, raw in originals.items()
+                   if (current := plain_file(root, name, missing=True)) is None or current.read_bytes() != raw]
+    except (Conflict, OSError) as error:
+        raise Conflict('Copy created at ' + str(dest) + '; source recheck failed: ' + str(error)) from error
+    return {'exported': str(dest), 'files': sorted(files), 'source_modified': False, 'uploaded': False,
+            'source_changed_during_export': changed,
+            'note': 'Paper assets and explicitly selected extras only; review objects and state are excluded.'}
 
 
 def restore(archive, destination, git="git"):
@@ -211,13 +273,16 @@ def restore(archive, destination, git="git"):
             review = Review(dest, m['state'], git)
             review.assert_ready()
             status = review.status()
-            if review.state['session'] != m['session'] or any(e.get('source_match') is False for e in status['edits'].values()):
+            conflicts = [id_ for id_, edit in status['edits'].items() if edit.get('source_match') is False]
+            if (review.state['session'] != m['session'] or
+                    (conflicts if not review.sidecar else conflicts != m.get('source_conflicts'))):
                 raise Conflict('Restored review identities/source do not reconcile')
             for edit in review.state['edits'].values():
                 for version in edit['versions']:
                     review.contents(version, 'span.json')
             return {'restored': str(dest), 'state': m['state'], 'edits': len(status['edits']),
-                    'remotes_restored': False, 'git_required': False, 'note': 'No author decisions changed.'}
+                    'remotes_restored': False, 'git_required': False, 'source_conflicts': conflicts,
+                    'note': 'No author decisions changed.'}
         if m.get("object_format") not in ("sha1", "sha256"):
             raise Conflict("Unsupported Git object format")
         if set(members) != {"manifest.json", "history.bundle"} | {"working/" + safe_name(n) for n in m["files"]}:
@@ -283,8 +348,14 @@ def main():
     r = sub.add_parser("restore")
     r.add_argument("--archive", required=True)
     r.add_argument("--destination", required=True)
+    e = sub.add_parser('export')
+    e.add_argument('--repo', required=True)
+    e.add_argument('--destination', required=True)
+    e.add_argument('--extra', nargs='*', default=[])
     a = p.parse_args()
-    result = backup(a.repo, a.state, a.output, a.git, a.extra) if a.action == "backup" else restore(a.archive, a.destination, a.git)
+    result = (backup(a.repo, a.state, a.output, a.git, a.extra) if a.action == 'backup' else
+              restore(a.archive, a.destination, a.git) if a.action == 'restore' else
+              export_sources(a.repo, a.destination, a.extra))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

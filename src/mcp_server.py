@@ -1,5 +1,6 @@
 """Local STDIO MCP adapter. UI and AI share Review's lock and transactions."""
 from pathlib import Path
+from contextlib import nullcontext
 import argparse
 import json
 import os
@@ -44,6 +45,7 @@ FEEDBACK_RECEIPTS = {'type': 'array', 'items': schema({'id': STRING, 'version': 
 REFERENCES = {'type': 'array', 'items': schema({'kind': {'type': 'string', 'enum': ['label', 'citation', 'macro']}, 'key': STRING, 'files': STRINGS}, ['kind', 'key', 'files'])}
 READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS, 'scopes': SCOPES, 'known_feedback': FEEDBACK_RECEIPTS, 'references': REFERENCES}
 SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'response']},
+        'block_id': STRING,
         'intent': schema({'goal': STRING, 'preserve': STRING}, ['goal', 'preserve']),
         'before': STRING, 'left': STRING, 'right': STRING, 'location': {**STRING, 'description': '默认中文的简短位置标题；仅保留必要符号、编号和专有名词英文。'}, 'location_zh': STRING,
         'options': {'type': 'array', 'items': OPTION, 'minItems': 1, 'maxItems': 3},
@@ -56,9 +58,25 @@ TOOLS = [
     ('read_feedback', 'Read missing feedback generations, grouped once per ID/version; every note retains its exact option/selection. Optional ids scope.', schema({**BASE, 'ids': STRINGS}, ['project', 'state']), True),
     ('begin_review', 'Explicit new batch only, after protecting unbacked accepted results. Reuses an existing author-approved state header; never silently starts a batch.',
      schema({**WRITE, 'round': STRING, 'files': {'type': 'array', 'items': STRING}, 'submission': STRING}, ['project', 'state', 'expected_sha256', 'round', 'files']), False),
+    ('prepare_block', 'Preview fixed block boundaries first. Apply only after explicit author confirmation using the returned block_id and unchanged source/state revisions.',
+     schema({**WRITE, 'spec': schema({'file': STRING, 'kind': {'type': 'string', 'enum': ['paragraph', 'display', 'slot', 'question']},
+         'start': {'type': 'integer'}, 'end': {'type': 'integer'}, 'source_revision': STRING, 'block_id': STRING,
+         'questions': {'type': 'array', 'items': QUESTION}},
+         ['file', 'kind', 'start', 'end', 'source_revision'])}, ['project', 'state', 'expected_sha256', 'spec']), False),
+    ('reassociate_block', 'Preview explicit repair of missing markers or reassociation of a uniquely moved block. Apply only after author confirmation.',
+     schema({**WRITE, 'apply':{'type':'boolean','default':False}, 'spec':schema({'block_id':STRING, 'file':STRING, 'source_revision':STRING, 'restore':{'type':'boolean'},
+                                    'start':{'type':'integer'}, 'end':{'type':'integer'}}, ['block_id','file','source_revision'])},
+            ['project','state','expected_sha256','spec']), False),
+    ('migrate_state', 'Preview migration first. Apply only after explicit author confirmation of the exact returned preview; never migrate a paper automatically.',
+     schema({**BASE, 'apply': {'type':'boolean', 'default':False}, 'approved': {'type':'object'}}, ['project','state']), False),
+    ('recover_migration', 'Preview an interrupted migration and resume only after explicit author confirmation of that exact preview.',
+     schema({**BASE, 'apply': {'type':'boolean', 'default':False}, 'approved': {'type':'object'}}, ['project','state']), False),
+    ('sync_block', 'Preview reconciliation of an author-edited block. Apply only on explicit author request with the same source revision and candidate version; conflicts never replace source.',
+     schema({**WRITE, 'id': STRING, 'version': STRING, 'source_revision': STRING},
+            ['project', 'state', 'expected_sha256', 'id', 'version', 'source_revision']), False),
     ('propose_options', 'Validate and save ONE location with ranked A/B/C in one call. apply defaults true; no mandatory preview call. Chain returned sha256 for the next write. Formal prose unchanged.',
      schema({**WRITE, 'spec': schema(SPEC, ['file', 'kind', 'before', 'options'])}, ['project', 'state', 'expected_sha256', 'spec']), False),
-    ('rework_options', 'Replace pending A/B/C under SAME ID/version. On success old actionable notes are cleared by default; the latest requirements remain read-only in the UI. Failure preserves state. Explicit discard_annotations=false retains actionable notes; resolve_requests supports selective handling. No acceptance. Chain returned sha256/version.',
+    ('rework_options', 'Replace pending A/B/C under SAME ID/version. External-state reviews preserve notes unless explicitly discarded; older embedded-state reviews retain their existing default. resolve_requests supports selective handling. Failure preserves state. No acceptance. Chain returned sha256/version.',
      schema({**WRITE, 'id': STRING, 'version': STRING, 'spec': schema(SPEC, ['options'])}, ['project', 'state', 'expected_sha256', 'id', 'version', 'spec']), False),
     ('relocate_options', 'Repair exact pending location only. Preserve ID/version/options/notes/decisions. Inspect with read_context first; before must equal the immutable live excerpt.',
      schema({**WRITE, 'id': STRING, 'version': STRING, 'spec': schema({'before': STRING, 'left': STRING, 'right': STRING}, ['before'])}, ['project', 'state', 'expected_sha256', 'id', 'version', 'spec']), False),
@@ -274,9 +292,10 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
                 included.add(dep); queue.append(dep)
     result = {'sha256': digest(review.raw), 'session': review.state.get('session'), 'next': review.state['next'],
               'targets': targets, 'items': {}, 'sources': {}, 'questions': {}, 'selections': selections,
-              'source_scope': 'Explicit files are complete; ids/scopes include surrounding paragraphs. Offsets refer to source without the runtime state block.'}
+              'source_scope': ('Explicit files are complete; ids/scopes include surrounding paragraphs. Offsets refer to the actual source including retained comments.'
+                               if review.sidecar else 'Explicit files are complete; ids/scopes include surrounding paragraphs. Offsets refer to source without the runtime state block.')}
     # Inspect rules without sending every unrelated comment to the model.
-    for file in dict.fromkeys([review.state_rel, *[entry['file'] for entry in roles['structure']]]):
+    for file in dict.fromkeys(([] if review.sidecar else [review.state_rel]) + [entry['file'] for entry in roles['structure']]):
         read(file)
     question_keys = {}
     for id_ in edits:
@@ -312,6 +331,8 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
         try:
             start, end = review.locate_edit(text, edit, payload)
             item['source_match'] = True
+            if review.sidecar:
+                item['source_range'] = {'start': start, 'end': end, 'source_revision': review.source_digest(text)}
         except Conflict as error:
             item.update(source_match=False, conflict=str(error))
             continue
@@ -328,6 +349,15 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
             else:
                 merged.append((start, end))
         result['sources'][file] = [{'start': start, 'end': end, 'text': read(file)[start:end]} for start, end in merged]
+    if review.sidecar:
+        from review_blocks import index
+        result['source_revisions'] = {file: review.source_digest(text) for file, text in texts.items()}
+        result['blocks'], result['block_conflicts'] = {}, {}
+        for file, text in texts.items():
+            try:
+                result['blocks'][file] = list(index(text).values())
+            except ValueError as error:
+                result['block_conflicts'][file] = str(error)
     result['author_comments'] = comment_context(texts, spans, roles)
     verify_read(review)
     return result
@@ -362,6 +392,21 @@ class Server:
         if name == 'submit_options':
             return self.submit(args)
         root, git = self.project(args['project'])
+        if name in ('migrate_state', 'recover_migration'):
+            from review_migration import preview as migration_preview, apply as migration_apply, recovery_preview, recover as migration_recover
+            from source_review import writer_lock_at
+            apply = args.get('apply') is True
+            approved = args.get('approved')
+            if apply and not isinstance(approved, dict):
+                raise Conflict('请先预览并提供作者确认的完整迁移预览。')
+            with writer_lock_at(root / '.codex-review') if apply else nullcontext():
+                if name == 'migrate_state':
+                    review = Review(root, args['state'], git)
+                    result = migration_apply(review, approved) if apply else migration_preview(review)
+                else:
+                    owner = None if args['state'].replace('\\', '/') == '.codex-review/state.json' else args['state']
+                    result = migration_recover(root, approved) if apply else recovery_preview(root, owner)
+            return {**result, 'applied':True} if apply else {'preview':result, 'applied':False}
         if name == 'read_context':
             receipts = args.get('known_feedback', [])
             if not isinstance(receipts, list) or any(not isinstance(r, dict) or set(r) != {'id', 'version', 'fingerprint'}
@@ -389,15 +434,30 @@ class Server:
                     sources.append(path.relative_to(root).as_posix())
                     if '% CODEX-REVIEW-STATE-BEGIN' in text and '% CODEX-REVIEW-STATE-END' in text:
                         owners.append(path.relative_to(root).as_posix())
-            if not owners:
+            sidecar = root / '.codex-review' / 'state.json'
+            if sidecar.exists():
+                try:
+                    pending = json.loads(sidecar.read_bytes())
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    raise Conflict('外置状态损坏或迁移未完成；请显式预览迁移恢复。')
+                if isinstance(pending, dict) and isinstance(pending.get('transaction'), dict) and pending['transaction'].get('kind') == 'migration':
+                    raise ToolConflict('迁移事务未完成；请显式预览并恢复迁移。', 'interrupted_transaction',
+                                       {'action':'preview_migration_recovery', 'project':str(root), 'state':'.codex-review/state.json'})
+                if any(re.search(r'(?m)^% CODEX-REVIEW-DATA ', (root / owner).read_text(encoding='utf-8-sig')) for owner in owners):
+                    raise Conflict('Both embedded and external review states are active; reconcile before reading')
+                state = '.codex-review/state.json'
+            elif not owners:
                 return {'initialized': False, 'plugin_version': VERSION, 'files': sources, 'file_roles': role_packet(roles), **rule_packet({**args, 'modules': [*args.get('modules', []), 'writing']}),
                         'context': initial_source_context(root, roles, args),
                         **self.references(root, args),
-                        'next': 'Read actual author files. During authorized paper work establish one comment-only state header, then begin_review. Do not initialize merely for tool installation.'}
-            if len(owners) != 1:
+                        'state': '.codex-review/state.json', 'sha256': digest(b''),
+                        'next': 'Read actual author files. During authorized paper work use begin_review with this absent-state receipt. Do not initialize merely for tool installation.'}
+            elif len(owners) != 1:
                 raise Conflict('Reconcile multiple state owners; do not guess')
-            state = owners[0]
-        review = Review(root, state, git)
+            else:
+                state = owners[0]
+        initialize = name == 'begin_review' and state == '.codex-review/state.json'
+        review = Review(root, state, git, initialize=initialize)
         if review.interrupted:
             raise ToolConflict('Interrupted transaction: inspect status then explicitly recover', 'interrupted_transaction',
                                {'action': 'inspect_status_then_explicit_recover', 'project': str(root),
@@ -410,9 +470,10 @@ class Server:
             return {'owner': state, 'context': result, 'file_roles': role_packet(roles), **rule_packet(rules), 'plugin_version': VERSION, **references}
         if name == 'read_feedback':
             return {**feedback_packet(review, args.get('ids')), 'plugin_version': VERSION}
-        if name not in {'begin_review', 'propose_options', 'rework_options', 'link_questions', 'relocate_options', 'reject_options'}:
+        if name not in {'begin_review', 'prepare_block', 'reassociate_block', 'sync_block', 'propose_options', 'rework_options', 'link_questions', 'relocate_options', 'reject_options'}:
             raise Conflict('Unknown or unavailable AI tool; decisions remain author actions')
-        for key in ['expected_sha256', *(['id', 'version'] if name in ('rework_options', 'link_questions', 'relocate_options', 'reject_options') else [])]:
+        for key in ['expected_sha256', *(['id', 'version'] if name in ('rework_options', 'link_questions', 'relocate_options', 'reject_options', 'sync_block') else []),
+                    *(['source_revision'] if name == 'sync_block' else [])]:
             if not isinstance(args.get(key), str) or not args[key]:
                 raise FieldConflict(key, 'Provide the current nonempty value for ' + key)
         if name in ('propose_options', 'rework_options'):
@@ -429,14 +490,14 @@ class Server:
                 spec = {**spec, 'questions': [*spec.get('questions', []), *links['questions']]}
             # Preview and locked persistence consume this same normalized spec.
             args = {**args, 'spec': spec}
-        apply = args.get('apply', True)
+        apply = args.get('apply', False if name == 'reassociate_block' else True)
         if type(apply) is not bool:
             raise Conflict('apply must be boolean')
         def mutate(r):
             if args['expected_sha256'] != digest(r.raw):
                 raise ToolConflict('State changed; reread the affected scope before writing', 'state_changed',
                                    {'action': 'read_context', **({'ids': [args['id']]} if 'id' in args else {'files': [args['spec']['file']]} if 'spec' in args else {}), 'automatic_retry': False})
-            if name in {'rework_options', 'link_questions', 'relocate_options', 'reject_options'}:
+            if name in {'rework_options', 'link_questions', 'relocate_options', 'reject_options', 'sync_block'}:
                 edit = r.state['edits'].get(args['id']) if r.state else None
                 if not edit:
                     raise ToolConflict('Review ID no longer exists in this batch', 'review_item_missing', {'action': 'read_context', 'automatic_retry': False})
@@ -447,13 +508,21 @@ class Server:
                 r.snapshot = lambda files, label: '0' * 40
             if name == 'begin_review':
                 updated, result = r.begin(args['round'], args['files'], args.get('submission'))
+            elif name == 'prepare_block':
+                if apply and not args['spec'].get('block_id'):
+                    raise Conflict('Apply requires the block ID from the preview')
+                updated, result = r.prepare_block(args['spec'])
+            elif name == 'reassociate_block':
+                updated, result = r.reassociate_block(args['spec'])
+            elif name == 'sync_block':
+                updated, result = r.sync_block(args['id'], args['version'], args['source_revision'])
             elif name == 'relocate_options':
                 updated, result = r.relocate(args['id'], args['version'], args['spec'])
             elif name == 'reject_options':
                 updated, result = r.decide([], [args['id']], {args['id']: args['version']})
             elif name in {'propose_options', 'rework_options'}:
                 spec = args['spec']
-                if name == 'rework_options' and 'discard_annotations' not in spec and not spec.get('resolve_requests'):
+                if name == 'rework_options' and not r.sidecar and 'discard_annotations' not in spec and not spec.get('resolve_requests'):
                     spec = {**spec, 'discard_annotations': True}
                 actual_roles = scan_roles(root)
                 if actual_roles['status'] != 'confirmed':
@@ -473,10 +542,11 @@ class Server:
                 if 'questions' not in links:
                     raise FieldConflict('questions', 'Provide questions or explicit question_refs; use [] for an explicitly empty set')
                 updated, result = r.update_questions(args['id'], args['version'], links['questions'], args.get('replace', False))
-            if apply:
+            unchanged = name in ('sync_block','reassociate_block') and not result['changed']
+            if apply and not unchanged:
                 r.persist(updated, args['expected_sha256'])
             receipt = {**result, 'applied': apply, 'plugin_version': VERSION,
-                       'sha256': digest(r.encode(r.embedded())) if apply else digest(r.raw),
+                       'sha256': digest(r.state_bytes() if r.sidecar else r.encode(r.embedded())) if apply and not unchanged else digest(r.raw),
                        'next': 'Saved: use this sha256 for the next write; no full-context reread is required unless new input or a conflict occurs. Author acceptance remains separate.' if apply
                        else 'Preview only; nothing saved. Use the unchanged sha256 to apply if desired.'}
             if 'id' in result:
@@ -486,7 +556,7 @@ class Server:
             return receipt
         if apply:
             with review.writer_lock():
-                return mutate(Review(root, state, git))
+                return mutate(Review(root, state, git, initialize=initialize))
         return mutate(review)
 
     @staticmethod

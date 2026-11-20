@@ -15,6 +15,67 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_sidecar_sync_preview_apply_and_unchanged_receipt(self):
+        from source_review import Review
+        state = '.codex-review/state.json'
+        fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
+        def review(): return Review(self.root, state, 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                          'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        r = review(); updated, item = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': block['block_id'],
+            'before': 'The model is strong and fast.', 'after': 'The model is reliable and fast.'}); r.persist(updated, digest(r.raw))
+        current = self.server().call('read_context', {'project': str(self.root), 'state': state, 'ids': [item['id']]})['context']
+        span = current['items'][item['id']]['source_range']
+        self.assertEqual(review().read('main.tex')[span['start']:span['end']], 'The model is strong and fast.')
+        self.assertEqual(span['source_revision'], current['source_revisions']['main.tex'])
+        source = self.root / 'main.tex'; source.write_bytes(source.read_bytes().replace(b'The model', b'A model'))
+        r = review(); version = r.state['edits'][item['id']]['versions'][-1]
+        args = {'project': str(self.root), 'state': state, 'id': item['id'], 'version': version,
+                'source_revision': r.source_digest(r.read('main.tex')), 'expected_sha256': digest(r.raw)}
+        server = self.server(); before = r.raw
+        preview = server.call('sync_block', {**args, 'apply': False})
+        self.assertTrue(preview['changed']); self.assertEqual(review().raw, before)
+        applied = server.call('sync_block', args)
+        self.assertEqual(applied['options'][0]['after'], 'A model is reliable and fast.')
+        r = review(); before = r.raw
+        unchanged = server.call('sync_block', {**args, 'version': applied['version'], 'expected_sha256': digest(before)})
+        self.assertFalse(unchanged['changed']); self.assertEqual(review().raw, before)
+        self.assertEqual(unchanged['sha256'], digest(before))
+
+    def test_new_project_context_and_begin_use_external_state(self):
+        root = Path(tempfile.mkdtemp(prefix='mcp-sidecar-', dir=fixtures.ROOT))
+        source = root / 'draft.tex'
+        source.write_text('\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n', encoding='utf-8')
+        registrations = root / 'registrations'
+        registrations.mkdir()
+        (registrations / 'workspace.json').write_text(json.dumps({'roots': [str(root)]}), encoding='utf-8')
+        server = Server(registrations)
+        before = source.read_bytes()
+        context = server.call('read_context', {'project': str(root), 'files': ['draft.tex']})
+        self.assertFalse(context['initialized'])
+        args = {'project': str(root), 'state': context['state'], 'expected_sha256': context['sha256'],
+                'round': 'first', 'files': ['draft.tex']}
+        self.assertFalse(server.call('begin_review', {**args, 'apply': False})['applied'])
+        self.assertFalse((root / '.codex-review' / 'state.json').exists())
+        result = server.call('begin_review', args)
+        self.assertTrue(result['applied'])
+        self.assertEqual(source.read_bytes(), before)
+        current = server.call('read_context', {'project': str(root), 'files': ['draft.tex']})
+        self.assertEqual(current['owner'], '.codex-review/state.json')
+        self.assertEqual(current['context']['sha256'], result['sha256'])
+        text = source.read_bytes().decode('utf-8')
+        start = text.index('Text.')
+        spec = {'file': 'draft.tex', 'kind': 'paragraph', 'start': start, 'end': text.index('\n', start) + 1,
+                'source_revision': current['context']['source_revisions']['draft.tex']}
+        request = {'project': str(root), 'state': current['owner'], 'expected_sha256': result['sha256'], 'spec': spec}
+        preview = server.call('prepare_block', {**request, 'apply': False})
+        self.assertEqual(source.read_bytes(), before)
+        self.assertIn('TS-BLOCK-BEGIN', preview['marked'])
+        applied = server.call('prepare_block', {**request, 'spec': {**spec, 'block_id': preview['block_id']}})
+        self.assertTrue(applied['applied'])
+        self.assertEqual(source.read_text(encoding='utf-8').count(preview['block_id']), 2)
+
     def test_exact_relocation_and_safe_rejection_keep_versions_and_delayed_notes(self):
         id_ = self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'The model is strong and fast.', 'after':'The model is reliable.'})['id']
         r = self.review()
@@ -315,7 +376,7 @@ class MCP(unittest.TestCase):
                 self.assertEqual(self.review().raw, prior)
                 self.assertEqual(self.review().state['edits']['1'], pending)
 
-    def test_atomic_replace_failure_is_distinct_from_question_validation_and_not_retried(self):
+    def test_host_save_failure_is_distinct_from_question_validation_and_not_retried(self):
         server = self.server()
         q = {'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you.'}
         options = [{'label': label, 'after': 'Candidate ' + label + '.', 'reason': label} for label in 'ABC']
@@ -325,7 +386,7 @@ class MCP(unittest.TestCase):
                 'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': options}}]}
         denied = PermissionError(5, '[WinError 5] Access is denied')
         denied.winerror = 5
-        with patch('source_review.os.replace', side_effect=denied) as replace:
+        with patch('review_host_test_support.FakeHostSession.write', side_effect=denied) as replace:
             failed = server.call('submit_options', args)
         self.assertFalse(failed['complete'])
         self.assertEqual(failed['results'], [])
@@ -333,13 +394,22 @@ class MCP(unittest.TestCase):
         self.assertIn('WinError 5', failed['error']['message'])
         self.assertEqual(replace.call_count, 1)
         self.assertEqual(self.review().raw, raw)
-        temporary = list(self.root.glob('reply.tex.codex-write-*'))
-        self.assertEqual(len(temporary), 1)
         saved = server.call('submit_options', args)
         self.assertTrue(saved['complete'])
         self.assertEqual(saved['results'][0]['questions'], [q])
         self.assertEqual(set(self.review().state['edits']), {'1'})
-        self.assertTrue(temporary[0].exists(), 'diagnostic temporary file is not silently cleaned up')
+
+    def test_sidecar_atomic_replace_failure_retains_temporary_file(self):
+        target = self.root / '.codex-review' / 'failure-probe.json'
+        denied = PermissionError(5, '[WinError 5] Access is denied')
+        with patch('source_review.os.replace', side_effect=denied) as replace:
+            with self.assertRaises(PermissionError):
+                self.review().write(target, b'{"probe":true}')
+        self.assertEqual(replace.call_count, 1)
+        self.assertFalse(target.exists())
+        temporary = list(target.parent.glob('failure-probe.json.codex-write-*'))
+        self.assertEqual(len(temporary), 1)
+        self.assertEqual(temporary[0].read_bytes(), b'{"probe":true}')
 
     def test_field_errors_identify_option_without_requiring_context_reread(self):
         server = self.server()

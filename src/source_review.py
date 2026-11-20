@@ -71,6 +71,25 @@ def writer_lock_at(parent):
             release()
 
 
+def store_file_snapshot(object_root, files):
+    """Write one immutable local review object shared by source transactions."""
+    for component in (object_root, object_root.parent):
+        if component.is_symlink() or component.is_junction():
+            raise Conflict('Review object storage cannot be a link')
+    raw = json.dumps({'files': {name: base64.b64encode(data).decode('ascii') for name, data in sorted(files.items())}},
+                     ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    oid = digest(raw)
+    object_root.mkdir(parents=True, exist_ok=True)
+    target = object_root / (oid + '.json')
+    if target.exists():
+        if target.is_symlink() or target.is_junction() or target.read_bytes() != raw:
+            raise Conflict('Immutable review object does not match its identity')
+    else:
+        with target.open('xb') as stream:
+            stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+    return oid
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -203,7 +222,7 @@ def locate(text, needle, left="", right=""):
 
 
 class Review:
-    def __init__(self, repo, state, git="git", storage=None):
+    def __init__(self, repo, state, git="git", storage=None, initialize=False):
         started = time.perf_counter()
         self.repo = Path(repo).resolve(strict=True)
         self.git_exe = git
@@ -211,27 +230,72 @@ class Review:
         self.env.update({"GIT_AUTHOR_NAME": "Codex local review", "GIT_AUTHOR_EMAIL": "review@localhost",
                          "GIT_COMMITTER_NAME": "Codex local review", "GIT_COMMITTER_EMAIL": "review@localhost",
                          "GIT_OPTIONAL_LOCKS": "0"})
-        self.state_path = self.path(state)
+        self.sidecar = str(state).replace('\\', '/') == '.codex-review/state.json'
+        external_state = self.repo / '.codex-review' / 'state.json'
+        if not self.sidecar and external_state.exists():
+            try:
+                pending = json.loads(external_state.read_bytes())
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                raise Conflict('外置状态损坏或迁移未完成；请预览迁移恢复，不能初始化旧状态。')
+            if isinstance(pending, dict) and isinstance(pending.get('transaction'), dict) and pending['transaction'].get('kind') == 'migration':
+                raise Conflict('迁移事务未完成；请显式预览并恢复迁移。')
+            old_owner = self.path(state)
+            if re.search(r'(?m)^% CODEX-REVIEW-DATA ', old_owner.read_text(encoding='utf-8-sig')):
+                raise Conflict('外置审核状态已存在且正文仍有活跃状态；请先核对双状态。')
+            self.sidecar = True
+        if self.sidecar:
+            self.state_path = self.repo / '.codex-review' / 'state.json'
+            for component in (self.state_path.parent, self.state_path):
+                if component.is_symlink() or component.is_junction():
+                    raise Conflict('Review state cannot be a link')
+            if not self.state_path.is_file() and not (initialize and not self.state_path.exists()):
+                raise Conflict('Review state is missing; use explicit initialization or migration')
+        else:
+            self.state_path = self.path(state)
         self.state_rel = self.state_path.relative_to(self.repo).as_posix()
-        self.raw = self.state_path.read_bytes()
+        self.new_sidecar = self.sidecar and not self.state_path.exists()
+        self.raw = b'' if self.new_sidecar else self.state_path.read_bytes()
         self.text = self.raw.decode("utf-8-sig")
         self.bom = self.raw.startswith(b"\xef\xbb\xbf")
         self.eol = "\r\n" if "\r\n" in self.text else "\n"
-        _, block, _ = split_state(self.text)
-        counters = re.findall(r"CODEX-REVIEW-NEXT manuscript=([1-9][0-9]*) response=([a-z]+)", block)
-        if len(counters) != 1:
-            raise Conflict("Exactly one reconciled next-ID counter is required")
-        n, alpha = counters[0]
-        alpha_value = 0
-        for char in alpha:
-            alpha_value = alpha_value * 26 + ord(char) - 96
-        next_ids = [int(n), alpha_value]
-        rows = [line[len(DATA):] for line in block.splitlines() if line.startswith(DATA)]
-        if len(rows) > 1:
-            raise Conflict("Duplicate machine state")
-        self.state = json.loads(rows[0]) if rows else None
-        if self.state and self.state.get("schema") not in (1, 2):
+        if self.new_sidecar:
+            self.state = None
+            next_ids = [1, 1]
+        elif self.sidecar:
+            self.state = json.loads(self.text)
+            if not isinstance(self.state, dict) or self.state.get('schema') != 3:
+                raise Conflict('Unsupported review-state schema')
+            next_ids = self.state.get('next')
+            if not isinstance(next_ids, list) or len(next_ids) != 2 or any(type(n) is not int or n < 1 for n in next_ids):
+                raise Conflict('Invalid next-ID counter')
+        else:
+            _, block, _ = split_state(self.text)
+            counters = re.findall(r"CODEX-REVIEW-NEXT manuscript=([1-9][0-9]*) response=([a-z]+)", block)
+            if len(counters) != 1:
+                raise Conflict("Exactly one reconciled next-ID counter is required")
+            n, alpha = counters[0]
+            alpha_value = 0
+            for char in alpha:
+                alpha_value = alpha_value * 26 + ord(char) - 96
+            next_ids = [int(n), alpha_value]
+            rows = [line[len(DATA):] for line in block.splitlines() if line.startswith(DATA)]
+            if len(rows) > 1:
+                raise Conflict("Duplicate machine state")
+            self.state = json.loads(rows[0]) if rows else None
+        if self.state and self.state.get("schema") not in ((3,) if self.sidecar else (1, 2)):
             raise Conflict("Unsupported review-state schema")
+        if self.sidecar and self.state and not self.state.get('transaction'):
+            rounds = self.state.get('rounds', [])
+            registered = set(rounds[-1].get('files', [])) if rounds else set()
+            if self.state.get('legacy_owner'):
+                registered.add(self.state['legacy_owner'])
+            for file in registered:
+                try:
+                    source = self.path(file).read_text(encoding='utf-8-sig')
+                except FileNotFoundError:
+                    continue
+                if re.search(r'(?m)^% CODEX-REVIEW-DATA ', source):
+                    raise Conflict('外置审核状态与正文内活跃状态同时存在；请先核对双状态。')
         self.storage = storage or ("git" if self.state and self.state["schema"] == 1 else "files")
         if self.storage not in ("git", "files"):
             raise Conflict("Unknown review object storage")
@@ -260,6 +324,8 @@ class Review:
                     unused = next_ids[1]
                 if issued >= unused:
                     raise Conflict("Counter would reuse an issued ID")
+        if self.state and self.state.get('transaction') and not isinstance(self.state['transaction'], dict):
+            raise Conflict('审核事务状态无效；请保留文件并核对。')
         if self.state and self.state.get("transaction"):
             # Only explicit recover/status may continue; mutators check this again.
             self.interrupted = True
@@ -271,6 +337,7 @@ class Review:
         self._read_cache = None
         self._raw_sources = {}
         self._source_digests = {}
+        self._block_indexes = {}
         if self.state:
             backup = self.backup_status()
             for id_, version in backup.get('published', {}).items():
@@ -327,7 +394,7 @@ class Review:
         raw = p.read_bytes()
         self.original.setdefault(rel, raw)
         self._raw_sources[rel] = raw.decode("utf-8-sig")
-        text = body(self._raw_sources[rel])
+        text = self._raw_sources[rel] if self.sidecar else body(self._raw_sources[rel])
         if self._read_cache is not None:
             self._read_cache[rel] = text
         self.timings['source_read_s'] += time.perf_counter() - started
@@ -345,8 +412,49 @@ class Review:
         finally:
             self.timings['locate_s'] += time.perf_counter() - started
 
+    def block_row(self, text, file, block_id):
+        from review_blocks import index
+        def indexed(name, source):
+            cached = self._block_indexes.get(name)
+            if cached is None or cached[0] != source:
+                cached = (source, index(source))
+                self._block_indexes[name] = cached
+            return cached[1]
+        try:
+            row = indexed(file, text)[block_id]
+            for other in self.state['rounds'][-1]['files']:
+                if other == file:
+                    continue
+                source = self.read(other)
+                if block_id in source and block_id in indexed(other, source):
+                    raise Conflict('审核块 ID 在多个文件中重复：' + block_id)
+            return row
+        except Conflict:
+            raise
+        except (ValueError, KeyError) as error:
+            raise Conflict('审核块标记缺失、重复或错配：' + str(block_id)) from error
+
     def _locate_edit(self, text, edit, item=None):
         item = item if item is not None else self.payload(edit)
+        if self.sidecar:
+            block_id = edit.get('block_id')
+            block = self.state.get('blocks', {}).get(block_id)
+            if not block:
+                raise Conflict('审核项没有已登记的固定块；请明确修复，不会猜测位置。')
+            row = self.block_row(text, edit['file'], block_id)
+            if block['file'] != edit['file'] or row['kind'] != block['kind']:
+                raise Conflict('审核块文件或类型不一致：' + block_id)
+            anchor = edit.get('anchor', {})
+            if anchor.get('conflict'):
+                raise Conflict(anchor['conflict'])
+            old_block = self.contents(anchor['block_snapshot'], 'block.tex')
+            current = text[row['start']:row['end']]
+            if current != old_block:
+                raise Conflict('正文已修改，需同步批注：' + block_id)
+            a, b = row['start'] + anchor['start'], row['start'] + anchor['end']
+            if text[a:b] != self.live_excerpt(edit, item):
+                raise Conflict('审核块中的候选范围与原文不一致：' + block_id)
+            return a, b
         anchor = edit.get('anchor')
         needle = self.live_excerpt(edit, item)
         if anchor and anchor['version'] == edit['versions'][-1]:
@@ -368,13 +476,176 @@ class Review:
         return fallback
 
     def bind(self, edit, text, a, b, left_size=120, right_size=120):
+        if self.sidecar:
+            row = self.block_row(text, edit['file'], edit['block_id'])
+            if not row['start'] <= a <= b <= row['end']:
+                raise Conflict('候选范围超出固定审核块。')
+            snapshot = self.snapshot({'block.tex': text[row['start']:row['end']].encode('utf-8')}, 'verified review block')
+            edit['anchor'] = {'version': edit['versions'][-1], 'block_snapshot': snapshot,
+                              'start': a-row['start'], 'end': b-row['start']}
+            return
         context = self.snapshot({'left.txt': text[max(0, a-left_size):a].encode('utf-8'),
                                  'right.txt': text[b:b+right_size].encode('utf-8')}, 'verified location context')
         edit['anchor'] = {'version': edit['versions'][-1], 'source': self.source_digest(text),
                           'start': a, 'end': b, 'context': context}
 
+    def prepare_block(self, spec):
+        self.assert_ready()
+        if not self.sidecar:
+            raise Conflict('固定块需先显式迁移到外置状态。')
+        from review_blocks import prepare, index
+        rel = spec['file']
+        if rel not in self.state['rounds'][-1]['files']:
+            raise Conflict('文件不在当前审核范围。')
+        text = self.read(rel)
+        if spec.get('source_revision') != self.source_digest(text):
+            raise Conflict('正文已变化；请重新预览标记。')
+        if type(spec.get('start')) is not int or type(spec.get('end')) is not int:
+            raise Conflict('审核块边界必须是整数。')
+        if spec['kind'] not in ('slot', 'question'):
+            validate_review_unit(text[spec['start']:spec['end']])
+        try:
+            updated, row = prepare(text, spec['start'], spec['end'], spec['kind'], spec.get('block_id'))
+        except ValueError as error:
+            raise Conflict(str(error)) from error
+        for file in self.state['rounds'][-1]['files']:
+            if file != rel and row['id'] in index(self.read(file)):
+                raise Conflict('审核块 ID 已在其他文件使用。')
+        registration = {'file': rel, 'kind': row['kind']}
+        if 'questions' in spec:
+            registration['questions'] = self.question_links(spec['questions'])
+        self.state.setdefault('blocks', {})[row['id']] = registration
+        # Mark the accepted projection only when it is exactly the same source;
+        # otherwise a later acceptance reports a projection conflict rather than
+        # importing unrelated author edits or guessing a matching paragraph.
+        projection = self.state.get('auto_backup_projection', self.state['accepted'])
+        if not self.state.get('auto_backup_projection_error') and self.contents(projection, rel) == text:
+            files = {file: (updated if file == rel else self.contents(projection, file)).encode('utf-8')
+                     for file in self.state['rounds'][-1]['files']}
+            self.state['auto_backup_projection'] = self.snapshot(files, 'accepted projection block marker')
+        return {rel: updated}, {'block_id': row['id'], 'file': rel, 'kind': row['kind'],
+                                'start': spec['start'], 'end': spec['end'], 'source_revision': spec['source_revision'],
+                                'before': text[spec['start']:spec['end']],
+                                'marked': updated[row['marker_start']:row['marker_end']]}
+
+    def save_block_source(self, id_, version, spec):
+        self.assert_ready()
+        if not self.sidecar:
+            raise Conflict('编辑当前原文需要固定块模式。')
+        edit = self.state['edits'].get(id_)
+        if not edit or edit['status'] not in PENDING or edit['versions'][-1] != version:
+            raise Conflict('审核项已变化；请重新打开。')
+        block_id = edit['block_id']
+        if spec.get('block_id') != block_id or not isinstance(spec.get('text'), str):
+            raise Conflict('必须提供当前块身份和作者填写的原文。')
+        text = self.read(edit['file'])
+        if spec.get('source_revision') != self.source_digest(text):
+            raise Conflict('正文已变化；请重新读取后编辑。')
+        row = self.block_row(text, edit['file'], block_id)
+        if '% TS-BLOCK-' in text[row['start']:row['end']]:
+            raise Conflict('此容器含子审核块；请分别编辑子块，不能覆盖其标记。')
+        replacement = spec['text']
+        if '\r\n' in text:
+            replacement = replacement.replace('\r\n', '\n').replace('\n', '\r\n')
+        if '% TS-BLOCK-' in replacement or replacement and not replacement.endswith('\n'):
+            raise Conflict('原文不能包含审核标记，且必须保留标记前的换行。')
+        if row['kind'] not in ('slot', 'question'):
+            validate_review_unit(replacement)
+        if text[row['start']:row['end']] == replacement:
+            return {}, {'id': id_, 'block_id': block_id, 'changed': False}
+        return {edit['file']: text[:row['start']] + replacement + text[row['end']:]}, {
+            'id': id_, 'block_id': block_id, 'changed': True, 'accepted': False}
+
+    def reassociate_block(self, spec):
+        """Explicitly repair a missing pair or rebind a uniquely moved block."""
+        self.assert_ready()
+        if not self.sidecar:
+            raise Conflict('重新关联需要外置审核状态。')
+        from review_blocks import index, prepare
+        block_id, rel = spec.get('block_id'), spec.get('file')
+        block = self.state.get('blocks', {}).get(block_id)
+        if not block or rel not in self.state['rounds'][-1]['files']:
+            raise Conflict('审核块或目标文件未登记。')
+        texts = {name:self.read(name) for name in self.state['rounds'][-1]['files']}
+        if spec.get('source_revision') != self.source_digest(texts[rel]):
+            raise Conflict('目标文件已变化；请重新预览。')
+        try:
+            rows = [(name, index(text).get(block_id)) for name, text in texts.items()]
+        except ValueError as error:
+            raise Conflict('审核标记不完整或错配，请先核对标记：' + str(error)) from error
+        hits = [(name,row) for name,row in rows if row is not None]
+        updated = {}
+        if spec.get('restore') is True:
+            if hits:
+                raise Conflict('该块标记仍存在，不能重复建立。')
+            start, end = spec.get('start'), spec.get('end')
+            if type(start) is not int or type(end) is not int:
+                raise Conflict('恢复标记需要明确的完整行边界。')
+            if block['kind'] not in ('slot', 'question'):
+                validate_review_unit(texts[rel][start:end])
+            try:
+                updated[rel], row = prepare(texts[rel],start,end,block['kind'],block_id)
+            except ValueError as error:
+                raise Conflict(str(error)) from error
+        else:
+            if len(hits) != 1 or hits[0][0] != rel:
+                raise Conflict('目标文件中没有唯一的完整块标记；不能猜测位置。')
+            row = hits[0][1]
+            if row['kind'] != block['kind']:
+                raise Conflict('目标块类型与登记不一致。')
+        previous = block['file']
+        affected = [id_ for id_, edit in self.state['edits'].items() if edit.get('block_id') == block_id and edit['status'] in PENDING]
+        block['file'] = rel
+        for id_ in affected:
+            self.state['edits'][id_]['file'] = rel
+        return updated, {'block_id':block_id, 'file':rel, 'previous_file':previous, 'ids':affected,
+                         'restored':bool(updated), 'changed':bool(updated) or previous != rel,
+                         'marked':updated.get(rel, '')[row['marker_start']:row['marker_end']] if updated else ''}
+
+    def sync_block(self, id_, version, source_revision):
+        self.assert_ready()
+        if not self.sidecar:
+            raise Conflict('同步需要固定块模式。')
+        from review_blocks import reconcile
+        edit = self.state['edits'].get(id_)
+        if not edit or edit['status'] not in PENDING or edit['versions'][-1] != version:
+            raise Conflict('审核项已变化；请重新打开。')
+        text = self.read(edit['file'])
+        if self.source_digest(text) != source_revision:
+            raise Conflict('正文已变化；请重新预览同步。')
+        row = self.block_row(text, edit['file'], edit['block_id'])
+        anchor = edit['anchor']
+        if anchor.get('conflict'):
+            raise Conflict(anchor['conflict'])
+        old_block = self.contents(anchor['block_snapshot'], 'block.tex')
+        current = text[row['start']:row['end']]
+        item = self.payload(edit)
+        options = copy.deepcopy(item.get('options', [{'label': 'A', 'after': item['after'], 'reason': '已有单方案'}]))
+        try:
+            result = reconcile(old_block, current, anchor['start'], anchor['end'], options)
+        except ValueError as error:
+            raise Conflict(str(error)) from error
+        if result is None:
+            return {}, {'id': id_, 'version': version, 'changed': False}
+        start, end, before, options = result
+        updated = {**item, 'before': before, 'after': options[0]['after'], 'options': options,
+                   'left': text[max(0, row['start'] + start - 120):row['start'] + start],
+                   'right': text[row['start'] + end:row['start'] + end + 120]}
+        new_version = self.snapshot({'original.tex': before.encode('utf-8'), 'candidate.tex': options[0]['after'].encode('utf-8'),
+                                     'span.json': json.dumps(updated, ensure_ascii=False).encode('utf-8')}, 'synchronized review item ' + id_)
+        edit['versions'].append(new_version)
+        self.bind(edit, text, row['start'] + start, row['start'] + end)
+        for note in edit.get('requests', []):
+            if note.get('side') == 'original' and note.get('version') == version and before != item['before']:
+                note['source_stale'] = True
+        edit['status'] = 'rework'
+        return {}, {'id': id_, 'version': new_version, 'previous_version': version, 'changed': True,
+                    'before': before, 'options': options, 'source_revision': source_revision}
+
     def relocate(self, id_, version, spec):
         self.assert_ready()
+        if self.sidecar:
+            raise Conflict('固定块模式不能按文字重新定位；请修复或重新关联块标记。')
         if not isinstance(spec, dict) or not isinstance(spec.get('before'), str) or any(not isinstance(spec.get(k, ''), str) for k in ('left', 'right')):
             raise FieldConflict('spec', 'Relocation needs exact before/left/right strings')
         edit = self.state['edits'].get(id_)
@@ -393,18 +664,7 @@ class Review:
     def snapshot(self, files, label):
         """Immutable local snapshot; legacy storage uses scoped Git plumbing without HEAD/index writes."""
         if self.storage == "files":
-            raw = json.dumps({"files": {name: base64.b64encode(data).decode("ascii") for name, data in sorted(files.items())}},
-                             ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            oid = digest(raw)
-            self.object_root.mkdir(parents=True, exist_ok=True)
-            target = self.object_root / (oid + ".json")
-            if target.exists():
-                if target.read_bytes() != raw:
-                    raise Conflict("Immutable review object does not match its identity")
-            else:
-                with target.open("xb") as stream:
-                    stream.write(raw)
-            return oid
+            return self.snapshot_files(files)
         tree = {}
         for name, raw in sorted(files.items()):
             node = tree
@@ -425,6 +685,9 @@ class Review:
         ref = f"refs/codex-review/{self.state['session'][:8]}/{uuid.uuid4().hex[:12]}"
         self.git("update-ref", ref, oid, "0" * len(oid))
         return oid
+
+    def snapshot_files(self, files):
+        return store_file_snapshot(self.object_root, files)
 
     def contents(self, commit, rel):
         if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit):
@@ -452,6 +715,8 @@ class Review:
             updated = self.defer_pending() if defer_pending else {}
             return updated, {"migrated": bool(updated), "storage": "files"}
         refs = {self.state["accepted"]}
+        if self.state.get('auto_backup_projection'):
+            refs.add(self.state['auto_backup_projection'])
         if self.state.get("submission"):
             refs.add(self.state["submission"])
         for rnd in self.state["rounds"]:
@@ -471,7 +736,7 @@ class Review:
             self.storage = "files"
             converted[old] = self.snapshot(files, "migrated legacy snapshot")
             self.storage = "git"
-        ref_fields = {"accepted", "baseline", "accepted_start", "submission", "version", "addressed_version"}
+        ref_fields = {"accepted", "baseline", "accepted_start", "submission", "version", "addressed_version", "auto_backup_projection"}
         def replace(value, field=None):
             if isinstance(value, dict):
                 return {k: replace(v, k) for k, v in value.items()}
@@ -561,21 +826,34 @@ class Review:
         if not self.state or not self.state.get("rounds"):
             raise Conflict("Begin a review round first")
         if self.interrupted:
+            if self.state['transaction'].get('kind') == 'migration':
+                raise Conflict('迁移事务未完成；请显式预览并恢复迁移。')
             raise Conflict("Interrupted transaction: inspect status then explicitly recover")
 
     def begin(self, name, files, submission=None):
         if self.interrupted:
             raise Conflict("Recover the existing transaction first")
         if self.state is None:
-            _, block, _ = split_state(self.text)
-            counters = re.findall(r"CODEX-REVIEW-NEXT manuscript=(\d+) response=([a-z]+)", block)
-            if len(counters) != 1:
-                raise Conflict("Supply/reconcile the one actual next-ID counter before initialization")
-            n, s = counters[0]
-            value = 0
-            for c in s:
-                value = value * 26 + ord(c) - 96
-            self.state = {"schema": 2 if self.storage == "files" else 1, "session": uuid.uuid4().hex, "next": [int(n), value],
+            if self.sidecar:
+                n, value = 1, 1
+                for directory, folders, names in os.walk(self.repo, followlinks=False):
+                    folders[:] = [f for f in folders if f not in {'.git', '.codex-review', '.latex-build', 'node_modules', 'clean_dir'}
+                                  and not (Path(directory) / f).is_symlink() and not (Path(directory) / f).is_junction()]
+                    for filename in names:
+                        path = Path(directory) / filename
+                        if path.suffix.lower() == '.tex' and not path.is_symlink() and not path.is_junction():
+                            if DATA in path.read_text(encoding='utf-8-sig'):
+                                raise Conflict('Existing embedded review state requires explicit migration')
+            else:
+                _, block, _ = split_state(self.text)
+                counters = re.findall(r"CODEX-REVIEW-NEXT manuscript=(\d+) response=([a-z]+)", block)
+                if len(counters) != 1:
+                    raise Conflict("Supply/reconcile the one actual next-ID counter before initialization")
+                n, s = counters[0]
+                value = 0
+                for c in s:
+                    value = value * 26 + ord(c) - 96
+            self.state = {"schema": 3 if self.sidecar else 2 if self.storage == "files" else 1, "session": uuid.uuid4().hex, "next": [int(n), value],
                           "rounds": [], "edits": {}, "submission": None}
         if self.storage == 'files':
             if self.state.get('pending_backup') or any(
@@ -586,12 +864,12 @@ class Review:
                 raise Conflict('旧式候选仍在正文中，请先核对并转换为候选与正文分离的审核方式。')
         elif name in [r["name"] for r in self.state["rounds"]]:
             raise Conflict("Round names must not be reused")
-        if self.state_rel not in files:
+        if not self.sidecar and self.state_rel not in files:
             raise Conflict("Include the canonical state owner in the round's file scope")
         if self.storage != 'files' and any(e["file"] not in files for e in self.state["edits"].values() if e["status"] in PENDING):
             raise Conflict("Carry every unresolved file into the next round")
         current = {p: self.read(p) for p in sorted(set(files))}
-        if any(BEGIN in self.original[p].decode("utf-8-sig") for p in current if p != self.state_rel):
+        if any(BEGIN in self.original[p].decode("utf-8-sig") for p in current if not self.sidecar and p != self.state_rel):
             raise Conflict("A second review-state owner exists; reconcile pointers first")
         if any(re.search(r"\\codex(?:replace|add|delete)\s*\{", t) for t in current.values()):
             raise Conflict("Unresolved legacy colored marks: migration requires an explicit preservation plan")
@@ -680,7 +958,31 @@ class Review:
         edit['questions'] = merged
         return {}, {'id': id_, 'version': version, 'mode': 'replace' if replace else 'append', 'questions': merged}
 
-    def propose(self, spec, rework=None):
+    def manual_rebase(self, id_, version, spec):
+        self.assert_ready()
+        if not isinstance(spec, dict):
+            raise Conflict('人工更新需要准确的块、选区和候选方案。')
+        edit = self.state['edits'].get(id_)
+        if not edit or edit['status'] not in PENDING or edit['versions'][-1] != version:
+            raise Conflict('审核项已变化；请重新打开。')
+        old = self.payload(edit)
+        original_options = old.get('options', [{'label': 'A', 'after': old['after'], 'reason': '已有单方案'}])
+        values = spec.get('options')
+        if not isinstance(values, list) or len(values) != len(original_options) or any(
+                not isinstance(value, dict) or value.get('label') != old_option['label'] or not isinstance(value.get('after'), str)
+                for value, old_option in zip(values, original_options)):
+            raise Conflict('必须提交当前全部候选方案。')
+        options = copy.deepcopy(original_options)
+        for option, value in zip(options, values):
+            if option['after'].replace('\r\n', '\n') != value['after'].replace('\r\n', '\n'):
+                option['after'] = value['after']
+                option['manually_edited'] = True
+        revised = {'options': options, 'fewer_options_reason': old.get('fewer_options_reason') or '人工更新已有候选'}
+        if 'intent' in old:
+            revised['intent'] = old['intent']
+        return self.propose(revised, id_, manual_anchor=spec)
+
+    def propose(self, spec, rework=None, manual_anchor=None):
         self.assert_ready()
         discard_annotations = spec.get('discard_annotations', False)
         if type(discard_annotations) is not bool or (discard_annotations and not rework):
@@ -712,15 +1014,46 @@ class Review:
             if self.storage == 'files' and not deferred:
                 raise Conflict("新候选必须 deferred=true；接收后才替换正文。旧记录仍可读取。")
         text = self.read(rel)
-        if rework and any(k in spec for k in ('before', 'left', 'right')):
+        if manual_anchor is not None:
+            if not self.sidecar or not rework or not deferred or manual_anchor.get('block_id') != edit.get('block_id'):
+                raise Conflict('人工更新需要当前待审项的固定块。')
+            if manual_anchor.get('source_revision') != self.source_digest(text):
+                raise Conflict('正文已变化；请重新选择范围。')
+            row = self.block_row(text, rel, edit['block_id'])
+            start, end = manual_anchor.get('start'), manual_anchor.get('end')
+            current = text[row['start']:row['end']]
+            normalized = current.replace('\r\n', '\n')
+            if type(start) is not int or type(end) is not int or not 0 <= start <= end <= len(normalized) or normalized[start:end] != manual_anchor.get('quote'):
+                raise Conflict('选区与当前审核块不一致；请重新选择。')
+            offsets = [0]
+            pos = 0
+            while pos < len(current):
+                pos += 2 if current[pos:pos + 2] == '\r\n' else 1
+                offsets.append(pos)
+            a, b = row['start'] + offsets[start], row['start'] + offsets[end]
+            before = original = text[a:b]
+            if '% TS-BLOCK-' in before:
+                raise Conflict('选区不能跨越固定审核块标记。')
+            left, right = text[max(0, a - 120):a], text[b:b + 120]
+        elif rework and any(k in spec for k in ('before', 'left', 'right')):
             if spec.get('before', before) != before:
                 raise Conflict('Rework relocation cannot change original text')
             left, right = spec.get('left', left), spec.get('right', right)
-            a, b = locate(text, before, left, right)
+            a, b = self.locate_edit(text, edit, old) if self.sidecar else locate(text, before, left, right)
         elif rework:
             a, b = self.locate_edit(text, edit, old)
             anchor = self.anchor_context(edit, old)
             left, right = anchor['left'], anchor['right']
+        elif self.sidecar:
+            block_id = spec.get('block_id')
+            block = self.state.get('blocks', {}).get(block_id)
+            if not block or block['file'] != rel:
+                raise Conflict('必须指定该文件已登记的固定审核块。')
+            row = self.block_row(text, rel, block_id)
+            if row['kind'] != block['kind']:
+                raise Conflict('审核块类型已变化：' + block_id)
+            a, b = locate(text[row['start']:row['end']], before, left, right)
+            a, b = a + row['start'], b + row['start']
         else:
             a, b = locate(text, before, left, right)
         from document_roles import block_span, BEGIN as ROLE_BEGIN, END as ROLE_END
@@ -729,11 +1062,22 @@ class Review:
             raise Conflict('文件角色登记是项目配置，不是正文候选；请通过文件角色确认入口更新。')
         options = self.validate_options(spec)
         after = options[0]['after'] if options else spec["after"]
+        if self.sidecar and '\r\n' in text:
+            def source_eol(value):
+                return value.replace('\r\n', '\n').replace('\n', '\r\n')
+            after = source_eol(after)
+            if options:
+                for option in options:
+                    option['after'] = source_eol(option['after'])
+                if len({option['after'] for option in options}) != len(options):
+                    raise FieldConflict('spec.options', 'Options become identical with the source line endings')
+        if any('% TS-BLOCK-' in value for value in [before, original, after, *[o['after'] for o in options or []]]):
+            raise Conflict('候选范围和内容不能包含固定审核块标记。')
         if any(marker in value for value in [before, after, *[o['after'] for o in options or []]] for marker in (ROLE_BEGIN, ROLE_END)):
             raise Conflict('不能把文件角色登记混入正文候选。')
         if (not options and (before == after or (rework and old["after"] == after))) or (options and all(o['after'] == original for o in options)):
             raise Conflict("No content change")
-        if rework and options and options == old.get('options'):
+        if rework and options and options == old.get('options') and manual_anchor is None:
             raise Conflict('No content change')
         if self.storage == 'files' and (not rework or edit.get('scope_policy') == 'single-unit'):
             validate_review_unit(original)
@@ -753,6 +1097,17 @@ class Review:
             try:
                 x, y = self.locate_edit(text, other, obj)
             except Conflict:
+                if self.sidecar:
+                    target_block = edit.get('block_id') if rework else spec.get('block_id')
+                    if other.get('block_id') != target_block:
+                        try:
+                            other_row = self.block_row(text, rel, other.get('block_id'))
+                            target_row = self.block_row(text, rel, target_block)
+                            if other_row['end'] <= target_row['start'] or target_row['end'] <= other_row['start']:
+                                continue
+                        except Conflict:
+                            pass
+                    raise Conflict('相关审核块存在失配候选或位置不明；请先核对该候选。')
                 # Consider all exact possible spans of the broken item. It cannot
                 # block a disjoint new target merely because it shares the file.
                 needle = self.live_excerpt(other, obj)
@@ -802,6 +1157,8 @@ class Review:
                 raise Conflict("ID counter collides with issued history")
             self.state["next"][which] += 1
             edit = {"file": rel, "kind": spec["kind"], "status": "pending", "versions": [], "deps": []}
+            if self.sidecar:
+                edit['block_id'] = block_id
             if self.storage == 'files':
                 edit['scope_policy'] = 'single-unit'
             if deferred:
@@ -815,6 +1172,8 @@ class Review:
             item['intent'] = copy.deepcopy(spec['intent'])
         if self.storage == 'files':
             item['batch'] = self.state['session']
+        if manual_anchor is not None:
+            item['manual_revision'] = uuid.uuid4().hex
         commit = self.snapshot({"original.tex": original.encode("utf-8"), "candidate.tex": after.encode("utf-8"),
                                 "span.json": json.dumps(item, ensure_ascii=False).encode("utf-8")}, "review item " + id_)
         if rework:
@@ -837,6 +1196,10 @@ class Review:
             edit['questions'] = questions
         if rework:
             edit["status"] = "rework"
+            if manual_anchor is not None and original != old['before']:
+                for request in edit.get('requests', []):
+                    if request.get('side') == 'original':
+                        request['source_stale'] = True
             if discard_annotations:
                 edit.pop('requests', None)
             resolved = spec.get("resolve_requests", [])
@@ -883,6 +1246,8 @@ class Review:
 
     def decide(self, accept, reject, expected_versions=None, option=None):
         previous = self.state
+        previous_cache = self._read_cache
+        self._read_cache = {}
         self.state = copy.deepcopy(previous)
         try:
             return self._decide(accept, reject, expected_versions, option)
@@ -890,12 +1255,16 @@ class Review:
             # Restore the in-memory ledger too; no partial decisions on failure.
             self.state = previous
             raise
+        finally:
+            self._read_cache = previous_cache
 
     def _decide(self, accept, reject, expected_versions=None, option=None):
         self.assert_ready()
         ids = accept + reject
         if not ids or len(set(ids)) != len(ids):
             raise Conflict("Specify distinct exact IDs")
+        if self.sidecar and (expected_versions is None or any(not expected_versions.get(id_) for id_ in ids)):
+            raise Conflict('固定块审核必须提供每项准确版本。')
         updated, accepted, decisions, operations, conflicts = {}, {}, {}, {}, []
         sources, spans = {}, {}
         inline_files = {e['file'] for e in self.state['edits'].values()
@@ -925,6 +1294,8 @@ class Review:
                             item['after'] = self.option(item, label)['after']
                             edit['accepted_option'] = label
                     replacement = item['after'] if id_ in accept else item['before']
+                    if id_ in accept and ('% TS-BLOCK-' in replacement or '% TS-BLOCK-' in text[a:b]):
+                        raise Conflict('候选包含固定审核块标记；未接收。')
                     if edit.get('deferred', False) or id_ in reject:
                         operations.setdefault(rel, []).append((a, b, replacement, id_))
                     spans[id_] = (a, b)
@@ -1001,6 +1372,8 @@ class Review:
                     edit, item = decisions[id_], self.payload(decisions[id_])
                     rel = edit['file']
                     base = self.contents(projection, rel)
+                    # Fixed-block records must never be projected by finding matching
+                    # prose in another block of an older snapshot.
                     a, b = self.locate_edit(base, self.state['edits'][id_], item)
                     projection_ops.setdefault(rel, []).append((a, b, item['after']))
                 for rel, ops in projection_ops.items():
@@ -1050,6 +1423,16 @@ class Review:
         if edit.get('accepted_option'):
             result['candidate'] = self.option(shown, edit['accepted_option'])['after']
         obj = self.payload(edit)
+        if self.sidecar:
+            text = self.read(edit['file'])
+            try:
+                block_id = edit.get('block_id')
+                if not block_id:
+                    raise Conflict('审核项没有已登记的固定块；请明确修复，不会猜测位置。')
+                row = self.block_row(text, edit['file'], block_id)
+                result['block'] = {**row, 'text': text[row['start']:row['end']], 'source_revision': self.source_digest(text)}
+            except Conflict as error:
+                result['block_conflict'] = str(error)
         try:
             self.locate_edit(self.read(edit["file"]), edit, obj)
             result["source_match"] = True
@@ -1057,8 +1440,8 @@ class Review:
             result.update({"source_match": False, "conflict": str(exc)})
         if source and result["source_match"]:
             raw = self._raw_sources[edit['file']]
-            start, end = self.locate_edit(body(raw), edit, obj)
-            if BEGIN in raw:
+            start, end = self.locate_edit(raw if self.sidecar else body(raw), edit, obj)
+            if not self.sidecar and BEGIN in raw:
                 prefix, block, _ = split_state(raw)
                 if start >= len(prefix):
                     start, end = start + len(block), end + len(block)
@@ -1164,6 +1547,8 @@ class Review:
     def persist(self, updated, expect):
         if expect != digest(self.raw):
             raise Conflict("Stale/missing --expect state-file SHA256")
+        if self.sidecar:
+            return self.persist_sidecar(updated)
         targets = {}
         for rel, text in updated.items():
             if rel == self.state_rel:
@@ -1174,40 +1559,112 @@ class Review:
             raise Conflict("Concurrent source/state modification; no source writes")
         if any(self.question_source(p) != raw for p, raw in self.question_original.items()):
             raise Conflict('Concurrent reviewer-question source modification; no source writes')
-        if not updated:
-            # Candidate/annotation metadata has one authoritative file. Atomic
-            # replacement already commits it as a whole, with no partial source writes.
-            self.write(self.state_path, self.encode(self.embedded()))
+        from review_host_client import HostError, HostSession
+        try:
+            with HostSession(self.repo) as host:
+                intent_raw = None
+                if updated:
+                    intent_files = {}
+                    for i, (rel, raw) in enumerate(targets.items()):
+                        intent_files[f"{i}-old"] = self.original[rel]
+                        intent_files[f"{i}-new"] = raw
+                    if updated.get(self.state_rel) is not None:
+                        intent_files["owner-old"] = body(self.text).encode("utf-8")
+                        intent_files["owner-new"] = updated[self.state_rel].encode("utf-8")
+                    intent = self.snapshot(intent_files or {"empty": b""}, "review transaction recovery")
+                    self.state["transaction"] = {"commit": intent, "files": list(targets), "owner": self.state_rel in updated}
+                    intent_raw = self.encode(self.embedded())
+                    self.state.pop('transaction')
+                final_raw = self.encode(self.embedded(updated.get(self.state_rel)))
+                owner_and_targets = {os.path.normcase(str(self.state_path))} | {os.path.normcase(str(self.path(rel))) for rel in targets}
+                checks = {}
+                for rel, raw in list(self.original.items()) + list(self.question_original.items()):
+                    identity = os.path.normcase(str(self.repo / rel))
+                    if identity not in owner_and_targets:
+                        if identity in checks and checks[identity][1] != raw:
+                            raise Conflict('Concurrent reviewer-question source modification')
+                        checks[identity] = (rel, raw)
+                encode = lambda raw: base64.b64encode(raw).decode('ascii')
+                plan = {'kind': 'legacy-review', 'owner': self.state_rel, 'owner_before': encode(self.raw),
+                        'owner_intent': encode(intent_raw) if intent_raw is not None else None, 'owner_after': encode(final_raw),
+                        'files': [{'file': rel, 'before': encode(self.original[rel]), 'after': encode(raw)} for rel, raw in targets.items()],
+                        'checks': [{'file': rel, 'before': encode(raw)} for rel, raw in checks.values()]}
+                plan_id = self.snapshot_files({'host-plan': json.dumps(plan, ensure_ascii=False, separators=(',', ':')).encode('utf-8')})
+                if self.state_path.read_bytes() != self.raw or any(self.path(p).read_bytes() != raw for p, raw in self.original.items()):
+                    raise Conflict('Concurrent source/state modification; no source writes')
+                if any(self.question_source(p) != raw for p, raw in self.question_original.items()):
+                    raise Conflict('Concurrent reviewer-question source modification; no source writes')
+                host.check()
+                host.apply_legacy(plan_id)
+        except (HostError, OSError) as error:
+            raise Conflict(f'旧审核宿主事务失败；请核对是否存在待恢复意图：{error}') from error
+
+    def state_bytes(self):
+        return json.dumps(self.state, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+
+    def persist_sidecar(self, updated):
+        targets = {}
+        for rel, text in updated.items():
+            raw = self.original[rel]
+            targets[rel] = (b'\xef\xbb\xbf' if raw.startswith(b'\xef\xbb\xbf') else b'') + text.encode('utf-8')
+        if (self.state_path.exists() if self.new_sidecar else self.state_path.read_bytes() != self.raw) or any(self.path(p).read_bytes() != raw for p, raw in self.original.items()):
+            raise Conflict('Concurrent source/state modification; no source writes')
+        if any(self.question_source(p) != raw for p, raw in self.question_original.items()):
+            raise Conflict('Concurrent reviewer-question source modification; no source writes')
+        if not targets:
+            self.write(self.state_path, self.state_bytes())
             return
-        # Durable intent stored in the sole state block. Recovery verifies exact old/new bytes.
-        intent_files = {}
-        for i, (rel, raw) in enumerate(targets.items()):
-            intent_files[f"{i}-old"] = self.original[rel]
-            intent_files[f"{i}-new"] = raw
-        if updated.get(self.state_rel) is not None:
-            intent_files["owner-old"] = body(self.text).encode("utf-8")
-            intent_files["owner-new"] = updated[self.state_rel].encode("utf-8")
-        intent = self.snapshot(intent_files or {"empty": b""}, "review transaction recovery")
-        self.state["transaction"] = {"commit": intent, "files": list(targets), "owner": self.state_rel in updated}
-        intent_raw = self.encode(self.embedded())
-        self.write(self.state_path, intent_raw)
-        for rel, raw in targets.items():
-            if self.path(rel).read_bytes() != self.original[rel]:
-                raise Conflict("Concurrent edit after intent; transaction retained for recovery")
-            self.write(self.path(rel), raw)
-        if self.state["transaction"]["owner"]:
-            self.text = self.embedded(updated[self.state_rel])
-        else:
-            self.text = self.embedded()
-        if self.state_path.read_bytes() != intent_raw:
-            raise Conflict("Concurrent state-owner edit; transaction retained, do not overwrite")
-        self.state.pop("transaction")
-        self.write(self.state_path, self.encode(self.embedded()))
+        from review_host_client import HostError, HostSession
+        try:
+            with HostSession(self.repo) as host:
+                intent_files = {}
+                for i, (rel, raw) in enumerate(targets.items()):
+                    intent_files[f'{i}-old'] = self.original[rel]
+                    intent_files[f'{i}-new'] = raw
+                target_paths = {os.path.normcase(str(self.path(rel))) for rel in targets}
+                checks = {}
+                for rel, raw in list(self.original.items()) + list(self.question_original.items()):
+                    identity = os.path.normcase(str(self.repo / rel))
+                    if identity not in target_paths:
+                        if identity in checks and checks[identity][1] != raw:
+                            raise Conflict('Concurrent reviewer-question source modification')
+                        checks[identity] = (rel, raw)
+                for i, (_, raw) in enumerate(checks.values()):
+                    intent_files[f'check-{i}'] = raw
+                intent = self.snapshot(intent_files, 'review transaction recovery')
+                final_raw = self.state_bytes()
+                self.state['transaction'] = {'commit': intent, 'files': list(targets),
+                                             'checks': [rel for rel, _ in checks.values()], 'owner': False}
+                intent_raw = self.state_bytes()
+                if (self.state_path.exists() if self.new_sidecar else self.state_path.read_bytes() != self.raw) or any(self.path(p).read_bytes() != raw for p, raw in self.original.items()):
+                    raise Conflict('Concurrent source/state modification; no source writes')
+                if any(self.question_source(p) != raw for p, raw in self.question_original.items()):
+                    raise Conflict('Concurrent reviewer-question source modification; no source writes')
+                host.check()
+                self.write(self.state_path, intent_raw)
+                host.apply(digest(intent_raw), intent, final_raw)
+                self.state.pop('transaction')
+        except (HostError, OSError) as error:
+            raise Conflict(f'审核宿主事务失败；请核对是否存在待恢复意图：{error}') from error
 
     def recover(self, expect):
         if not self.interrupted or expect != digest(self.raw):
             raise Conflict("No transaction or stale state SHA256")
         tr = self.state["transaction"]
+        if tr.get('kind') == 'migration':
+            raise Conflict('请先预览迁移恢复，并通过 recover-migration 显式确认。')
+        if self.sidecar:
+            from review_host_client import HostError, HostSession
+            final = dict(self.state)
+            final.pop('transaction')
+            final_raw = json.dumps(final, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+            try:
+                with HostSession(self.repo) as host:
+                    host.apply(digest(self.raw), tr['commit'], final_raw, recover=True)
+            except (HostError, OSError) as error:
+                raise Conflict(f'审核宿主恢复失败；事务保留待核对：{error}') from error
+            self.state = final
+            return {'recovered': True}
         planned = []
         for i, rel in enumerate(tr["files"]):
             old = self.object_bytes(tr['commit'], f"{i}-old")
@@ -1222,12 +1679,23 @@ class Review:
             content = self.contents(tr["commit"], "owner-new")
             if body(self.text) not in (old, content):
                 raise Conflict("State-owner source changed during transaction")
-        for path, actual, new in planned:
-            if path.read_bytes() != actual:
-                raise Conflict("Concurrent recovery edit")
-            self.write(path, new)
-        self.state.pop("transaction")
-        self.write(self.state_path, self.encode(self.embedded(content)))
+        from review_host_client import HostError, HostSession
+        self.state.pop('transaction')
+        final_raw = self.encode(self.embedded(content))
+        encode = lambda raw: base64.b64encode(raw).decode('ascii')
+        plan = {'kind': 'legacy-recovery', 'owner': self.state_rel, 'owner_before': encode(self.raw),
+                'owner_intent': None, 'owner_after': encode(final_raw),
+                'files': [{'file': rel, 'before': encode(actual), 'after': encode(new)}
+                          for rel, (_, actual, new) in zip(tr['files'], planned)], 'checks': []}
+        try:
+            with HostSession(self.repo) as host:
+                plan_id = self.snapshot_files({'host-plan': json.dumps(plan, ensure_ascii=False, separators=(',', ':')).encode('utf-8')})
+                if self.state_path.read_bytes() != self.raw or any(path.read_bytes() != actual for path, actual, _ in planned):
+                    raise Conflict('Concurrent recovery edit; transaction retained')
+                host.check()
+                host.apply_legacy(plan_id)
+        except (HostError, OSError) as error:
+            raise Conflict(f'旧审核宿主恢复失败；事务保留待核对：{error}') from error
         return {"recovered": True}
 
     def encode(self, text):
@@ -1248,6 +1716,10 @@ class Review:
             return {"initialized": False, "sha256": digest(self.raw)}
         result = copy.deepcopy(self.state)
         result["sha256"] = digest(self.raw)
+        if self.interrupted:
+            result['interrupted'] = True
+            result['transaction_state'] = 'incomplete; decisions are provisional until explicit recovery'
+            return result
         result.update(self.backup_packet())
         for id_, edit in result["edits"].items():
             if edit["status"] in PENDING:
@@ -1363,6 +1835,17 @@ def main():
     p.add_argument("--round", required=True)
     p.add_argument("--files", nargs="+", required=True)
     p.add_argument("--submission")
+    sub.add_parser('prepare-block', help='Preview or explicitly apply a fixed block around safe line boundaries; JSON on stdin')
+    sub.add_parser('reassociate-block', help='Preview or explicitly repair/reassociate a fixed block; JSON on stdin')
+    p = sub.add_parser('save-block-source', help='Explicit author save of current block text; JSON on stdin')
+    p.add_argument('--id', required=True)
+    p.add_argument('--version', required=True)
+    p = sub.add_parser('sync-block', help='Preview or explicitly synchronize non-overlapping changes; JSON on stdin')
+    p.add_argument('--id', required=True)
+    p.add_argument('--version', required=True)
+    p = sub.add_parser('manual-rebase', help='Explicitly bind existing options to the author-selected current block range')
+    p.add_argument('--id', required=True)
+    p.add_argument('--version', required=True)
     sub.add_parser('collaboration-contract', help='Read the current plugin-owned AI contract; no SKILL edits')
     sub.add_parser('propose-options', help='Ranked options A/B/C in one UTF-8 JSON spec')
     p = sub.add_parser('rework-options', help='Replace an unresolved group with ranked A/B/C options')
@@ -1394,16 +1877,32 @@ def main():
     p.add_argument("--version")
     p.add_argument("--source", action="store_true", help="Include live-file offsets and word-level changes for inline cards")
     sub.add_parser("recover")
+    sub.add_parser('migrate-state', help='Preview or explicitly apply external state migration; approved preview JSON on stdin')
+    sub.add_parser('recover-migration', help='Preview or explicitly resume interrupted migration; approved preview JSON on stdin')
     p = sub.add_parser("migrate", help="Convert legacy Git review objects into independent local snapshots")
     p.add_argument("--defer-pending", action="store_true", help="Restore pending originals, retaining candidate versions and IDs")
     p = sub.add_parser("show")
     p.add_argument("--id", required=True)
     p.add_argument("--code", help="Retired window-launch option; use original-file review cards")
     args = parser.parse_args()
-    r = Review(args.repo, args.state, args.git)
+    if args.command in ('migrate-state', 'recover-migration'):
+        from review_migration import preview as migration_preview, apply as migration_apply, recovery_preview, recover as migration_recover
+        root = Path(args.repo).resolve(strict=True)
+        approved = json.load(sys.stdin) if args.apply else None
+        with writer_lock_at(root / '.codex-review') if args.apply else nullcontext():
+            if args.command == 'migrate-state':
+                review = Review(root, args.state, args.git)
+                result = migration_apply(review, approved) if args.apply else migration_preview(review)
+            else:
+                owner = None if args.state.replace('\\', '/') == '.codex-review/state.json' else args.state
+                result = migration_recover(root, approved) if args.apply else recovery_preview(root, owner)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    initialize = args.command == 'begin' and args.state.replace('\\', '/') == '.codex-review/state.json'
+    r = Review(args.repo, args.state, args.git, initialize=initialize)
     with r.writer_lock() if args.apply else nullcontext():
         if args.apply:
-            r = Review(args.repo, args.state, args.git)
+            r = Review(args.repo, args.state, args.git, initialize=initialize)
         started = time.perf_counter()
         result = dispatch(r, args)
         if args.command != 'status':
@@ -1435,6 +1934,19 @@ def dispatch(r, args):
             r.snapshot = lambda files, label: "0" * 40
         if args.command == "begin":
             updated, result = r.begin(args.round, args.files, args.submission)
+        elif args.command == 'prepare-block':
+            spec = json.loads(sys.stdin.read())
+            if args.apply and not spec.get('block_id'):
+                raise Conflict('Apply requires the block ID from the preview')
+            updated, result = r.prepare_block(spec)
+        elif args.command == 'reassociate-block':
+            updated, result = r.reassociate_block(json.loads(sys.stdin.read()))
+        elif args.command == 'save-block-source':
+            updated, result = r.save_block_source(args.id, args.version, json.loads(sys.stdin.read()))
+        elif args.command == 'sync-block':
+            updated, result = r.sync_block(args.id, args.version, json.loads(sys.stdin.read())['source_revision'])
+        elif args.command == 'manual-rebase':
+            updated, result = r.manual_rebase(args.id, args.version, json.loads(sys.stdin.read()))
         elif args.command == "migrate":
             updated, result = r.migrate_storage(args.defer_pending)
         elif args.command in ('propose-options', 'rework-options', 'edit-option'):
@@ -1482,13 +1994,13 @@ def dispatch(r, args):
             if args.option and len(args.accept) != 1:
                 raise Conflict('--option requires exactly one accepted ID')
             updated, result = r.decide(args.accept, args.reject, {ids[0]: args.version} if args.version else None, args.option)
-        if args.apply:
+        if args.apply and not (args.command in ('save-block-source', 'sync-block', 'reassociate-block') and not result['changed']):
             started = time.perf_counter()
             r.persist(updated, args.expect)
             result['timings'] = {'persistence_s': time.perf_counter() - started}
-            if args.command in ('feedback', 'rework-options', 'edit-option'):
+            if args.command in ('feedback', 'rework-options', 'edit-option', 'manual-rebase'):
                 result['card'] = r.inspect(result['id'], source=True)
-                result['owner_text'] = r.encode(r.embedded()).decode('utf-8-sig')
+                result['owner_text'] = (r.state_bytes() if r.sidecar else r.encode(r.embedded())).decode('utf-8-sig')
         result.update({"applied": args.apply, "expected_sha256": digest(r.raw)})
     return result
 

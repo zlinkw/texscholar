@@ -13,6 +13,654 @@ ROOT = Path(os.environ['SOURCE_REVIEW_FIXTURES']); ROOT.mkdir(parents=True, exis
 
 
 class NativeReview(unittest.TestCase):
+    def install_sidecar(self, state):
+        owner = self.root / 'reply.tex'
+        owner.write_text(''.join(line for line in owner.read_bytes().decode('utf-8').splitlines(keepends=True)
+                                 if not line.startswith('% CODEX-REVIEW-DATA ')), encoding='utf-8', newline='')
+        (self.root / '.codex-review' / 'state.json').write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+
+    def test_unavailable_host_leaves_sidecar_and_source_unchanged(self):
+        from unittest.mock import patch
+        from review_host_client import HostError
+        self.install_sidecar(dict(self.review().state, schema=3))
+        review = Review(self.root, '.codex-review/state.json', 'missing-git')
+        text = review.read('main.tex')
+        start = text.index('The model is strong and fast.')
+        end = text.index('\n', start) + 1
+        updated, _ = review.prepare_block({'file':'main.tex', 'kind':'paragraph', 'start':start, 'end':end,
+                                           'source_revision':review.source_digest(text)})
+        state_path, source_path = self.root / '.codex-review' / 'state.json', self.root / 'main.tex'
+        state_before, source_before = state_path.read_bytes(), source_path.read_bytes()
+        with patch('review_host_client.HostSession', side_effect=HostError('unavailable')):
+            with self.assertRaisesRegex(Conflict, '审核宿主事务失败'):
+                review.persist(updated, digest(review.raw))
+        self.assertEqual(state_path.read_bytes(), state_before)
+        self.assertEqual(source_path.read_bytes(), source_before)
+
+    def test_block_markers_preview_preserves_source_and_rejects_damage(self):
+        from review_blocks import index, prepare
+        source = '\\begin{document}\r\n标题 🙂\r\n\r\nParagraph.\r\n\r\n\\end{document}\r\n'
+        start = source.index('Paragraph.')
+        end = source.index('\r\n', start) + 2
+        marked, block = prepare(source, start, end, 'paragraph')
+        self.assertEqual(marked[block['start']:block['end']], 'Paragraph.\r\n')
+        self.assertEqual(marked[:block['marker_start']] + marked[block['start']:block['end']] + marked[block['marker_end']:], source)
+        self.assertEqual(index(marked)[block['id']], block)
+        with self.assertRaisesRegex(ValueError, '重复'):
+            index(marked + marked[block['marker_start']:block['marker_end']])
+        with self.assertRaisesRegex(ValueError, '缺失'):
+            index(marked[:block['end']] + marked[block['marker_end']:])
+        unsafe = '\\begin{document}\n\\textbf{\ninside\n}\n\\end{document}\n'
+        with self.assertRaisesRegex(ValueError, '安全'):
+            prepare(unsafe, unsafe.index('inside'), unsafe.index('}\n', unsafe.index('inside')), 'paragraph')
+
+    def test_question_container_allows_nested_blocks_but_not_crossing_boundaries(self):
+        from review_blocks import index, prepare
+        text = '\\begin{document}\nQuestion.\n\nFirst response.\n\nSecond response.\n\\end{document}\n'
+        start = text.index('Question.'); end = text.index('\\end{document}')
+        text, container = prepare(text, start, end, 'question')
+        first = text.index('First response.'); first_end = text.index('\n', first) + 1
+        nested, child = prepare(text, first, first_end, 'paragraph')
+        self.assertEqual(index(nested)[child['id']]['parent'], container['id'])
+        with self.assertRaisesRegex(ValueError, '只有审稿问题容器'):
+            prepare(nested, nested.index('First response.'), nested.index('\n', nested.index('First response.')) + 1, 'paragraph')
+        with self.assertRaisesRegex(ValueError, '错配'):
+            prepare(text, first, len(text), 'question')
+
+    def test_new_sidecar_requires_explicit_initialization_and_preserves_source(self):
+        root = Path(tempfile.mkdtemp(prefix='sidecar-new-', dir=ROOT))
+        source = root / 'main.tex'
+        source.write_bytes(b'\\documentclass{article}\r\n\\begin{document}\r\nText.\r\n\\end{document}\r\n')
+        before = source.read_bytes()
+        with self.assertRaisesRegex(Conflict, 'missing'):
+            Review(root, '.codex-review/state.json')
+        r = Review(root, '.codex-review/state.json', initialize=True)
+        with r.writer_lock():
+            r = Review(root, '.codex-review/state.json', initialize=True)
+            updated, _ = r.begin('first', ['main.tex'])
+            r.persist(updated, digest(r.raw))
+        self.assertEqual(source.read_bytes(), before)
+        self.assertEqual(Review(root, '.codex-review/state.json').state['schema'], 3)
+        self.assertEqual(Review(root, '.codex-review/state.json').state['rounds'][-1]['name'], 'first')
+        self.assertFalse(Review(root, '.codex-review/state.json').interrupted)
+
+    def test_old_owner_cannot_write_while_external_state_exists(self):
+        state = dict(self.review().state, schema=3)
+        sidecar = self.root / '.codex-review' / 'state.json'
+        sidecar.write_text(json.dumps(state), encoding='utf-8')
+        before = (self.root / 'reply.tex').read_bytes()
+        with self.assertRaisesRegex(Conflict, '外置审核状态已存在'):
+            self.review()
+        with self.assertRaisesRegex(Conflict, '同时存在'):
+            Review(self.root, '.codex-review/state.json', 'missing-git')
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), before)
+        owner = self.root / 'reply.tex'
+        owner.write_text(''.join(line for line in owner.read_text(encoding='utf-8').splitlines(keepends=True)
+                                 if not line.startswith('% CODEX-REVIEW-DATA ')), encoding='utf-8', newline='')
+        routed = self.review()
+        self.assertTrue(routed.sidecar)
+        self.assertEqual(routed.state_rel, '.codex-review/state.json')
+
+    def test_sidecar_metadata_and_source_transaction_are_separate(self):
+        from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
+        legacy = self.review()
+        state = dict(legacy.state, schema=3)
+        sidecar = self.root / '.codex-review' / 'state.json'
+        self.install_sidecar(state)
+        owner = (self.root / 'reply.tex').read_bytes()
+        def review():
+            return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review()
+        text = r.read('main.tex')
+        start = text.index('The model is strong and fast.')
+        end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                          'source_revision': r.source_digest(text)})
+        r.persist(updated, digest(r.raw))
+        original = (self.root / 'main.tex').read_bytes()
+        r = review()
+        updated, result = r.propose({'file': 'main.tex', 'kind': 'manuscript',
+            'block_id': block['block_id'], 'before': 'The model is strong and fast.', 'after': 'The model is reliable.'})
+        r.persist(updated, digest(r.raw))
+        self.assertEqual((self.root / 'main.tex').read_bytes(), original)
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
+        source = self.root / 'main.tex'
+        source.write_bytes(source.read_bytes().replace(b'Unchanged context before.', b'Author edited outside the block.'))
+        original = source.read_bytes()
+        r = review()
+        unchanged_state = r.raw
+        self.assertTrue(r.inspect(result['id'])['source_match'])
+        self.assertEqual(review().raw, unchanged_state)
+        r = review()
+        version = r.state['edits'][result['id']]['versions'][-1]
+        updated, _ = r.decide([result['id']], [], {result['id']: version})
+        write = FakeHostSession.write
+        def interrupt(path, raw):
+            if path.name == 'main.tex':
+                raise OSError('simulated interruption')
+            write(path, raw)
+        with patch.object(FakeHostSession, 'write', side_effect=interrupt):
+            with self.assertRaisesRegex(Conflict, 'simulated interruption'):
+                r.persist(updated, digest(r.raw))
+        interrupted = review()
+        self.assertTrue(interrupted.interrupted)
+        (self.root / 'main.tex').write_text('Author edited after interruption.\n', encoding='utf-8')
+        with self.assertRaisesRegex(Conflict, 'author/concurrent edits'):
+            interrupted.recover(digest(interrupted.raw))
+        self.assertEqual((self.root / 'main.tex').read_text(encoding='utf-8'), 'Author edited after interruption.\n')
+        (self.root / 'main.tex').write_bytes(original)
+        interrupted = review()
+        interrupted.recover(digest(interrupted.raw))
+        self.assertIn('The model is reliable.', review().read('main.tex'))
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
+        self.assertNotIn('transaction', review().state)
+        self.assertNotIn('auto_backup_projection_error', review().state)
+
+    def test_fixed_block_detects_author_edit_and_missing_marker_without_relocation(self):
+        sidecar = self.root / '.codex-review' / 'state.json'
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex')
+        start = text.index('The model is strong and fast.'); end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                          'source_revision': r.source_digest(text)})
+        r.persist(updated, digest(r.raw))
+        r = review(); updated, result = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': block['block_id'],
+            'before': 'The model is strong and fast.', 'after': 'The model is reliable.'}); r.persist(updated, digest(r.raw))
+        file = self.root / 'main.tex'; marked = file.read_bytes()
+        file.write_bytes(marked.replace(b'strong and fast', b'changed by author'))
+        r = review(); before_state = r.raw
+        self.assertFalse(r.inspect(result['id'])['source_match'])
+        with self.assertRaisesRegex(Conflict, '正文已修改'):
+            r.decide([result['id']], [], {result['id']: r.state['edits'][result['id']]['versions'][-1]})
+        self.assertEqual(review().raw, before_state)
+        self.assertIn(b'changed by author', file.read_bytes())
+        text = marked.decode('utf-8')
+        line = next(line for line in text.splitlines(keepends=True) if line.startswith('% TS-BLOCK-END'))
+        file.write_bytes(text.replace(line, '', 1).encode('utf-8'))
+        r = review()
+        self.assertFalse(r.cards()['cards'][result['id']]['source_match'])
+        with self.assertRaisesRegex(Conflict, '标记'):
+            r.decide([result['id']], [], {result['id']: r.state['edits'][result['id']]['versions'][-1]})
+
+    def test_explicitly_restore_a_missing_block_identity(self):
+        from review_blocks import index
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root,'.codex-review/state.json','missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n',start)+1
+        updated, block = r.prepare_block({'file':'main.tex','kind':'paragraph','start':start,'end':end,'source_revision':r.source_digest(text)}); r.persist(updated,digest(r.raw))
+        r = review(); updated, item = r.propose({'file':'main.tex','kind':'manuscript','block_id':block['block_id'],'before':'The model is strong and fast.','after':'The model is reliable.'}); r.persist(updated,digest(r.raw))
+        source = self.root/'main.tex'; text = source.read_bytes().decode('utf-8'); row = index(text)[block['block_id']]
+        source.write_bytes((text[:row['marker_start']] + text[row['start']:row['end']] + text[row['marker_end']:]).encode('utf-8'))
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n',start)+1
+        spec = {'file':'main.tex','block_id':block['block_id'],'source_revision':r.source_digest(text),'restore':True,'start':start,'end':end}
+        before = r.raw; _, preview = r.reassociate_block(spec)
+        self.assertEqual(review().raw,before); self.assertTrue(preview['restored'])
+        r = review(); updated, _ = r.reassociate_block(spec); r.persist(updated,digest(r.raw))
+        r = review(); self.assertTrue(r.inspect(item['id'])['source_match'])
+        self.assertEqual(r.state['edits'][item['id']]['block_id'],block['block_id'])
+
+    def test_explicitly_reassociate_a_uniquely_moved_block(self):
+        from review_blocks import index
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root,'.codex-review/state.json','missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n',start)+1
+        updated, block = r.prepare_block({'file':'main.tex','kind':'paragraph','start':start,'end':end,'source_revision':r.source_digest(text)}); r.persist(updated,digest(r.raw))
+        r = review(); updated, item = r.propose({'file':'main.tex','kind':'manuscript','block_id':block['block_id'],'before':'The model is strong and fast.','after':'The model is reliable.'}); r.persist(updated,digest(r.raw))
+        main, reply = self.root/'main.tex', self.root/'reply.tex'
+        text = main.read_bytes().decode('utf-8'); row = index(text)[block['block_id']]; snippet = text[row['marker_start']:row['marker_end']]
+        main.write_bytes((text[:row['marker_start']]+text[row['marker_end']:]).encode('utf-8'))
+        reply.write_bytes(reply.read_bytes().replace(b'\\end{document}',snippet.encode('utf-8')+b'\\end{document}'))
+        r = review(); text = r.read('reply.tex')
+        spec = {'file':'reply.tex','block_id':block['block_id'],'source_revision':r.source_digest(text)}
+        updated, result = r.reassociate_block(spec); self.assertEqual(result['ids'],[item['id']]); r.persist(updated,digest(r.raw))
+        r = review(); self.assertEqual(r.state['edits'][item['id']]['file'],'reply.tex'); self.assertTrue(r.inspect(item['id'])['source_match'])
+    def test_sidecar_backup_preserves_source_conflicts_and_backup_journal(self):
+        from review_archive import backup, restore
+        sidecar = self.root / '.codex-review' / 'state.json'
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                          'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        r = review(); updated, item = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': block['block_id'],
+            'before': 'The model is strong and fast.', 'after': 'The model is reliable.'}); r.persist(updated, digest(r.raw))
+        source = self.root / 'main.tex'; source.write_bytes(source.read_bytes().replace(b'strong and fast', b'author edit'))
+        journal = self.root / '.codex-review' / 'automatic-backup.json'
+        journal.write_text(json.dumps({'session': review().state['session'], 'status': {'state': 'idle'}}), encoding='utf-8')
+        archive = self.root.parent / (self.root.name + '-conflict.zip')
+        backup(self.root, '.codex-review/state.json', archive, 'missing-git')
+        destination = self.root.parent / (self.root.name + '-conflict-restored')
+        result = restore(archive, destination, 'missing-git')
+        self.assertEqual(result['source_conflicts'], [item['id']])
+        self.assertEqual((destination / 'main.tex').read_bytes(), source.read_bytes())
+        self.assertEqual((destination / '.codex-review' / 'automatic-backup.json').read_bytes(), journal.read_bytes())
+        self.assertEqual(Review(destination, '.codex-review/state.json').state['edits'][item['id']]['status'], 'pending')
+
+    def test_sidecar_projection_does_not_guess_identical_text_in_old_snapshot(self):
+        sidecar = self.root / '.codex-review' / 'state.json'
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        source = self.root / 'main.tex'
+        source.write_bytes(source.read_bytes().replace(b'Unchanged context before.', b'Author changed outside the block.'))
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                          'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        r = review(); updated, item = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': block['block_id'],
+            'before': 'The model is strong and fast.', 'after': 'The model is reliable.'}); r.persist(updated, digest(r.raw))
+        r = review(); version = r.state['edits'][item['id']]['versions'][-1]
+        updated, _ = r.decide([item['id']], [], {item['id']: version}); r.persist(updated, digest(r.raw))
+        r = review()
+        self.assertIn('auto_backup_projection_error', r.state)
+        self.assertIn('Author changed outside the block.', r.read('main.tex'))
+        self.assertIn('The model is reliable.', r.read('main.tex'))
+
+    def test_unbound_sidecar_item_remains_visible_as_conflict(self):
+        id_ = self.proposal()
+        sidecar = self.root / '.codex-review' / 'state.json'
+        self.install_sidecar(dict(self.review().state, schema=3))
+        r = Review(self.root, '.codex-review/state.json', 'missing-git')
+        data = r.inspect(id_)
+        self.assertFalse(data['source_match'])
+        self.assertIn('没有已登记', data['block_conflict'])
+        self.assertEqual(data['candidate'], 'The model is reliable and compact.')
+        self.assertFalse(r.cards()['cards'][id_]['source_match'])
+
+    def test_sidecar_checkpoint_preserves_all_rounds_versions_and_notes(self):
+        import copy
+        from review_checkpoint import compact
+        id_ = self.proposal()
+        sidecar = self.root / '.codex-review' / 'state.json'
+        state = dict(self.review().state, schema=3)
+        edit = state['edits'][id_]; edit['status'] = 'accepted'; version = edit['versions'][-1]
+        edit['requests'] = [{'version': version, 'status': 'resolved', 'text': 'Preserve history'}]
+        state['rounds'].insert(0, copy.deepcopy(state['rounds'][0]))
+        state['pending_backup'] = {'commit': 'fixture-commit', 'files': {}, 'accepted': {id_: version},
+                                   'closed': {id_: {'status': 'accepted', 'version': version}}}
+        self.install_sidecar(state)
+        r = Review(self.root, '.codex-review/state.json', 'missing-git')
+        r.git = lambda *args: b'fixture-commit\n'
+        _, result = compact(r)
+        self.assertEqual(result['removed_ids'], [])
+        self.assertEqual(len(r.state['rounds']), 2)
+        self.assertEqual(r.state['edits'][id_]['versions'], [version])
+        self.assertEqual(r.state['edits'][id_]['requests'][0]['text'], 'Preserve history')
+        self.assertEqual(r.state['edits'][id_]['published_version'], version)
+
+    def test_block_question_association_requires_verified_exact_quote(self):
+        sidecar = self.root / '.codex-review' / 'state.json'
+        self.install_sidecar(dict(self.review().state, schema=3))
+        r = Review(self.root, '.codex-review/state.json', 'missing-git')
+        text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        spec = {'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                'source_revision': r.source_digest(text), 'questions': [{'id': 'R1-Q1', 'file': 'reply.tex', 'quote': 'Thank you.'}]}
+        updated, result = r.prepare_block(spec)
+        self.assertEqual(r.state['blocks'][result['block_id']]['questions'], spec['questions'])
+        r.persist(updated, digest(r.raw))
+        r = Review(self.root, '.codex-review/state.json', 'missing-git'); text = r.read('main.tex')
+        spec.update(start=text.index('Unchanged context before.'), end=text.index('\n', text.index('Unchanged context before.')) + 1,
+                    source_revision=r.source_digest(text), questions=[{'id': 'R1-Q2', 'file': 'reply.tex', 'quote': 'Not in the source.'}])
+        with self.assertRaisesRegex(Conflict, 'match its actual source uniquely'):
+            r.prepare_block(spec)
+
+    def test_sidecar_block_in_old_owner_preserves_header_and_exact_offsets(self):
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('reply.tex'); header = text[:text.index('\\documentclass')]
+        start = text.index('Thank you.'); end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file': 'reply.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                          'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        self.assertTrue((self.root / 'reply.tex').read_bytes().decode('utf-8').startswith(header))
+        r = review(); updated, result = r.propose({'file': 'reply.tex', 'kind': 'response', 'block_id': block['block_id'],
+                                                   'before': 'Thank you.', 'after': 'We thank the reviewer.'})
+        r.persist(updated, digest(r.raw))
+        item = review().inspect(result['id'], source=True)
+        self.assertEqual(item['source']['text'][item['source']['start']:item['source']['end']], 'Thank you.')
+
+    def test_sidecar_checkpoint_keeps_author_review_comments(self):
+        from review_checkpoint import source_text
+        text = ('% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-PLAN keep this author note\n'
+                '% CODEX-REVIEW-SOURCE-ONLY: accepted-content\n% CODEX-REVIEW-STATE-END\nText.\n')
+        self.assertEqual(source_text(text, sidecar=True), '% CODEX-REVIEW-PLAN keep this author note\nText.\n')
+
+    def test_preparing_block_alone_is_not_a_source_checkpoint(self):
+        from review_checkpoint import plan
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, _ = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                      'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        result = plan(review())
+        self.assertEqual(result['manual_files'], [])
+        self.assertEqual(result['accepted'], {})
+
+    def test_conflict_in_one_fixed_block_does_not_block_another(self):
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        blocks = []
+        for excerpt in ('The model is strong and fast.', 'Unchanged context after.'):
+            r = review(); text = r.read('main.tex'); start = text.index(excerpt); end = text.index('\n', start) + 1
+            updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                              'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw)); blocks.append(block['block_id'])
+        r = review(); updated, item = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': blocks[0],
+            'before': 'The model is strong and fast.', 'after': 'The model is reliable.'}); r.persist(updated, digest(r.raw))
+        source = self.root / 'main.tex'; source.write_bytes(source.read_bytes().replace(b'strong and fast', b'changed by author'))
+        r = review(); self.assertFalse(r.inspect(item['id'])['source_match'])
+        updated, second = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': blocks[1],
+            'before': 'Unchanged context after.', 'after': 'Revised context after.'}); r.persist(updated, digest(r.raw))
+        self.assertEqual(review().state['edits'][second['id']]['status'], 'pending')
+
+    def test_two_insertions_in_same_slot_keep_order_and_remaining_candidate(self):
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); point = text.index('Unchanged context after.')
+        updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'slot', 'start': point, 'end': point,
+                                          'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        ids = []
+        for addition in ('First addition.\n', 'Second addition.\n'):
+            r = review(); updated, item = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': block['block_id'],
+                                                     'before': '', 'after': addition}); r.persist(updated, digest(r.raw)); ids.append(item['id'])
+        r = review(); first_version = r.state['edits'][ids[0]]['versions'][-1]
+        updated, _ = r.decide([ids[0]], [], {ids[0]: first_version}); r.persist(updated, digest(r.raw))
+        r = review(); self.assertTrue(r.inspect(ids[1])['source_match'])
+        second_version = r.state['edits'][ids[1]]['versions'][-1]
+        updated, _ = r.decide([ids[1]], [], {ids[1]: second_version}); r.persist(updated, digest(r.raw))
+        self.assertIn('First addition.\nSecond addition.\n', review().read('main.tex').replace('\r\n', '\n'))
+        self.assertNotIn(b'\n', (self.root / 'main.tex').read_bytes().replace(b'\r\n', b''))
+
+    def test_sidecar_batch_with_stale_item_changes_no_source_or_decisions(self):
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        ids = []
+        for original, candidate in [('The model is strong and fast.', 'The model is reliable.'),
+                                    ('Unchanged context after.', 'Revised context after.')]:
+            r = review(); text = r.read('main.tex'); start = text.index(original); end = text.index('\n', start) + 1
+            updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                              'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+            r = review(); updated, item = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': block['block_id'],
+                                                     'before': original, 'after': candidate}); r.persist(updated, digest(r.raw)); ids.append(item['id'])
+        r = review(); before_state = r.raw; before_source = (self.root / 'main.tex').read_bytes()
+        versions = {id_: r.state['edits'][id_]['versions'][-1] for id_ in ids}; versions[ids[1]] = 'stale'
+        with self.assertRaisesRegex(Conflict, 'Batch preflight failed'):
+            r.decide(ids, [], versions)
+        self.assertEqual(review().raw, before_state)
+        self.assertEqual((self.root / 'main.tex').read_bytes(), before_source)
+        self.assertTrue(all(review().state['edits'][id_]['status'] == 'pending' for id_ in ids))
+
+    def test_clean_export_removes_only_review_markers_and_keeps_working_source(self):
+        from review_archive import export_sources
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, _ = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                      'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        source = self.root / 'main.tex'; before = source.read_bytes()
+        extra = self.root / 'data.dat'; extra.write_bytes(b'extra-data')
+        destination = self.root.parent / (self.root.name + '-submission')
+        result = export_sources(self.root, destination, ['data.dat'])
+        self.assertFalse(result['source_modified']); self.assertEqual(source.read_bytes(), before)
+        self.assertNotIn(b'% TS-BLOCK-', (destination / 'main.tex').read_bytes())
+        self.assertEqual((destination / 'data.dat').read_bytes(), b'extra-data')
+        self.assertFalse((destination / '.codex-review').exists())
+        self.assertNotIn(b'CODEX-REVIEW-STATE', (destination / 'reply.tex').read_bytes())
+        with self.assertRaisesRegex(Conflict, 'cannot include'):
+            export_sources(self.root, self.root.parent / (self.root.name + '-bad-submission'), ['.codex-review/state.json'])
+        with self.assertRaisesRegex(Conflict, 'cannot include'):
+            export_sources(self.root, self.root.parent / (self.root.name + '-bad-case-submission'), ['.CODEX-REVIEW/state.json'])
+        cli_destination = self.root.parent / (self.root.name + '-submission-cli')
+        run = subprocess.run([sys.executable, '-X', 'utf8', str(Path(__file__).with_name('review_archive.py')),
+                              'export', '--repo', str(self.root), '--destination', str(cli_destination)],
+                             capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(json.loads(run.stdout)['exported'], str(cli_destination.resolve()))
+        source.write_bytes(before + b'% TS-BLOCK-END id=broken\n')
+        invalid = self.root.parent / (self.root.name + '-invalid-submission')
+        with self.assertRaisesRegex(Conflict, 'invalid block markers'):
+            export_sources(self.root, invalid)
+        self.assertFalse(invalid.exists())
+
+    def test_migration_preview_keeps_legacy_state_source_and_notes(self):
+        from review_migration import preview
+        id_ = self.proposal(); r = self.review(); version = r.state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id': id_, 'version': version, 'side': 'original', 'start': 0, 'end': 3,
+                                'quote': 'The', 'text': 'Keep the note.'})
+        r = self.review(); state = r.raw; source = (self.root / 'main.tex').read_bytes()
+        packet = preview(r)
+        self.assertEqual(packet['state_sha256'], digest(state))
+        self.assertEqual(packet['counts']['notes'], 1)
+        self.assertEqual(packet['blocks'][0]['edits'][0]['id'], id_)
+        self.assertIn('The model is strong and fast.', packet['blocks'][0]['text'])
+        self.assertEqual(packet['conflicts'], [])
+        self.assertEqual(self.review().raw, state)
+        self.assertEqual((self.root / 'main.tex').read_bytes(), source)
+        self.assertFalse((self.root / '.codex-review' / 'state.json').exists())
+
+    def test_migration_preview_does_not_assign_an_ambiguous_copied_paragraph(self):
+        from review_migration import preview
+        id_ = self.proposal(); source = self.root / 'main.tex'; raw = source.read_bytes()
+        source.write_bytes(raw + raw)
+        r = self.review(); state = r.raw; before = source.read_bytes()
+        packet = preview(r)
+        self.assertEqual(packet['blocks'], [])
+        self.assertEqual(packet['conflicts'][0]['id'], id_)
+        self.assertEqual(self.review().raw, state)
+        self.assertEqual(source.read_bytes(), before)
+
+    def test_migration_preparation_preserves_identity_without_changing_sources(self):
+        from review_migration import preview, prepare, transaction
+        id_ = self.proposal(); r = self.review()
+        before = {name: (self.root / name).read_bytes() for name in ('main.tex','reply.tex')}
+        old_edit = json.loads(json.dumps(r.state['edits'][id_]))
+        packet = preview(r); prepared = prepare(r, packet)
+        edit = prepared['state']['edits'][id_]
+        self.assertEqual(edit['versions'], old_edit['versions'])
+        self.assertEqual(edit['status'], old_edit['status'])
+        self.assertEqual(edit['block_id'], packet['blocks'][0]['block_id'])
+        self.assertIn(b'% TS-BLOCK-BEGIN', prepared['sources']['main.tex'])
+        self.assertNotIn(b'% CODEX-REVIEW-DATA ', prepared['sources']['reply.tex'])
+        self.assertIn(b'% CODEX-REVIEW-MIGRATED ', prepared['sources']['reply.tex'])
+        self.assertEqual({name: (self.root / name).read_bytes() for name in before},before)
+        self.assertEqual(r.raw, (self.root / 'reply.tex').read_bytes())
+        self.assertFalse((self.root / '.codex-review' / 'state.json').exists())
+        staged = transaction(r, packet)
+        self.assertEqual(len(staged['commit']), 64)
+        self.assertEqual(len(staged['plan']), 64)
+        self.assertEqual({name: (self.root / name).read_bytes() for name in before},before)
+
+    def test_migration_refuses_stale_preview_and_existing_sidecar(self):
+        from review_migration import preview, prepare
+        self.proposal(); r = self.review(); packet = preview(r)
+        source = self.root/'main.tex'; original = source.read_bytes()
+        source.write_bytes(original + b'% author change\n')
+        with self.assertRaisesRegex(Conflict, '预览|变化'):
+            prepare(self.review(), packet)
+        source.write_bytes(original)
+        state = self.root/'.codex-review'/'state.json'; state.write_bytes(b'{"existing":true}')
+        with self.assertRaisesRegex(Conflict, '已存在'):
+            prepare(r, packet)
+        self.assertEqual(state.read_bytes(),b'{"existing":true}')
+
+    def test_migration_recovery_reconstructs_plan_after_old_data_is_removed(self):
+        import base64
+        from review_migration import preview, transaction, recovery_preview, _recovery_plan
+        self.proposal(); r = self.review(); staged = transaction(r,preview(r))
+        wrapper = json.loads((self.root/'.codex-review'/'objects'/(staged['plan']+'.json')).read_bytes())
+        plan = json.loads(base64.b64decode(wrapper['files']['migration-plan']))
+        decode = lambda value: base64.b64decode(value,validate=True)
+        for file in plan['files']:
+            (self.root/file['file']).write_bytes(decode(file['after']))
+        (self.root/plan['owner']).write_bytes(decode(plan['owner_after']))
+        (self.root/'.codex-review'/'state.json').write_bytes(decode(plan['state_pending']))
+        info = recovery_preview(self.root)
+        self.assertEqual(info['commit'], staged['commit'])
+        plan_id, _ = _recovery_plan(self.root, info)
+        self.assertEqual(plan_id,staged['plan'])
+
+    def test_migration_preview_reports_real_offsets_in_legacy_owner(self):
+        from review_migration import preview
+        id_ = self.apply('propose', {'file':'reply.tex', 'kind':'response', 'before':'Thank you.', 'after':'We thank the reviewer.'})['id']
+        r = self.review(); packet = preview(r)
+        block = next(row for row in packet['blocks'] if row['edits'][0]['id'] == id_)
+        owner = (self.root / 'reply.tex').read_bytes().decode('utf-8')
+        self.assertEqual(owner[block['source_start']:block['source_end']], block['text'])
+
+    def test_explicit_block_source_save_preserves_candidate(self):
+        sidecar = self.root / '.codex-review' / 'state.json'
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                          'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        r = review(); updated, item = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': block['block_id'],
+            'before': 'The model is strong and fast.', 'after': 'The model is reliable.'}); r.persist(updated, digest(r.raw))
+        r = review(); card = r.inspect(item['id']); version = card['version']
+        spec = {'block_id': block['block_id'], 'source_revision': card['block']['source_revision'], 'text': 'Author rewritten text.\n'}
+        updated, saved = r.save_block_source(item['id'], version, spec); r.persist(updated, digest(r.raw))
+        self.assertTrue(saved['changed']); self.assertFalse(saved['accepted'])
+        r = review(); self.assertEqual(r.state['edits'][item['id']]['versions'], [version])
+        self.assertEqual(r.state['edits'][item['id']]['status'], 'pending')
+        self.assertFalse(r.inspect(item['id'])['source_match'])
+        self.assertIn('Author rewritten text.', r.read('main.tex'))
+
+    def test_block_sync_preserves_nonoverlapping_edits_and_versions(self):
+        sidecar = self.root / '.codex-review' / 'state.json'
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file': 'main.tex', 'kind': 'paragraph', 'start': start, 'end': end,
+                                          'source_revision': r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        r = review(); options = [{'label': 'A', 'after': 'The model is reliable and fast.', 'reason': 'A'},
+                                 {'label': 'B', 'after': 'The model is compact and fast.', 'reason': 'B'}]
+        updated, item = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': block['block_id'],
+            'before': 'The model is strong and fast.', 'options': options, 'fewer_options_reason': 'Two alternatives'}); r.persist(updated, digest(r.raw))
+        r = review(); old = r.state['edits'][item['id']]['versions'][-1]
+        updated, _ = r.feedback({'id': item['id'], 'version': old, 'side': 'original', 'start': 0, 'end': 3, 'quote': 'The', 'text': 'Keep this note'}); r.persist(updated, digest(r.raw))
+        file = self.root / 'main.tex'; file.write_bytes(file.read_bytes().replace(b'The model is strong', b'A model is strong'))
+        r = review(); text = r.read('main.tex'); updated, sync = r.sync_block(item['id'], old, r.source_digest(text))
+        self.assertTrue(sync['changed']); self.assertEqual(sync['options'][0]['after'], 'A model is reliable and fast.')
+        r.persist(updated, digest(r.raw)); r = review()
+        edit = r.state['edits'][item['id']]
+        self.assertEqual(edit['versions'][0], old); self.assertEqual(edit['requests'][0]['version'], old)
+        self.assertTrue(edit['requests'][0]['source_stale']); self.assertTrue(r.inspect(item['id'])['source_match'])
+        unchanged = r.raw; text = r.read('main.tex'); updated, result = r.sync_block(item['id'], edit['versions'][-1], r.source_digest(text))
+        self.assertFalse(result['changed']); self.assertEqual(review().raw, unchanged)
+        file.write_bytes(file.read_bytes().replace(b'strong', b'powerful'))
+        r = review(); text = r.read('main.tex'); before = r.raw
+        with self.assertRaisesRegex(Conflict, '重叠'):
+            r.sync_block(item['id'], edit['versions'][-1], r.source_digest(text))
+        self.assertEqual(review().raw, before)
+        self.assertIn(b'powerful', file.read_bytes())
+
+    def test_manual_rebase_uses_exact_current_selection_and_preserves_history(self):
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        changed, block = r.prepare_block({'file':'main.tex', 'kind':'paragraph', 'start':start, 'end':end, 'source_revision':r.source_digest(text)})
+        r.persist(changed, digest(r.raw))
+        r = review(); options = [{'label':label, 'after':value, 'reason':label} for label, value in [('A','Reliable.'), ('B','Compact.')]]
+        changed, item = r.propose({'file':'main.tex', 'kind':'manuscript', 'block_id':block['block_id'], 'before':'The model is strong and fast.',
+                                   'options':options, 'fewer_options_reason':'Two options'})
+        r.persist(changed, digest(r.raw)); r = review(); version = r.inspect(item['id'])['version']
+        changed, _ = r.feedback({'id':item['id'], 'version':version, 'side':'original', 'start':0, 'end':3, 'quote':'The', 'text':'Keep this note'})
+        r.persist(changed, digest(r.raw)); file = self.root/'main.tex'
+        file.write_bytes(file.read_bytes().replace(b'The model is strong', 'The model is powerful 🙂'.encode()))
+        r = review(); card = r.inspect(item['id']); current = card['block']['text'].replace('\r\n','\n')
+        quote = 'The model is powerful 🙂 and fast.'; begin = current.index(quote)
+        spec = {'block_id':block['block_id'], 'source_revision':card['block']['source_revision'], 'start':begin, 'end':begin+len(quote),
+                'quote':quote, 'options':[{'label':'A','after':'Manual A.'}, {'label':'B','after':'Manual B.'}]}
+        with self.assertRaisesRegex(Conflict, '正文已修改'):
+            r.propose({'options':options, 'fewer_options_reason':'Two options'}, item['id'])
+        with self.assertRaisesRegex(Conflict, '正文已变化'):
+            r.manual_rebase(item['id'],version,{**spec, 'source_revision':'stale'})
+        with self.assertRaisesRegex(Conflict, '选区'):
+            r.manual_rebase(item['id'],version,{**spec, 'quote':'wrong'})
+        command = [sys.executable,'-X','utf8',str(Path(__file__).with_name('source_review.py')),'--project',str(self.root),'--state','.codex-review/state.json']
+        suffix = ['manual-rebase','--id',item['id'],'--version',version]
+        state_before = r.raw
+        preview = subprocess.run(command+suffix,input=json.dumps(spec).encode('utf-8'),capture_output=True)
+        self.assertEqual(preview.returncode,0,preview.stderr.decode('utf-8')); self.assertFalse(json.loads(preview.stdout)['applied'])
+        self.assertEqual(review().raw,state_before)
+        applied = subprocess.run(command+['--apply','--expect',digest(state_before)]+suffix,input=json.dumps(spec).encode('utf-8'),capture_output=True)
+        self.assertEqual(applied.returncode,0,applied.stderr.decode('utf-8')); self.assertTrue(json.loads(applied.stdout)['applied'])
+        r = review()
+        card = r.inspect(item['id']); self.assertEqual(card['original'],quote); self.assertTrue(card['source_match'])
+        self.assertEqual([o['after'] for o in card['options']], ['Manual A.','Manual B.'])
+        self.assertEqual(card['edit']['versions'][0],version); self.assertTrue(card['edit']['requests'][0]['source_stale'])
+        self.assertEqual(card['edit']['requests'][0]['text'],'Keep this note')
+        with self.assertRaisesRegex(Conflict, '已变化'):
+            r.manual_rebase(item['id'],version,spec)
+        current_version = card['version']
+        changed, _ = r.manual_rebase(item['id'], current_version, spec); r.persist(changed,digest(r.raw)); r=review()
+        repeated_version = r.inspect(item['id'])['version']
+        self.assertNotEqual(repeated_version,current_version, 'an explicit rebase invalidates earlier clicks even with identical text')
+        with self.assertRaisesRegex(Conflict, '已变化'):
+            r.manual_rebase(item['id'],current_version,spec)
+        insertion = {**spec, 'start':0, 'end':0, 'quote':''}
+        changed, _ = r.manual_rebase(item['id'],repeated_version,insertion); r.persist(changed,digest(r.raw)); r=review()
+        insertion_card = r.inspect(item['id']); self.assertEqual(insertion_card['original'], '')
+        self.assertTrue(insertion_card['source_match'])
+        changed, _ = r.decide([item['id']],[],{item['id']:insertion_card['version']},'A'); r.persist(changed,digest(r.raw)); r=review()
+        self.assertEqual(r.state['edits'][item['id']]['status'],'accepted')
+        self.assertIn('Manual A.The model is powerful 🙂',r.read('main.tex'))
+
+    def test_manual_rebase_maps_unicode_and_crlf_selection(self):
+        self.install_sidecar(dict(self.review().state, schema=3))
+        file = self.root/'main.tex'; file.write_bytes(file.read_bytes().replace(b'\n',b'\r\n'))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r=review(); text=r.read('main.tex'); start=text.index('The model'); end=text.index('\n',start)+1
+        changed, block=r.prepare_block({'file':'main.tex','kind':'paragraph','start':start,'end':end,'source_revision':r.source_digest(text)})
+        r.persist(changed,digest(r.raw)); r=review()
+        changed,item=r.propose({'file':'main.tex','kind':'manuscript','block_id':block['block_id'],
+                                'before':'The model is strong and fast.','after':'Reliable.'})
+        r.persist(changed,digest(r.raw)); r=review(); version=r.inspect(item['id'])['version']
+        file.write_bytes(file.read_bytes().replace(b'The model', '🙂 The model'.encode('utf-8')))
+        r=review(); card=r.inspect(item['id']); selected=card['block']['text'].replace('\r\n','\n')
+        spec={'block_id':block['block_id'],'source_revision':card['block']['source_revision'],'start':0,'end':len(selected),
+              'quote':selected,'options':[{'label':'A','after':'Reliable.\n'}]}
+        changed,_=r.manual_rebase(item['id'],version,spec); r.persist(changed,digest(r.raw)); card=review().inspect(item['id'])
+        self.assertEqual(card['original'],selected.replace('\n','\r\n')); self.assertTrue(card['source_match'])
+
+    def test_candidate_markers_are_rejected_at_input_and_acceptance(self):
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        changed, block = r.prepare_block({'file':'main.tex','kind':'paragraph','start':start,'end':end,'source_revision':r.source_digest(text)})
+        r.persist(changed,digest(r.raw)); r = review()
+        marker = '% TS-BLOCK-BEGIN id=12345678-1234-4234-8234-123456789abc kind=paragraph\nNested.\n% TS-BLOCK-END id=12345678-1234-4234-8234-123456789abc\n'
+        spec = {'file':'main.tex','kind':'manuscript','block_id':block['block_id'],'before':'The model is strong and fast.','after':marker}
+        with self.assertRaisesRegex(Conflict, '标记'):
+            r.propose(spec)
+        with self.assertRaisesRegex(Conflict, '标记'):
+            r.propose({k:v for k,v in spec.items() if k != 'after'} | {'options':[{'label':'A','after':'Safe.','reason':'A'},
+                {'label':'B','after':marker,'reason':'B'}], 'fewer_options_reason':'Two'})
+        changed, item = r.propose({**spec,'after':'Reliable.'}); r.persist(changed,digest(r.raw)); r=review()
+        edit = r.state['edits'][item['id']]; version = edit['versions'][-1]
+        with self.assertRaisesRegex(Conflict, '标记'):
+            r.propose({'after':marker},item['id'])
+        card = r.inspect(item['id']); current = card['block']['text'].replace('\r\n','\n')
+        with self.assertRaisesRegex(Conflict, '标记'):
+            r.manual_rebase(item['id'],version,{'block_id':block['block_id'],'source_revision':card['block']['source_revision'],
+                'start':0,'end':len(current),'quote':current,'options':[{'label':'A','after':marker}]})
+        text = r.read('main.tex'); other_start = text.index('Unchanged context before.'); other_end = text.index('\n',other_start)+1
+        changed, other_block = r.prepare_block({'file':'main.tex','kind':'paragraph','start':other_start,'end':other_end,'source_revision':r.source_digest(text)})
+        r.persist(changed,digest(r.raw)); r=review()
+        changed, good = r.propose({'file':'main.tex','kind':'manuscript','block_id':other_block['block_id'],
+                                   'before':'Unchanged context before.','after':'Revised context.'})
+        r.persist(changed,digest(r.raw)); r=review(); edit = r.state['edits'][item['id']]
+        good_version = r.state['edits'][good['id']]['versions'][-1]
+        payload = r.payload(edit); payload['after'] = marker
+        forged = r.snapshot({'original.tex':payload['before'].encode(), 'candidate.tex':marker.encode(),
+                             'span.json':json.dumps(payload,ensure_ascii=False).encode()}, 'existing malformed fixture')
+        edit['versions'][-1] = forged; r.persist({},digest(r.raw)); r=review(); before = (self.root/'main.tex').read_bytes()
+        with self.assertRaisesRegex(Conflict, '标记'):
+            r.decide([item['id']],[],{item['id']:forged})
+        with self.assertRaisesRegex(Conflict, '标记'):
+            r.decide([good['id'],item['id']],[],{good['id']:good_version,item['id']:forged})
+        self.assertEqual((self.root/'main.tex').read_bytes(), before)
+        self.assertEqual(r.state['edits'][item['id']]['status'],'pending')
+        self.assertEqual(r.state['edits'][good['id']]['status'],'pending')
+
     def insertions(self):
         text = self.review().read('main.tex')
         point = text.index('The model')
@@ -151,6 +799,10 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(self.review().state['edits'][id_]['status'], 'rejected')
 
     def setUp(self):
+        from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
+        host_patch = patch('review_host_client.HostSession', FakeHostSession)
+        host_patch.start(); self.addCleanup(host_patch.stop)
         self.root = Path(tempfile.mkdtemp(prefix='no-git-', dir=ROOT))
         (self.root / 'main.tex').write_text('\\documentclass{article}\n\\begin{document}\nUnchanged context before.\n\nThe model is strong and fast.\n\nUnchanged context after.\n\\end{document}\n', encoding='utf-8')
         (self.root / 'reply.tex').write_text('% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-NEXT manuscript=1 response=a\n% CODEX-REVIEW-STATE-END\n\\documentclass{article}\n\\begin{document}\nThank you.\n\\end{document}\n', encoding='utf-8')

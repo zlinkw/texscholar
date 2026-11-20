@@ -1,5 +1,8 @@
 'use strict';
+let reviewHost;
 exports.activate = async context => {
+    try {reviewHost = await require('./review_host_bridge').activate(context);}
+    catch (error) {require('vscode').window.showErrorMessage('审核宿主登记失败，外置状态的受控源码写入不可用：' + error.message);}
     await require('./setup').activate(context);
     require('./menu_commands').activate(context);
     require('./extension').activate(context);
@@ -14,3 +17,4 @@ exports.activate = async context => {
     await require('./pdf_navigation').activate(context).ready;
     return require('./inline_review').activate(context);
 };
+exports.deactivate = async () => {if (reviewHost) await reviewHost.close();};

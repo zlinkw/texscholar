@@ -40,17 +40,18 @@ class Flow(unittest.TestCase):
 
     def test_state_only_saves_are_atomic_without_interrupted_intent(self):
         from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
         review = self.review()
         original = self.read('main.tex')
         updated, result = review.propose({'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model improves performance.',
                                           'after': 'The model improves measured performance.', 'deferred': True})
         self.assertEqual(updated, {})
         before = review.state_path.read_bytes()
-        with patch.object(review, 'write', side_effect=PermissionError('state file busy')):
-            with self.assertRaises(PermissionError): review.persist(updated, m.digest(review.raw))
+        with patch.object(FakeHostSession, 'write', side_effect=PermissionError('state file busy')):
+            with self.assertRaisesRegex(m.Conflict, 'state file busy'): review.persist(updated, m.digest(review.raw))
         self.assertEqual(review.state_path.read_bytes(), before)
         self.assertFalse(self.review().interrupted)
-        with patch.object(review, 'write', wraps=review.write) as write:
+        with patch.object(FakeHostSession, 'write', wraps=FakeHostSession.write) as write:
             review.persist(updated, m.digest(review.raw))
             self.assertEqual(write.call_count, 1)
         fresh = self.review()
@@ -114,6 +115,10 @@ class Flow(unittest.TestCase):
         self.check_index()
 
     def setUp(self):
+        from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
+        host_patch = patch('review_host_client.HostSession', FakeHostSession)
+        host_patch.start(); self.addCleanup(host_patch.stop)
         self.root = ROOT / self._testMethodName
         self.root.mkdir()
         self.env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
@@ -394,10 +399,12 @@ class Flow(unittest.TestCase):
         self.check_index()
 
     def test_missing_objects_and_recovery_manual_conflict_are_explicit(self):
+        from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
         self.edit("main.tex", "The model improves performance.", "The model may improve performance.")
         r = self.review()
         updates, _ = r.decide([], ["1"])
-        original_write = r.write
+        original_write = FakeHostSession.write
         count = 0
         def interrupt(path, raw):
             nonlocal count
@@ -405,9 +412,9 @@ class Flow(unittest.TestCase):
             if count == 2:
                 raise OSError("simulated interruption")
             original_write(path, raw)
-        r.write = interrupt
-        with self.assertRaises(OSError):
-            r.persist(updates, m.digest(r.raw))
+        with patch.object(FakeHostSession, 'write', side_effect=interrupt):
+            with self.assertRaisesRegex(m.Conflict, 'simulated interruption'):
+                r.persist(updates, m.digest(r.raw))
         self.write("main.tex", self.read("main.tex") + "% concurrent author text\n")
         fresh = self.review()
         raw = (self.root / "main.tex").read_bytes()
@@ -437,11 +444,13 @@ class Flow(unittest.TestCase):
         self.check_index()
 
     def test_interrupted_multi_file_transaction_recovers(self):
+        from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
         self.edit("main.tex", "The model improves performance.", "The model may improve performance.")
         self.edit("section.tex", "The estimator is robust.", "The estimator can be robust.")
         r = self.review()
         updates, _ = r.decide([], ["1", "2"])
-        original_write = r.write
+        original_write = FakeHostSession.write
         count = 0
 
         def interrupt(path, raw):
@@ -451,9 +460,9 @@ class Flow(unittest.TestCase):
                 raise OSError("simulated process interruption")
             return original_write(path, raw)
 
-        r.write = interrupt
-        with self.assertRaises(OSError):
-            r.persist(updates, m.digest(r.raw))
+        with patch.object(FakeHostSession, 'write', side_effect=interrupt):
+            with self.assertRaisesRegex(m.Conflict, 'simulated process interruption'):
+                r.persist(updates, m.digest(r.raw))
         fresh = self.review()
         self.assertTrue(fresh.interrupted)
         fresh.recover(m.digest(fresh.raw))

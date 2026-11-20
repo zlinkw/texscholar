@@ -34,7 +34,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     fs.writeFileSync(file, value, 'utf8');
     if (state) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n% CODEX-REVIEW-STATE-END', 'utf8');
     const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [], reveals = [];
-    let receive, panels = 0, provider, fileChanged, configurationChanged, selectionHandler, sourceValue, cardsHook, pdfHook;
+    let receive, panels = 0, provider, fileChanged, configurationChanged, selectionHandler, sourceValue, cardsHook, pdfHook, migrationHook, manualHook;
     const original = value, edit = {file: path.basename(file), kind: 'manuscript', deferred: true, status: 'pending', versions: ['v1'], requests: [], questions: []};
     const start = Array.from(original.slice(0, original.indexOf('First'))).length;
     const data = {version: 'v1', edit, original: 'First sentence.', candidate: 'Better sentence.', options: [
@@ -49,7 +49,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     const editor = {document, selection: {start: 0, end: 0, isEmpty: true}, setDecorations() {}, revealRange() {}};
     const pdfGroup = {tabs: [], viewColumn: 2};
     const vscode = {
-        Range, Selection: Range, Uri: {file: uri}, RelativePattern: class {}, ViewColumn: {One: 1, Beside: -2},
+        Range, Selection: Range, ThemeColor: class {constructor(id) {this.id = id;}}, Uri: {file: uri}, RelativePattern: class {}, ViewColumn: {One: 1, Beside: -2},
         TreeItem: class {constructor(label, collapsibleState) {Object.assign(this, {label, collapsibleState});}},
         TreeItemCollapsibleState: {None: 0, Expanded: 2},
         EventEmitter: class {event = () => disposable(); fire() {} dispose() {}},
@@ -80,6 +80,8 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     const allCards = {'1': data};
     const backend = async (_, args, cwd, input) => {
         backendCalls.push({args, input});
+        if (args.includes('migrate-state') || args.includes('recover-migration')) return JSON.stringify(await migrationHook(args,input));
+        if (args.includes('manual-rebase')) return JSON.stringify(await manualHook(args,input));
         if (args.some(x => String(x).endsWith('document_roles.py'))) return JSON.stringify({status: 'unconfirmed'});
         if (args.includes('cards')) {
             const snapshot = JSON.stringify({session: 'batch', sha256: 'fresh', edits: Object.fromEntries(Object.entries(allCards).map(([id, item]) => [id, item.edit])),
@@ -108,11 +110,46 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     };
     const ui = createInlineReview(vscode, {subscriptions: []}, backend);
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
-        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set pdfHook(fn) {pdfHook = fn;},
+        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;},
         rows: () => provider.getChildren(), receive: m => receive(m),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
         changed: () => fileChanged(uri(owner)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
 }
+
+test('manual rebase previews exact current selection and applies only after confirmation', async () => {
+    const f=hostFixture(); await f.ui.ready;
+    f.data.block={id:'block-1',text:'Manual source.\n',source_revision:'r1'}; f.data.edit.block_id='block-1';
+    f.data.source_match=false; f.data.conflict='Changed';
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const c=f.rows()[0].children[0].command.arguments[0]; await f.ui.open(c); await f.receive({type:'ready',instance:'page'});
+    f.manualHook=async args=>args.includes('--apply') ? {card:{...f.data,version:'v2',source_match:true,edit:{...f.edit,versions:['v1','v2']}},owner_text:'state'} : {id:'1'};
+    let detail; f.vscode.window.showWarningMessage=async (message,options)=>{detail=options.detail;};
+    const message={type:'manualRebase',instance:'page',id:'1',version:'v1',block_id:'block-1',source_revision:'r1',start:0,end:14,quote:'Manual source.',
+        options:f.data.options.map(o=>({label:o.label,after:o.after}))};
+    await f.receive(message); assert.match(detail,/Manual source/);
+    assert.equal(f.backendCalls.filter(call=>call.args.includes('manual-rebase') && call.args.includes('--apply')).length,0);
+    f.vscode.window.showWarningMessage=async ()=>'更新候选';
+    await f.receive(message);
+    const applied=f.backendCalls.find(call=>call.args.includes('manual-rebase') && call.args.includes('--apply'));
+    assert(applied); assert.equal(applied.input.source_revision,'r1'); assert.equal(applied.input.quote,'Manual source.');
+    assert.equal(applied.input.options.length,3);
+});
+
+test('migration requires confirmation of the displayed preview before applying', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    const preview = {state_sha256:'preview-sha', blocks:[{file:'paper.tex',text:'author text'}], counts:{edits:1}, conflicts:[]};
+    f.migrationHook = async (args,input) => args.includes('--apply') ? {complete:true} : preview;
+    let shown;
+    f.vscode.window.showWarningMessage = async (message, options) => {shown = {message,options}; return undefined;};
+    await f.handlers.get('localLatex.migrateReviewState')();
+    assert.match(shown.options.detail,/author text/);
+    assert.equal(f.backendCalls.filter(call=>call.args.includes('migrate-state') && call.args.includes('--apply')).length,0);
+    f.vscode.window.showWarningMessage = async () => '确认迁移';
+    await f.handlers.get('localLatex.migrateReviewState')();
+    const applied = f.backendCalls.find(call=>call.args.includes('migrate-state') && call.args.includes('--apply'));
+    assert.deepEqual(applied.input,preview);
+    assert(applied.args.includes('preview-sha'));
+});
 
 test('manual PDF commands coalesce with accepted refresh without holding the decision busy state', async () => {
     const f = hostFixture(); await f.ui.ready;

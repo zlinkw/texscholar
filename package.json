@@ -2,7 +2,7 @@
   "name": "latex-writing-tools",
   "displayName": "TeXScholar · 本地论文写作与审核",
   "publisher": "local-research",
-  "version": "0.9.49",
+  "version": "0.9.50",
   "description": "本地 LaTeX 写作、逐处审核、批注返修、完整审核 PDF 与私有 GitHub 备份；自动配置，适配 Windows 11 / macOS。",
   "license": "MIT",
   "engines": {
@@ -187,6 +187,31 @@
         "title": "在固定审核页比较／编辑候选与精确批注",
         "category": "LaTeX 审核",
         "icon": "$(edit)"
+      },
+      {
+        "command": "localLatex.prepareReviewBlock",
+        "title": "预览并建立固定审核块",
+        "category": "LaTeX 审核"
+      },
+      {
+        "command": "localLatex.resolveReviewHost",
+        "title": "核对并恢复审核宿主登记",
+        "category": "LaTeX 审核"
+      },
+      {
+        "command": "localLatex.migrateReviewState",
+        "title": "预览并迁移审核状态",
+        "category": "LaTeX 审核"
+      },
+      {
+        "command": "localLatex.recoverReviewMigration",
+        "title": "预览并恢复中断的审核迁移",
+        "category": "LaTeX 审核"
+      },
+      {
+        "command": "localLatex.exportCleanSource",
+        "title": "导出投稿源码副本",
+        "category": "LaTeX 审核"
       },
       {
         "command": "localLatex.inlineRelatedChanges",

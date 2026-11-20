@@ -7,20 +7,20 @@
 1. 首次 read_context 核对插件版本和 file_roles。已有编号传 ids，新位置传 scopes 的精确 quote（插入点为空并给 left/right）或完整 section 命令；需要全文才传 files。默认返回全部未决项及相邻段落，不自动发送整篇源码。sources 是上下文，不是扩大改动的授权；global 作者规则、local 局部注释、reference 模板要求分开处理，模板不能覆盖作者规则。
 2. 按任务选 modules；只在本会话确实仍有对应规则时传 known_rules。返修附件有 known_feedback 时原样传入：工具会重读当前源文件和状态，未变的原文、候选、批注可标 feedback_reused 而不重复返回，其他上下文照常提供。附件缺失、上下文丢失或版本失效时不得声称已经持有；新版返回优先，不要求恢复被废弃的旧批注。缺少必要依据时按需补读，不用工具成功冒充科学核验。
 3. 直接组织 A/B/C 并保存。单项用 propose_options/rework_options，多项用 submit_options；apply 默认 true，无需预览后再写一遍。下一次写入使用成功回执的 sha256/version，不逐项重读、重算摘要或编译。成功后简报实际编号和目的即可。维护 CLI propose-options 不属于日常 MCP 的额外步骤。
-4. AI rework_options 成功时默认清除本项旧的待处理批注并提供新版，无需作者预先拒绝。界面保留最近一轮返修要求的只读对照，标明原候选版本；它不是新版待处理要求，不重复加入 AI 交接，也不阻塞返修。没有新批注时沿用最近要求，有新要求则替换这份对照，不累积多代记录。失败保留原状态。明确需要保留时传 discard_annotations=false；明确逐条处理时可用 resolve_requests。元数据关联绝不清除批注，不因放弃旧候选宣布科学问题解决。旧版本可以按需读取，不强制追溯或迁移它们。
+4. 外置状态中的 rework_options 默认保留既有批注和候选历史；按作者明确要求才使用 discard_annotations 或 resolve_requests。旧内嵌状态保留原有返修默认行为。元数据关联绝不清除批注；返修不等于接收或解决科学问题。失败保留原状态，旧版本可按需读取。
 5. question_refs 在读取结果中引用本次 context.questions；提交可在 question_pool 明确提供完整 {id,file,quote}，由各项 question_refs 引用。仅在本次请求内有效，不自动配对；每条摘录仍由工具核验。新候选直接带关联，只补关联用 link_questions，也可放入 submit_options。 submit_options 的 propose/rework 操作可在操作层或 spec 内给 questions/question_refs；两层同时提供时按 spec 在前、操作层在后合并，并按完整 id/file/quote 去重。预检和保存使用同一份归一化输入，未知引用或不精确摘录报错。回执 questions 是实际保存后的完整关联列表，可据此核对，不能把已保存操作重复提交。replace=true 才替换整组关联。
 6. 批量首错停止，results 中成功项已保存，不能重放；只续写失败和未尝试项。invalid_field 的 field 指出需修正的位置，无需为修参数重读论文。状态、原文、版本冲突按 recovery 重读实际受影响范围，不盲目重试，不绕过写入锁或精确匹配。重叠错误的 existing 指向已有项，核对后返修，不自动合并。
 7. references 可与 read_context 同时请求：每项给 kind（label/citation/macro）、准确 key 和 files。返回指定源文件中的真实定义及邻近内容；缺失或多处匹配明确报告。仅查定义可同时传 ids=[]。不执行宏展开，不把 BibTeX 条目当作已验证文献，跨段逻辑与科学事实仍由 AI 核对。
 
 ## 候选生成
 
-位置标题 `location` 默认使用简短中文，仅保留必要符号、编号及专有名词英文；旧英文标题可以提供 `location_zh`，无需改正文或重做候选。定位冲突项仍可读取；使用 `relocate_options` 提供完全精确的原文与上下文修复位置，保留 ID、版本、批注与决定。作者明确要求拒绝未接收项时可用 `reject_options`；不自动接收或关闭科学问题。
+位置标题 `location` 默认使用简短中文，仅保留必要符号、编号及专有名词英文；旧英文标题可以提供 `location_zh`，无需改正文或重做候选。定位冲突项仍可读取；旧格式可用 `relocate_options` 核对精确位置，固定块模式须预览并经作者确认后用 `reassociate_block` 修复缺失标记或关联唯一移动的块。保留 ID、版本、批注与决定，不按全文相似文字猜测。作者明确要求拒绝未接收项时可用 `reject_options`；不自动接收或关闭科学问题。
 
 - 文件角色须 confirmed，变化时让作者确认。正文、回复、模板按实际登记处理，不猜文件名或改模板。初始化新稿只在作者授权的写作任务内进行；安装工具不初始化论文。
 - 每个原文位置提交完整、实质不同且排序后的 A/B/C；不凑同义版本。确实不足三个合理选项时写 fewer_options_reason。普通单元最多一个自然段；公式、图注、表注单独处理。最小充分修改，不为一句重写整段；新写或实质重写内容一句一行。
 - 三方案共享真实事实、数值和限定条件，不编造实验、引文或因果。intent.goal/preserve 简述本次目的与保留内容，不新增计划审批；作者明确要求先确认时除外。reason 默认一句实际取舍，只有较长依据才另填 summary；after 始终完整。
 - 手改候选的 manually_edited 说明原理由和排名可能过时；返修使用实际保存内容重新排序，不照搬内部标记。当前旧候选和批注可被新版替换，但不能自动接收、覆盖已接收成果或手动正文。
-- 全局科研要求放顶部 CODEX-RULES，局部逻辑放对应段前。交接和状态放既有 CODEX-REVIEW-STATE 注释块，不混入候选、不另建跟踪文档。详细格式请求 writing，问题关联请求 questions；角色结构、界面和备份分别请求 roles、interface、backup。
+- 全局科研要求放顶部 CODEX-RULES，局部逻辑放对应段前。新格式的审核状态由插件保存在 `.codex-review/state.json` 和对象目录；旧格式继续读取已有 CODEX-REVIEW-STATE。不能双写，也不另建跟踪文档。详细格式请求 writing，问题关联请求 questions；角色结构、界面和备份分别请求 roles、interface、backup。
 - 只处理当前目标及必要依赖。跨章节判断补读相关内容；无证据结论标待核验。缺少当前插件版本信息或版本不匹配时重启实际 MCP 宿主，不改用另一个版本 CLI。
 
 ## 文件角色细节
@@ -58,7 +58,7 @@ read_context 的 question_refs 指向本次 context.questions 中的完整原始
 
 候选 PDF 由插件处理：一份完整论文，仅修改句上下对照，未改内容一次；A/B/C 只决定显示哪个待审方案，不自动接收。不要向正式源码加审核颜色宏，也不要为普通 AI 改稿自行编译。插件允许用户配置保存当前预览方案／选择方案后的 PDF 更新，以及接收后的自动更新。
 
-科研要求放顶部 CODEX-RULES，段落计划放对应段前。交接记录、运行状态必须进入插件识别的既有 CODEX-REVIEW-STATE-BEGIN/END 注释块，所有行保持 LaTeX 注释，不能混入正文修订或作者候选。具体块格式以 writing-guide.md 为准，不另造状态拥有文件。
+科研要求放顶部 CODEX-RULES，段落计划放对应段前。新格式的交接和运行状态由插件维护在唯一 sidecar 及对象目录；旧格式继续使用已有 CODEX-REVIEW-STATE。固定块注释只保存身份，不能混入候选或批注。旧项目迁移须先预览并由作者明确确认，安装和普通更新不会触发迁移。
 
 候选接收并可靠落盘后，插件自动在后台排队备份该次明确接收的源码投影；前台不等待 Git 或网络。自动备份不收录范围外手动修改，不精简候选、批注或缓存；延后批注和未决项可跨多轮保留。状态区区分排队、本地提交、远端成功与失败，失败后可核对并重试；无归属 ahead 提交和暂存选择继续阻止备份，不阻止审阅或 PDF。
 

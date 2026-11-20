@@ -125,8 +125,9 @@ function createInlineReview(vscode, context, execute = run) {
     if (diagnostics) context.subscriptions.push(diagnostics);
     const style = () => reviewStyle.read(vscode.workspace.getConfiguration('localLatex'));
     let deleted = vscode.window.createTextEditorDecorationType({color: style().removedColor, textDecoration: style().strikeDeleted ? 'line-through' : 'none'});
+    const protectedBlock = vscode.window.createTextEditorDecorationType({isWholeLine: true, borderWidth: '0 0 0 2px', borderStyle: 'solid', borderColor: new vscode.ThemeColor('editorWarning.foreground')});
     let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
-    let watchedScope, watcher, autoRefresh, renderedOwnerHash, refreshChain = Promise.resolve();
+    let watchedScope, watcher, stateWatcher, autoRefresh, renderedOwnerHash, refreshChain = Promise.resolve();
     const changedFiles = new Set(), reviewFiles = new Set(), deferredFiles = new Set();
     const shownPanels = new Set(), openedPDFs = new Set(), pdfMetadata = new Map();
     const pdfRequests = new Map();
@@ -157,7 +158,7 @@ function createInlineReview(vscode, context, execute = run) {
             if (errors.length) workbench.titleStatus?.('部分标题翻译失败：' + errors.join('；') + '。原始标题仍可查看。');
         }).catch(error => workbench.titleStatus?.('标题翻译失败：' + error.message)).finally(() => {titleRun = undefined;});
     }
-    context.subscriptions.push(deleted);
+    context.subscriptions.push(deleted, protectedBlock);
     const config = () => vscode.workspace.getConfiguration('localLatex');
     const uri = (c, file) => vscode.Uri.file(path.join(c.repo, file));
     const sameFile = require('./tools').samePath;
@@ -241,6 +242,17 @@ function createInlineReview(vscode, context, execute = run) {
         for (const [file, text] of await Promise.all(files.map(async file => [file, await fs.readFile(file.fsPath, 'utf8')]))) {
             if (text.includes('% CODEX-REVIEW-STATE-BEGIN') && text.includes('% CODEX-REVIEW-DATA ')) owners.push(file.fsPath);
         }
+        const sidecar = path.join(repo, '.codex-review', 'state.json');
+        let hasSidecar = false;
+        try {await fs.access(sidecar); hasSidecar = true;} catch (error) {if (error.code !== 'ENOENT') throw error;}
+        if (hasSidecar) {
+            let state;
+            try {state = JSON.parse(await fs.readFile(sidecar,'utf8'));}
+            catch (error) {if (error instanceof SyntaxError) throw new Error('外置状态损坏或迁移未完成；请使用“预览并恢复中断的审核迁移”。'); throw error;}
+            if (state?.transaction?.kind === 'migration') throw new Error('迁移尚未完成；请使用“预览并恢复中断的审核迁移”。');
+        }
+        if (hasSidecar && owners.length) throw new Error('发现两份活动审核状态，请先核对迁移状态。');
+        if (hasSidecar) return {repo, owner: '.codex-review/state.json'};
         if (!owners.length && allowEmpty) return {repo};
         if (owners.length !== 1) throw new Error('需先建立或核对唯一的 CODEX-REVIEW-STATE。');
         return {repo, owner: path.relative(repo, owners[0]).split(path.sep).join('/')};
@@ -369,11 +381,15 @@ function createInlineReview(vscode, context, execute = run) {
     }
     function watchScope(c) {
         if (watchedScope && sameFile(watchedScope.repo, c.repo) && watchedScope.owner === c.owner) return;
-        watcher?.dispose(); changedFiles.clear(); reviewFiles.clear(); deferredFiles.clear(); renderedOwnerHash = undefined; ownerAfterWrite = undefined;
+        watcher?.dispose(); stateWatcher?.dispose(); changedFiles.clear(); reviewFiles.clear(); deferredFiles.clear(); renderedOwnerHash = undefined; ownerAfterWrite = undefined;
         watchedScope = {repo: c.repo, owner: c.owner};
         watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(c.repo, '**/*.tex'));
         const changed = resource => requestRefresh(resource.fsPath);
         context.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed));
+        if (c.owner === '.codex-review/state.json') {
+            stateWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(c.repo, '.codex-review/state.json'));
+            context.subscriptions.push(stateWatcher, stateWatcher.onDidChange(changed), stateWatcher.onDidCreate(changed), stateWatcher.onDidDelete(changed));
+        }
     }
     function refresh(c, explicitPanel = false) {
         const task = refreshChain.then(() => renderRefresh(c, explicitPanel));
@@ -455,6 +471,10 @@ function createInlineReview(vscode, context, execute = run) {
         for (const [id, record] of records) {
             if (!sameFile(document.uri.fsPath, path.join(record.c.repo, record.data.edit.file))) continue;
             affected = true;
+            if (record.c.owner === '.codex-review/state.json' && text !== record.data.source.text) {
+                records.set(id, {...record, displayConflict: true});
+                continue;
+            }
             if (!oldViews.has(record.data.source.text)) oldViews.set(record.data.source.text, positions.view(record.data.source.text));
             const span = positions.locateDisplay(record.data, currentView, oldViews.get(record.data.source.text));
             if (!span) {records.set(id, {...record, displayConflict: true}); continue;}
@@ -469,11 +489,17 @@ function createInlineReview(vscode, context, execute = run) {
     function decorate() {
         for (const editor of vscode.window.visibleTextEditors) {
             if (editor.document.uri.scheme !== 'file') continue;
-            const spans = [];
+            const spans = [], protectedSpans = [], blocks = new Set();
             if (!editor.document.isDirty) for (const {c, data, displayConflict} of records.values()) {
                 if (displayConflict) continue;
                 if (!sameFile(editor.document.uri.fsPath, path.join(c.repo, data.edit.file))) continue;
                 if (editor.document.getText() !== data.source.text) continue;
+                if (data.block && !blocks.has(data.block.id)) {
+                    blocks.add(data.block.id);
+                    protectedSpans.push({range: new vscode.Range(editor.document.positionAt(utf16(data.source.text, data.block.start)),
+                        editor.document.positionAt(utf16(data.source.text, data.block.end))),
+                        hoverMessage: '此块有待审候选或批注；请通过审核卡片编辑原文。直接修改后会暂停接收并保留正文。'});
+                }
                 const side = data.source.side === 'original' ? 'old' : 'new';
                 // Existing legacy candidate text is not painted as a deletion.
                 if (side !== 'old') continue;
@@ -483,6 +509,7 @@ function createInlineReview(vscode, context, execute = run) {
                 }
             }
             editor.setDecorations(deleted, spans);
+            editor.setDecorations(protectedBlock, protectedSpans);
         }
     }
     async function setContext() {
@@ -608,6 +635,10 @@ function createInlineReview(vscode, context, execute = run) {
         // Feedback changes only the embedded state. Rebase cached owner offsets
         // across that header's size change, without rereading/repainting its peers.
         const offsets = new Map(), newLength = positions.codePointOffset(saved.owner_text, saved.owner_text.length);
+        if (c.owner === '.codex-review/state.json') {
+            workbench.sync(new Map(records), c);
+            return;
+        }
         for (const [id, peer] of records) {
             const source = peer.data.source;
             if (peer.data.edit.file !== c.owner || source.text === saved.owner_text) continue;
@@ -657,6 +688,84 @@ function createInlineReview(vscode, context, execute = run) {
             updateSaved(c, saved);
             previewChoices.set(choiceKey(c), {version: saved.card.version, option: chosen});
             return saved.card;
+        }),
+        saveSource: (c, displayed, text) => exclusive(async () => {
+            const data = await readCurrent(c, false);
+            cleanBuffers(c, data.edit.file);
+            if (!data.block || data.block.id !== displayed.id || data.block.source_revision !== displayed.source_revision)
+                throw new Error('正文或审核块已变化，请重新读取后编辑。');
+            const shown = vscode.workspace.textDocuments.find(doc => doc.uri.scheme === 'file' && sameFile(doc.uri.fsPath, path.join(c.repo, data.edit.file)));
+            if (shown && shown.getText() !== (await fs.readFile(path.join(c.repo, data.edit.file), 'utf8')).replace(/^\uFEFF/, ''))
+                throw new Error('编辑区与磁盘尚未同步；请先核对。');
+            await backend(c, ['save-block-source', '--id', c.id, '--version', c.version],
+                {block_id: displayed.id, source_revision: displayed.source_revision, text}, data.sha256);
+            await refresh(c);
+        }),
+        manualRebase: (c, displayed, selection) => exclusive(async () => {
+            const data = await readCurrent(c, false);
+            cleanBuffers(c, data.edit.file);
+            if (!data.block || data.block.id !== displayed.id || data.block.source_revision !== displayed.source_revision ||
+                selection.block_id !== displayed.id || selection.source_revision !== displayed.source_revision)
+                throw new Error('正文或审核块已变化，请重新选择范围；草稿已保留。');
+            const spec = {block_id:selection.block_id, source_revision:selection.source_revision,
+                start:selection.start, end:selection.end, quote:selection.quote, options:selection.options};
+            const args = ['manual-rebase', '--id', c.id, '--version', c.version];
+            await backend(c, args, spec);
+            const detail = '选中当前原文：\n' + (spec.quote || '（空选区，插入位置）') + '\n\n' +
+                spec.options.map(o => o.label + '：' + o.after).join('\n\n');
+            const choice = await vscode.window.showWarningMessage('以选定的当前正文更新此项全部候选？保留旧版本和批注，不自动接收。',
+                {modal:true, detail}, '更新候选');
+            if (choice !== '更新候选') return;
+            const saved = await backend(c, args, spec, data.sha256);
+            updateSaved(c, saved);
+            await refresh(c);
+            return saved.card;
+        }),
+        syncBlock: (c, displayed) => exclusive(async () => {
+            const data = await readCurrent(c, false);
+            cleanBuffers(c, data.edit.file);
+            if (!displayed || !data.block || data.block.id !== displayed.id || data.block.source_revision !== displayed.source_revision)
+                throw new Error('正文或审核块已变化，请重新读取后同步。');
+            const args = ['sync-block', '--id', c.id, '--version', c.version], spec = {source_revision: data.block.source_revision};
+            const preview = await backend(c, args, spec);
+            if (!preview.changed) return;
+            const summary = preview.options.map(o => `${o.label}：${o.after}`).join('\n\n');
+            const choice = await vscode.window.showWarningMessage('将按当前原文生成新版候选，原版本和批注保留；不接收。',
+                {modal: true, detail: summary}, '同步候选');
+            if (choice !== '同步候选') return;
+            const saved = await backend(c, args, spec, data.sha256);
+            await refresh(c);
+            return readCurrent({...c, version: saved.version}, false);
+        }),
+        repairBlock: (c, displayed) => exclusive(async () => {
+            const data = await readCurrent(c, false), editor = vscode.window.activeTextEditor;
+            if (!data.edit.block_id || data.edit.block_id !== displayed.edit.block_id) throw new Error('审核块身份已变化，请重新打开。');
+            if (!editor || editor.document.uri.scheme !== 'file' || editor.document.languageId !== 'latex' || !vscode.workspace.getWorkspaceFolder(editor.document.uri))
+                throw new Error('请先在论文工作区打开需要修复或重新关联的源文件。');
+            const rel = path.relative(c.repo, editor.document.uri.fsPath).split(path.sep).join('/');
+            if (rel.startsWith('../') || path.isAbsolute(rel)) throw new Error('目标文件不属于当前论文工作区。');
+            cleanBuffers(c, rel);
+            const text = (await fs.readFile(editor.document.uri.fsPath,'utf8')).replace(/^\uFEFF/, '');
+            if (editor.document.isDirty || editor.document.getText() !== text) throw new Error('目标编辑区与磁盘尚未同步，请先核对。');
+            const choice = await vscode.window.showQuickPick([
+                {label:'关联已移动的完整块', restore:false},
+                {label:'在当前完整行选区恢复缺失标记', restore:true}
+            ], {placeHolder:'选择审核块修复方式'});
+            if (!choice) return;
+            const spec = {file:rel, block_id:data.edit.block_id, restore:choice.restore,
+                source_revision:crypto.createHash('sha256').update(text,'utf8').digest('hex')};
+            if (choice.restore) {
+                spec.start = positions.codePointOffset(text,editor.document.offsetAt(editor.selection.start));
+                spec.end = positions.codePointOffset(text,editor.document.offsetAt(editor.selection.end));
+            }
+            const preview = await backend(c,['reassociate-block'],spec);
+            if (!preview.changed) return data;
+            const detail = preview.marked || `文件：${preview.previous_file} → ${preview.file}\n受影响审核项：${preview.ids.join('、')}`;
+            const approved = await vscode.window.showWarningMessage('请核对审核块修复预览；候选和批注会保留，不自动接收。', {modal:true, detail}, '确认修复');
+            if (approved !== '确认修复') return;
+            await backend(c,['reassociate-block'],spec,data.sha256);
+            await refresh(c);
+            return readCurrent(c,false);
         }),
         note: (c, selected, text) => exclusive(() => saveNote(c, selected, text)),
         accept: c => exclusive(() => accept(c)), reject: c => exclusive(() => reject(c)),
@@ -915,6 +1024,61 @@ function createInlineReview(vscode, context, execute = run) {
     command('localLatex.inlineReject', reject);
     command('localLatex.inlineAnnotate', annotate);
     command('localLatex.inlineEditCandidate', arg => openWorkbench(contextFor(arg)), true);
+    command('localLatex.prepareReviewBlock', () => exclusive(async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.uri.scheme !== 'file' || editor.document.languageId !== 'latex')
+            throw new Error('请在论文源码中选择需要审核的完整行。');
+        const c = activeScope || await discover();
+        if (c.owner !== '.codex-review/state.json') throw new Error('请先显式迁移到外置审核状态。');
+        const rel = path.relative(c.repo, editor.document.uri.fsPath).split(path.sep).join('/');
+        if (rel.startsWith('../') || path.isAbsolute(rel)) throw new Error('所选文件不属于当前论文。');
+        cleanBuffers(c, rel);
+        const text = editor.document.getText();
+        if (text !== (await fs.readFile(editor.document.uri.fsPath, 'utf8')).replace(/^\uFEFF/, ''))
+            throw new Error('编辑区与磁盘尚未同步；请先核对。');
+        const selected = await vscode.window.showQuickPick([
+            {label: '自然段', kind: 'paragraph'}, {label: '公式或图表', kind: 'display'}, {label: '插入槽', kind: 'slot'},
+            {label: '审稿问题容器', kind: 'question'}],
+            {placeHolder: '选择审核块类型；选区应覆盖完整独立行'});
+        if (!selected) return;
+        const spec = {file: rel, kind: selected.kind,
+            start: positions.codePointOffset(text, editor.document.offsetAt(editor.selection.start)),
+            end: positions.codePointOffset(text, editor.document.offsetAt(editor.selection.end)),
+            source_revision: crypto.createHash('sha256').update(text, 'utf8').digest('hex')};
+        const preview = await backend(c, ['prepare-block'], spec);
+        const choice = await vscode.window.showWarningMessage('将在选区边界加入固定审核块标记，正文内容不变。',
+            {modal: true, detail: preview.marked}, '加入标记');
+        if (choice !== '加入标记') return;
+        await backend(c, ['prepare-block'], {...spec, block_id: preview.block_id}, preview.expected_sha256);
+        await refresh(c);
+        vscode.window.showInformationMessage('审核块标记已保存；尚未创建或接收候选。');
+    }), true);
+    command('localLatex.migrateReviewState', () => exclusive(async () => {
+        const c = activeScope || await discover();
+        if (c.owner === '.codex-review/state.json') throw new Error('当前项目已使用外置审核状态。');
+        const preview = await backend(c, ['migrate-state']);
+        const choice = await vscode.window.showWarningMessage('请核对完整迁移预览。确认后加入必要标记并切换审核状态，不接收候选。',
+            {modal:true, detail:JSON.stringify(preview,null,2)}, '确认迁移');
+        if (choice !== '确认迁移') return;
+        await backend(c, ['migrate-state'], preview, preview.state_sha256);
+        activeScope = {repo:c.repo, owner:'.codex-review/state.json'};
+        await refresh(activeScope, true);
+        vscode.window.showInformationMessage('审核状态迁移完成；候选和批注保持待审。');
+    }), true);
+    command('localLatex.recoverReviewMigration', () => exclusive(async () => {
+        const editor = vscode.window.activeTextEditor;
+        const folder = (editor?.document.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(editor.document.uri)) || vscode.workspace.workspaceFolders?.[0];
+        if (!folder) throw new Error('请先打开需要恢复的论文工作区。');
+        const c = {repo:folder.uri.fsPath, owner:'.codex-review/state.json'};
+        const preview = await backend(c, ['recover-migration']);
+        const choice = await vscode.window.showWarningMessage('迁移尚未完成。请核对恢复文件与当前版本，确认后继续；作者改动冲突会停止。',
+            {modal:true, detail:JSON.stringify(preview,null,2)}, '确认恢复');
+        if (choice !== '确认恢复') return;
+        await backend(c, ['recover-migration'], preview, preview.commit);
+        activeScope = c;
+        await refresh(activeScope, true);
+        vscode.window.showInformationMessage('迁移恢复完成；候选和批注保持待审。');
+    }), true);
     command('localLatex.inlineRelatedChanges', async arg => {
         const c = contextFor(arg), state = await backend(c, ['cards']);
         const item = state.edits[c.id];

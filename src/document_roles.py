@@ -1,12 +1,12 @@
 """Discover TeX structure and share an author-confirmed, comment-only file map."""
 from pathlib import Path, PurePosixPath
 import argparse
+import base64
 import hashlib
 import json
 import os
 import re
 import sys
-import uuid
 
 BEGIN = '% CODEX-FILE-ROLES-BEGIN'
 END = '% CODEX-FILE-ROLES-END'
@@ -202,6 +202,7 @@ def validate_entries(entries, facts, allow_missing=False):
 def save(project, spec):
     # Same lock as review candidates/checkpoints; no review state is initialized.
     from source_review import writer_lock_at
+    from review_host_client import HostError, HostSession
     root = Path(project).resolve(strict=True)
     with writer_lock_at(root / '.codex-review'):
         current = scan(root)
@@ -228,12 +229,19 @@ def save(project, spec):
         if not path.stat().st_mode & 0o200:
             raise RoleError('拥有文件只读，未写入。')
         updated = (b'\xef\xbb\xbf' if raw.startswith(b'\xef\xbb\xbf') else b'') + result.encode('utf-8')
-        temporary = path.with_name(path.name + '.roles-write-' + uuid.uuid4().hex)
-        with temporary.open('xb') as stream:
-            stream.write(updated)
-        if path.read_bytes() != raw:
-            raise RoleError('写入期间源文件改变，已停止覆盖；临时文件保留：' + str(temporary))
-        os.replace(temporary, path)
+        encode = lambda value: base64.b64encode(value).decode('ascii')
+        checks = [(name, relative_file(root,name).read_bytes()) for name in facts if name != owner]
+        plan = {'kind':'role-metadata', 'owner':owner, 'owner_before':encode(raw), 'owner_intent':None,
+                'owner_after':encode(updated), 'files':[],
+                'checks':[{'file':name, 'before':encode(value)} for name, value in checks]}
+        try:
+            with HostSession(root) as host:
+                if path.read_bytes() != raw or any(relative_file(root,name).read_bytes() != value for name, value in checks):
+                    raise RoleError('确认期间源文件变化，请重新核对；未写入。')
+                host.check()
+                host.apply_roles(plan)
+        except (HostError, OSError) as error:
+            raise RoleError('文件角色宿主保存失败，未完成登记：' + str(error)) from error
         return {'owner': owner, 'saved': True, 'files': entries}
 
 

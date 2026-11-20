@@ -17,10 +17,21 @@ from datetime import datetime, timezone
 from source_review import Review, Conflict, PENDING, body, digest, letters
 
 
-def source_text(text):
+def source_text(text, sidecar=False):
     # Stable writing/logic comments stay; runtime review pointers/markers do not.
+    if sidecar:
+        return ''.join(line for line in text.splitlines(keepends=True)
+                       if not re.match(r'^%\s*CODEX-REVIEW-(?:STATE-BEGIN|STATE-END|DATA\s|NEXT\s|SOURCE-ONLY(?::|\s|$))', line))
     return ''.join(line for line in text.splitlines(keepends=True)
                    if not re.match(r'^%\s*CODEX-REVIEW(?:-|\s|:|$)', line))
+
+
+def comparable_source(text, sidecar):
+    text = source_text(text, sidecar)
+    if sidecar:
+        from review_blocks import MARKER
+        text = MARKER.sub('', text)
+    return text
 
 
 def plan(r):
@@ -41,11 +52,11 @@ def plan(r):
     for name in r.state['rounds'][-1]['files']:
         current = r.read(name)
         approved = r.contents(r.backup_status().get('done') or r.state['accepted'], name)
-        if source_text(current) != source_text(approved):
+        if comparable_source(current, r.sidecar) != comparable_source(approved, r.sidecar):
             manual.append(name)
         # Pending options live outside the source. The author's explicit backup
         # includes direct edits, without accepting any of those options or notes.
-        text = source_text(current)
+        text = source_text(current, r.sidecar)
         if name == r.state_rel:
             # A clone can start a new local review without missing private objects.
             text = ('% CODEX-REVIEW-STATE-BEGIN\n'
@@ -80,7 +91,8 @@ def record(r, spec):
     # The verified local source commit is the author's checkpoint for manual
     # edits too. Later acceptance starts from it; push failure retains this
     # local checkpoint and never permits compaction or cache cleanup.
-    r.state['accepted'] = r.snapshot({name: body(base64.b64decode(source['content'], validate=True).decode('utf-8-sig')).encode('utf-8')
+    r.state['accepted'] = r.snapshot({name: (r.read(name) if r.sidecar else
+                                    body(base64.b64decode(source['content'], validate=True).decode('utf-8-sig'))).encode('utf-8')
                                     for name, source in data['sources'].items()}, 'author source checkpoint ' + commit)
     r.state['pending_backup'] = {'commit': commit, 'accepted': data['accepted'], 'manual_files': data['manual_files'], 'closed': data['closed'],
                                  'files': spec['files'], 'purpose': spec['purpose']}
@@ -99,40 +111,42 @@ def compact(r):
         if r.git('rev-parse', commit + ':' + name).decode().strip() != oid:
             raise Conflict('成果提交内容不一致；不精简历史。')
     edits = r.state['edits']
-    eligible = {id_ for id_, e in edits.items() if not e['versions'] and e.get('checkpoint')
-                and e.get('freshness') != 'needs-recheck'}
-    for id_, old in saved['closed'].items():
-        edit = edits.get(id_)
-        if (edit and edit['status'] == old['status'] and edit['versions'] and edit['versions'][-1] == old['version']
-                and edit.get('freshness') != 'needs-recheck'
-                and not any(q['status'] in {'open', 'addressed-pending-review'} for q in edit.get('requests', []))):
-            eligible.add(id_)
-    needed = set(edits) - eligible
-    queue = list(needed)
-    while queue:
-        for dependency in edits[queue.pop()].get('deps', []):
-            if dependency not in needed:
-                needed.add(dependency)
-                queue.append(dependency)
     removed, minimal = [], []
-    for id_ in eligible:
-        if id_ not in needed:
-            del edits[id_]
-            removed.append(id_)
-        else:
-            # Keep dependency identity, not old candidate text or closed annotations.
-            edits[id_]['versions'] = []
-            edits[id_].pop('requests', None)
-            edits[id_].pop('previous_feedback', None)
-            edits[id_].setdefault('checkpoint', commit)
-            minimal.append(id_)
+    if not r.sidecar:
+        eligible = {id_ for id_, e in edits.items() if not e['versions'] and e.get('checkpoint')
+                    and e.get('freshness') != 'needs-recheck'}
+        for id_, old in saved['closed'].items():
+            edit = edits.get(id_)
+            if (edit and edit['status'] == old['status'] and edit['versions'] and edit['versions'][-1] == old['version']
+                    and edit.get('freshness') != 'needs-recheck'
+                    and not any(q['status'] in {'open', 'addressed-pending-review'} for q in edit.get('requests', []))):
+                eligible.add(id_)
+        needed = set(edits) - eligible
+        queue = list(needed)
+        while queue:
+            for dependency in edits[queue.pop()].get('deps', []):
+                if dependency not in needed:
+                    needed.add(dependency)
+                    queue.append(dependency)
+        for id_ in eligible:
+            if id_ not in needed:
+                del edits[id_]
+                removed.append(id_)
+            else:
+                # Keep dependency identity, not old candidate text or closed annotations.
+                edits[id_]['versions'] = []
+                edits[id_].pop('requests', None)
+                edits[id_].pop('previous_feedback', None)
+                edits[id_].setdefault('checkpoint', commit)
+                minimal.append(id_)
     for id_, version in saved['accepted'].items():
         if id_ in edits and edits[id_]['versions'] and edits[id_]['versions'][-1] == version:
             edits[id_]['published_version'] = version
             edits[id_]['checkpoint'] = commit
-    active = r.state['rounds'][-1]
-    active['ids'] = [id_ for id_ in active['ids'] if id_ in edits]
-    r.state['rounds'] = [active]
+    if not r.sidecar:
+        active = r.state['rounds'][-1]
+        active['ids'] = [id_ for id_ in active['ids'] if id_ in edits]
+        r.state['rounds'] = [active]
     r.state['checkpoint'] = {'commit': commit}
     # Explicit author-reviewed backup also resolves automatic attribution blockers.
     r.state['auto_backup_projection'] = r.state['accepted']
