@@ -1098,7 +1098,7 @@ function createInlineReview(vscode, context, execute = run) {
         const ids = [...new Set(items.map(item => item.id))];
         const readRequest = {project: c.repo, state: c.owner, ids, expected_plugin_version: require('../package.json').version,
             known_feedback: (state.known_feedback || []).filter(receipt => ids.includes(receipt.id))};
-        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 参数：${JSON.stringify(readRequest)}\n若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n先核对当前状态；known_feedback 仅表示本附件已经完整提供的原文、候选与批注，工具核对未变时不重复发送，变化时以新版为准。有同版本 rules_receipt 时作为 known_rules 传回。不修改全局 SKILL。此文件是请求快照，不是状态表。\n保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；成功返修默认替换旧批注，无需先逐条拒绝，失败保留原状。旧附件过期不要求恢复旧批注。多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${notes.join('\n\n')}\n`, 'utf8');
+        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 参数：${JSON.stringify(readRequest)}\n若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n先核对当前状态；known_feedback 仅表示本附件已经完整提供的原文、候选与批注，工具核对未变时不重复发送，变化时以新版为准。有同版本 rules_receipt 时作为 known_rules 传回。不修改全局 SKILL。此文件是请求快照，不是状态表。\n保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；外置状态默认保留旧批注，只有作者明确要求时才使用 discard_annotations 或 resolve_requests。旧内嵌状态保持原有返修默认行为。失败保留原状。多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${notes.join('\n\n')}\n`, 'utf8');
         await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
         vscode.window.showInformationMessage((target ? '本项待处理批注' : '全部批注') + '已作为上下文加入 Codex 输入区，请检查后自行发送。');
     }
@@ -1198,7 +1198,7 @@ function createInlineReview(vscode, context, execute = run) {
         if (OPEN.has(picked.edit.status)) return open(target);
         if (!target.version) throw new Error('该已完结记录已精简；请到 Git 查看已备份成果。');
         const data = await backend(target, ['inspect', '--id', target.id, '--version', target.version, '--source']);
-        if (requireMatch && !data.source_match) throw new Error('该位置后来发生变化，无法精确定位；请查看文件或 Git，不猜测跳转。');
+        if (!data.source_match) throw new Error('该位置后来发生变化，无法精确定位；请查看文件或 Git，不猜测跳转。');
         const editor = await vscode.window.showTextDocument(uri(target, data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
         if (editor.document.getText() !== data.source.text) throw new Error('编辑区内容与定位快照不同，请先保存并重新核对位置。');
         const at = range(editor.document, data);

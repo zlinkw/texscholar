@@ -144,6 +144,30 @@ test('in-flight source save cannot apply another repository synchronization to t
     assert(messages.some(m=>m.type==='conflict'));
 });
 
+test('closing during queued source synchronization cannot mutate a reopened panel', async () => {
+    for (const [reopen,syncFirst,fail] of [[false,true,false],[true,true,false],[true,false,false],[true,false,true]]) {
+        let receive, dispose, release, started, view; const messages=[];
+        const a={repo:'/a',owner:'state.json',id:'1',version:'v1'}, b={...a,repo:'/b'};
+        const data={version:'v1',original:'Old.',source_match:true,block:{id:'b',text:'Old.\n',source_revision:'r1'},
+            edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate.',reason:'A',changes:[]}]};
+        const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{showErrorMessage:m=>messages.push({type:'error',message:m}),createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{
+            cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+        const begun=new Promise(resolve=>{started=resolve;});
+        const services={read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[],
+            saveSource:async()=>{const sync=()=>view.sync(new Map([['1',{c:{...a,version:'v2'},data:{...data,version:'v2'}}]]),a,new Set(['1']));
+                if(syncFirst)sync();started();await new Promise(resolve=>{release=resolve;});if(fail)throw Error('save failed');if(!syncFirst)sync();}};
+        view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c:a,data}]]));await view.show(a);await receive({type:'ready',instance:'old'});
+        const saving=receive({type:'saveSource',instance:'old',id:'1',version:'v1',value:'Saved.\n'});await begun;dispose();
+        if (reopen) {view.setRecords(new Map([['1',{c:b,data}]]));await view.show(b);await receive({type:'ready',instance:'new'});
+            await receive({type:'dirty',instance:'new',id:'1',version:'v1',dirty:true,state:{drafts:{A:'New draft'}}});}
+        release();await saving;
+        if(fail)assert(messages.some(m=>m.type==='error' && m.message==='save failed'));
+        if (reopen) {assert.deepEqual(view.active,b);await receive({type:'ready',instance:'reopened'});
+            assert.equal(messages.filter(m=>m.type==='content').at(-1).resume.drafts.A,'New draft');}
+        else assert.equal(view.active,undefined);
+    }
+});
+
 test('manual rebase preserves block draft and rejects stale displayed revisions', async () => {
     let receive, called = 0; const messages = [];
     const c = {repo:'/fixture',owner:'.codex-review/state.json',id:'1',version:'v1'};

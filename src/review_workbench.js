@@ -233,7 +233,8 @@ function createWorkbench(vscode, context, services) {
             panel.webview.onDidReceiveMessage(receive);
             panel.onDidChangeViewState(({webviewPanel}) => {if (!webviewPanel.visible) {ready = false; translationRequested = retryTranslation = false;}});
             panel.onDidDispose(() => {panel = undefined; active = loaded = pending = sourceSelection = undefined;
-                lastRecords = new Map(); hasPending = dirty = noteDirty = ready = false; uiState = notice = client = reading = relatedReturn = undefined; translationEpoch++; translations.clear();});
+                lastRecords = new Map(); hasPending = dirty = noteDirty = ready = handling = false; pendingSynchronized.clear(); showRequest++;
+                uiState = notice = client = reading = relatedReturn = undefined; translationEpoch++; translations.clear();});
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
@@ -406,6 +407,7 @@ function createWorkbench(vscode, context, services) {
             return;
         }
         if (handling) return post({type: 'actionResult', error: true, message: '当前审核操作仍在完成，未保存内容保留。'});
+        const operationPanel = panel;
         handling = message.type; notice = undefined;
         post({type: 'busy', action: handling});
         try {
@@ -489,12 +491,16 @@ function createWorkbench(vscode, context, services) {
                 if (uiState?.sourceDraftStale) throw new Error('原文草稿基于旧正文；请先复制或放弃后载入最新。');
                 if (!loaded.block || typeof message.value !== 'string') throw new Error('当前块不可编辑，请先核对标记。');
                 await services.saveSource(c, loaded.block, message.value);
-                if (!valid(c)) return;
+                if (panel !== operationPanel || !valid(c)) return;
                 const savedText = message.value.replace(/\r\n/g, '\n');
                 if (uiState?.blockDraft === savedText) uiState.blockDraft = undefined;
                 dirty = uiState?.blockDraft !== undefined && uiState.blockDraft !== savedText ||
                     Object.entries(uiState?.drafts || {}).some(([label, value]) => options(loaded).some(o => o.label === label && o.after.replace(/\r\n/g, '\n') !== value));
-                if (!hasPending) {loaded = await services.read(c); sendContent();}
+                if (!hasPending) {
+                    const refreshed = await services.read(c);
+                    if (panel !== operationPanel || !valid(c)) return;
+                    loaded = refreshed; sendContent();
+                }
                 return post({type: 'result', message: '原文已保存；受影响的候选将自动协调。'});
             } else if (message.type === 'manualRebase') {
                 if (!loaded.block || message.block_id !== loaded.block.id || message.source_revision !== loaded.block.source_revision)
@@ -550,16 +556,21 @@ function createWorkbench(vscode, context, services) {
             else if (message.type === 'provider') {await services.changeProvider(); translationEpoch++; autoTranslate();}
             else throw new Error('不支持的审核操作。');
             post({type: 'result', message: ''});
-        } catch (error) {post({type: 'result', error: true, message: error.message});}
+        } catch (error) {
+            if (panel === operationPanel) post({type: 'result', error: true, message: error.message});
+            else vscode.window.showErrorMessage(error.message);
+        }
         finally {
-            handling = false;
-            const synchronized = new Set([...pendingSynchronized.values()].filter(c => c.repo === active.repo && c.owner === active.owner &&
-                lastRecords.get(c.id)?.c.version === c.version && lastRecords.get(c.id)?.c.repo === c.repo && lastRecords.get(c.id)?.c.owner === c.owner).map(c => c.id));
-            pendingSynchronized.clear();
-            if (hasPending && (!dirty && !noteDirty || pending?.c.version === active.version || synchronized.has(active.id))) {
-                hasPending = false; sync(lastRecords, {repo: active.repo, owner: active.owner}, synchronized);
+            if (panel === operationPanel && active) {
+                handling = false;
+                const synchronized = new Set([...pendingSynchronized.values()].filter(c => c.repo === active.repo && c.owner === active.owner &&
+                    lastRecords.get(c.id)?.c.version === c.version && lastRecords.get(c.id)?.c.repo === c.repo && lastRecords.get(c.id)?.c.owner === c.owner).map(c => c.id));
+                pendingSynchronized.clear();
+                if (hasPending && (!dirty && !noteDirty || pending?.c.version === active.version || synchronized.has(active.id))) {
+                    hasPending = false; sync(lastRecords, {repo: active.repo, owner: active.owner}, synchronized);
+                }
+                post({type: 'busy', action: false});
             }
-            post({type: 'busy', action: false});
         }
     }
     context.subscriptions.push({dispose() {panel?.dispose();}});

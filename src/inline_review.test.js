@@ -148,6 +148,22 @@ test('advance can display a pending card while its editor buffer is dirty', asyn
     assert.equal(f.edit.status,'pending');
 });
 
+test('related completed items locate only matching sources and retain pending and compacted paths', async () => {
+    const f=hostFixture({autoPDF:false});await f.ui.ready;
+    const question={id:'R1-Q1',file:'reply.tex',quote:'Reviewer question.'};
+    f.edit.questions=[question];
+    f.allCards['2']={...f.data,id:'2',edit:{...f.edit,status:'accepted',questions:[question],versions:['v1']}};
+    f.vscode.window.showQuickPick=async choices=>choices.find(c=>c.id==='2');
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const c=f.rows()[0].children[0].command.arguments[0], command=f.handlers.get('localLatex.inlineRelatedChanges');
+    await command(c);assert(f.calls.some(x=>x[0]==='showTextDocument'));
+    f.allCards['2'].source_match=false;const shown=f.calls.filter(x=>x[0]==='showTextDocument').length;
+    await command(c);assert(f.notices.some(x=>x.includes('无法精确定位')));assert.equal(f.calls.filter(x=>x[0]==='showTextDocument').length,shown);
+    f.allCards['2'].edit.versions=[];await command(c);assert(f.notices.some(x=>x.includes('已精简')));
+    f.allCards['2'].edit.versions=['v1'];f.allCards['2'].edit.status='pending';f.allCards['2'].source_match=true;
+    await command(c);assert.equal(f.ui.workbench.active.id,'2');
+});
+
 test('workbench source save reconciles before replacing the rendered snapshot', async () => {
     const f = hostFixture(); await f.ui.ready;
     f.data.block={id:'block-1',text:'First sentence.',source_revision:'r1'};
@@ -348,7 +364,9 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert(!scoped.includes('other item'), 'combined action must not export another item');
     assert(scoped.includes('"known_feedback":[{"id":"1","version":"v1","fingerprint":"first-receipt"}]'));
     assert(!scoped.includes('other-receipt'), 'reuse receipts must not claim unseen attachment content');
-    assert(scoped.includes('成功返修默认替换旧批注'));
+    assert(scoped.includes('外置状态默认保留旧批注'));
+    assert(scoped.includes('旧内嵌状态保持原有返修默认行为'));
+    assert(scoped.includes('discard_annotations 或 resolve_requests'));
     const sent = f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length;
     await assert.rejects(f.ui.addRequests({...c, version: 'outdated'}), /候选已更新/);
     assert.equal(f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length, sent);
