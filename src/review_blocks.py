@@ -31,6 +31,18 @@ def index(text):
     return blocks
 
 
+def index_target(text, block_id):
+    """Locate one complete block when an unrelated marker is damaged."""
+    lines = list(re.finditer(r'(?m)^% TS-BLOCK-(?:BEGIN|END)\b[^\r\n]*', text))
+    mentions = [line for line in lines if block_id in line.group()]
+    markers = [marker for marker in MARKER.finditer(text) if marker.group(2) == block_id]
+    if len(mentions) != 2 or len(markers) != 2 or markers[0].group(1) != 'BEGIN' or markers[1].group(1) != 'END':
+        raise ValueError('目标审核块标记缺失、重复或损坏：' + block_id)
+    start, end = markers[0].start(), markers[1].end()
+    row = index(text[start:end])[block_id]
+    return {**row, **{key:row[key] + start for key in ('start', 'end', 'marker_start', 'marker_end')}}
+
+
 def safe_boundaries(text):
     """Independent lines outside TeX groups, math and verbatim environments."""
     boundaries, depth, math, env, pos = set(), 0, None, [], 0

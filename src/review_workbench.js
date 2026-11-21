@@ -47,7 +47,7 @@ dialog{background:var(--vscode-editor-background);color:var(--vscode-editor-fore
 <dialog id="appearanceDialog" aria-labelledby="appearanceTitle"><form method="dialog"><div class="dialogHeading"><strong id="appearanceTitle">审核页外观</strong><button aria-label="关闭外观设置" class="secondary">关闭</button></div></form><div class="appearanceFields"><label>阅读字体<input id="style-fontFamily" data-style="fontFamily" placeholder="留空跟随 VS Code；如 Microsoft YaHei, sans-serif"></label><label>阅读字号<input type="number" id="style-candidateFontSize" data-style="candidateFontSize" min="10" max="32" step="1"></label><label>文字行高<input type="number" id="style-candidateLineHeight" data-style="candidateLineHeight" min="1" max="2.5" step="0.1"></label><label>按钮字号<input type="number" id="style-controlFontSize" data-style="controlFontSize" min="10" max="24" step="1"></label><label>中文字号<input type="number" id="style-translationFontSize" data-style="translationFontSize" min="10" max="32" step="1"></label><label>内容间距<select id="style-cardLayout" data-style="cardLayout"><option value="compact">紧凑</option><option value="comfortable">宽松</option></select></label></div><small>更改后即时生效并保存。仅影响审核页，不修改论文、PDF 字号或全局 SKILL。源码编辑保持等宽字体。</small><div><button data-action="resetAppearance" class="secondary">恢复默认外观</button><span id="appearanceStatus" role="status"></span></div></dialog>
 <dialog id="directoryDialog" aria-labelledby="directoryTitle"><form method="dialog"><div class="dialogHeading"><strong id="directoryTitle">跳转审核项</strong><button class="secondary">关闭</button></div></form><div class="directoryFilters"><input id="directoryQuery" aria-describedby="directoryHint" aria-label="搜索审核项" placeholder="编号、位置、文件、R1-Q3…"><select id="directoryKind" aria-label="筛选文档"><option value="">全部文档</option><option value="manuscript">正文</option><option value="response">回复信</option></select><label><input id="directoryNotes" type="checkbox">有待处理批注</label></div><button data-action="clearFilter" class="secondary">清除筛选</button><small>上一项、下一项及接收后跳转遵循此筛选。</small><small id="titleStatus" role="status"></small><small id="directoryHint" role="status" aria-live="polite"></small><div><button data-action="selectAll" class="secondary">当前范围全选</button><button data-action="clearSelection" class="secondary">取消全选</button><span id="selectedCount" role="status">已选 0 项</span><button data-action="acceptBatch" data-write>接收所选方案</button></div><div id="directoryResults"></div></dialog>
 <div id="layout"><main><div id="empty" hidden>当前没有可显示的审核项；可通过顶部编号目录清除筛选、选择其他项目，或用“Git 备份已接收修改”备份成果。</div><div id="review"><div class="reviewHeading"><h3 id="title"></h3><div class="optionActions"><button data-action="previousChange" class="secondary" title="定位当前可见内容中的上一处实际差异">上处差异</button><button data-action="nextChange" class="secondary" title="定位当前可见内容中的下一处实际差异">下处差异</button><label class="comparisonControl">对照 <select id="comparisonChoice" aria-label="审核页对照方式"><option value="original">原文对照</option></select></label></div></div><small id="rankingNotice" hidden></small><p id="comparisonNotice" class="scopeSummary" hidden></p>
-<p id="locationConflict" role="alert" hidden></p><button data-action="relocate" class="secondary">用源文件当前选区修复位置</button><button id="repairBlock" data-action="repairBlock" class="secondary" hidden>修复或重新关联审核块</button><button id="syncBlock" data-action="syncBlock" class="secondary" hidden>同步当前原文与候选</button><p id="intent" class="intent" hidden></p><details id="previousFeedback" open hidden><summary>上轮返修批注（只读对照）</summary><small>用来核对本版是否落实要求；不会自动成为本版待处理批注。</small><div id="previousNotes"></div></details><section><h4>原文</h4><div id="original" class="review-text" data-side="original"></div><div id="originalZh" class="zh"></div><div id="currentBlockPanel" hidden><label for="currentBlock">最新正文块（选择范围以人工更新候选）</label><textarea id="currentBlock" readonly spellcheck="false"></textarea><button data-action="manualRebase" class="secondary">用选区人工更新候选</button></div><p id="draftStale" role="alert" hidden></p><button id="resetSourceDraft" data-action="resetSourceDraft" class="secondary" hidden>放弃原文草稿并载入最新</button><details id="blockEditor" hidden><summary>编辑当前原文块</summary><small>保存将修改正式正文，不代表接收候选；之后需核对受影响批注。</small><textarea id="blockSource" spellcheck="false"></textarea><button data-action="saveSource">保存当前原文</button></details></section>
+<p id="locationConflict" role="alert" hidden></p><button data-action="relocate" class="secondary">用源文件当前选区修复位置</button><button id="repairBlock" data-action="repairBlock" class="secondary" hidden>修复或重新关联审核块</button><button id="syncBlock" data-action="syncBlock" class="secondary" hidden>重试自动同步</button><p id="intent" class="intent" hidden></p><details id="previousFeedback" open hidden><summary>上轮返修批注（只读对照）</summary><small>用来核对本版是否落实要求；不会自动成为本版待处理批注。</small><div id="previousNotes"></div></details><section><h4>原文</h4><details id="oldBaseline" hidden><summary>草稿原有基准</summary><pre id="oldBaselineText"></pre></details><div id="original" class="review-text" data-side="original"></div><div id="originalZh" class="zh"></div><div id="currentBlockPanel" hidden><label for="currentBlock">最新正文块（选择范围以人工更新候选）</label><textarea id="currentBlock" readonly spellcheck="false"></textarea><button data-action="manualRebase" class="secondary">用选区人工更新候选</button></div><p id="draftStale" role="alert" hidden></p><button id="resetSourceDraft" data-action="resetSourceDraft" class="secondary" hidden>放弃原文草稿并载入最新</button><details id="blockEditor" hidden><summary>编辑当前原文块</summary><small>保存将修改正式正文，不代表接收候选；之后需核对受影响批注。</small><textarea id="blockSource" spellcheck="false"></textarea><button data-action="saveSource">保存当前原文</button></details></section>
 <div id="translateStatus"></div>
 <section id="options"></section><div id="composerDock"></div><p id="fewer"></p><section><h4>关联原始审稿问题</h4><div id="questions"></div></section>
 <section><h4>返修批注</h4><button data-action="newNote" title="新增返修批注（Alt+N）" class="secondary">新增返修批注</button><button data-action="reject" data-write class="secondary">拒绝本项全部候选</button><div id="noteComposer" hidden><p id="noteMode">新增返修批注</p><div id="noteScopeControls"><label>范围 <select id="scopeChoice"><option value="group">本项全部方案（默认）</option><option value="original">完整原文</option></select></label><button data-action="whole" class="secondary">取消选区／整项批注</button></div><p id="scope">未划词时可以直接填写整项要求。</p><button id="useSelection" data-action="useSelection" class="secondary" hidden>改用新选区</button><textarea id="note" placeholder="填写返修要求"></textarea><button title="保存当前批注（Ctrl/Cmd+Enter）" id="saveNote" data-action="note" data-write>保存返修批注</button><button data-action="noteHandoff" data-write title="先保存，再把本项待处理批注加入 Codex 输入区；不自动发送">保存并加入 Codex</button><button data-action="cancelNote" class="secondary">取消</button></div><div id="notes"></div></section></div><small id="operationStatus" role="status" aria-live="polite"></small><p id="status" role="status" aria-live="polite"></p><button id="retryHandoff" data-action="retryHandoff" data-write hidden>重试本项交接</button></main></div>
@@ -149,7 +149,7 @@ function createWorkbench(vscode, context, services) {
             throw new Error('批注已保存，但加入 Codex 失败：' + error.message + '；可点“重试本项交接”，无需重复保存。');
         }
     }
-    function sendContent() {
+    function sendContent(translate = true) {
         if (!ready || !panel?.visible) return;
         post(packet()); post({type: 'backupStatus', ...services.backupStatus?.()}); post({type: 'configuration', ...configuration.status()});
         post({type: 'handoffRetry', available: !!handoffRetry && valid(handoffRetry)});
@@ -160,7 +160,7 @@ function createWorkbench(vscode, context, services) {
             const entry = translations.get(JSON.stringify([services.provider(), item.text]));
             if (entry) post({type: 'translation', key: item.key, source: item.text, provider: services.provider(), ...entry});
         }
-        autoTranslate();
+        if (translate) autoTranslate();
     }
     async function allowSwitch() {
         if (!dirty && !noteDirty) return true;
@@ -173,6 +173,7 @@ function createWorkbench(vscode, context, services) {
     async function savePendingInputs() {
         const state = uiState;
         if (!state) throw new Error('尚未收到当前草稿，请返回审核页后重试。');
+        if (state.candidateDraftStale) throw new Error('候选草稿基于旧原文；请先人工更新候选。');
         if (loaded.block && state.blockDraft !== undefined && state.blockDraft !== loaded.block.text.replace(/\r\n/g, '\n')) throw new Error('请先明确点击“保存当前原文”，再切换。');
         const ownLock = !handling;
         if (ownLock) {handling = 'saveSwitch'; post({type: 'busy', action: handling});}
@@ -235,7 +236,7 @@ function createWorkbench(vscode, context, services) {
         } else {panel.reveal(); sendContent();}
         await services.activeChanged?.(active);
     }
-    function sync(records, scope) {
+    function sync(records, scope, synchronized = new Set()) {
         if (!active || active.repo !== scope.repo || active.owner !== scope.owner) return;
         lastRecords = records;
         const next = records.get(active.id);
@@ -251,6 +252,16 @@ function createWorkbench(vscode, context, services) {
             if (locationChanged) post({type:'locationStatus', source_match:loaded.source_match, conflict:loaded.conflict, block:loaded.block});
             post({type: 'notes', requests: loaded.edit.requests || [], previous_feedback: loaded.edit.previous_feedback, questions: loaded.edit.questions || []});
             if (questionsChanged) autoTranslate();
+        } else if (synchronized.has(active.id)) {
+            const old = loaded;
+            active = {...next.c}; loaded = next.data;
+            if (dirty || noteDirty) {
+                uiState = {...uiState, c:active, oldOriginal:uiState?.oldOriginal || old.original,
+                    candidateDraftStale:!!Object.keys(uiState?.drafts || {}).length,
+                    sourceDraftStale:!!(uiState?.blockDraft !== undefined && old.block && uiState.blockDraft !== old.block.text.replace(/\r\n/g, '\n')),
+                    selectionStale:!!uiState?.selected};
+            } else uiState = readingState(uiState);
+            sourceSelection = undefined; notice = {type:'result', message:'已自动同步；未接收候选。'}; sendContent(false);
         } else if (dirty || noteDirty) {
             pending = next; hasPending = true;
             post({type: 'conflict', message: 'AI 已生成新版。未保存编辑仍保留；请保存到别处或放弃后载入最新。'});
@@ -416,6 +427,7 @@ function createWorkbench(vscode, context, services) {
                 const data = await services.read({...c, version: pending?.c.version || c.version});
                 active = {...c, version: data.version}; loaded = data; dirty = noteDirty = false; hasPending = false; uiState = readingState(uiState); sourceSelection = notice = undefined; sendContent();
             } else if (message.type === 'save' || message.type === 'saveAccept') {
+                if (uiState?.candidateDraftStale) throw new Error('候选草稿基于旧原文；请在最新正文块中选择范围并人工更新候选。');
                 const option = options(loaded).find(o => o.label === message.option);
                 if (!option || typeof message.value !== 'string') throw new Error('请选择现有候选方案。');
                 if (message.type === 'saveAccept' && (noteDirty || Object.entries(uiState?.drafts || {}).some(([label, value]) =>
@@ -444,6 +456,7 @@ function createWorkbench(vscode, context, services) {
                 if (message.handoff) return await handoffSavedNote(c);
             } else if (message.type === 'note') {
                 if (dirty) throw new Error('请先保存候选编辑，再绑定返修选区。');
+                if (uiState?.selectionStale && message.start !== undefined) throw new Error('批注选区已变化；请重新选择或明确改为整项批注。');
                 const option = options(loaded).find(o => o.label === message.option);
                 let selected;
                 if (['question', 'translation'].includes(message.side)) selected = annotationSelection(message);
@@ -467,15 +480,14 @@ function createWorkbench(vscode, context, services) {
                     throw new Error('请先保存候选草稿和批注，再保存原文。');
                 await services.saveSource(c, loaded.block, message.value);
                 loaded = await services.read(c); dirty = false; uiState = readingState(uiState); sendContent();
-                return post({type: 'result', message: '原文已保存；候选和批注保留，受影响项目需同步。'});
+                return post({type: 'result', message: '原文已保存；受影响的候选将自动协调。'});
             } else if (message.type === 'manualRebase') {
-                if (noteDirty) throw new Error('请先保存返修批注，候选和原文草稿会保留。');
                 if (!loaded.block || message.block_id !== loaded.block.id || message.source_revision !== loaded.block.source_revision)
                     throw new Error('显示的正文块已变化；请重新选择范围。');
                 const rebased = await services.manualRebase(c, loaded.block, message);
                 if (!rebased) return post({type:'result', message:'未更新候选，草稿已保留。'});
                 active = {...c, version:rebased.version}; loaded = rebased;
-                uiState = {...uiState, c:active, drafts:{}, candidateDraftStale:false};
+                uiState = {...uiState, c:active, drafts:{}, candidateDraftStale:false, selectionStale:!!uiState?.selected};
                 dirty = !!uiState.sourceDraftStale; sendContent();
                 return post({type:'result', message:'已人工更新候选基准；旧版本和批注保留，尚未接收。'});
             } else if (message.type === 'syncBlock') {

@@ -53,6 +53,27 @@ test('same-version refresh sends current block identity and revisions without re
     }
 });
 
+test('automatic version keeps candidate, source and note drafts on their old base', async () => {
+    let receive; const messages = [];
+    const c = {repo:'/fixture',owner:'.codex-review/state.json',id:'1',version:'v1'};
+    const data = {version:'v1',original:'Old.',source_match:true,block:{id:'b',text:'Old.\n',source_revision:'r1'},
+        edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate.',reason:'A',changes:[]}]};
+    const vscode = {Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{
+        cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services = {read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[]};
+    const view=createWorkbench(vscode,{subscriptions:[]},services); view.setRecords(new Map([['1',{c,data}]]));
+    await view.show(c); await receive({type:'ready',instance:'page'});
+    await receive({type:'dirty',instance:'page',id:'1',version:'v1',dirty:true,noteDirty:true,state:{drafts:{A:'Candidate draft'},blockDraft:'Source draft',note:'Note draft',selected:{value:'Old.'}}});
+    const next = {...data,version:'v2',original:'New.',block:{id:'b',text:'New.\n',source_revision:'r2'},edit:{...data.edit,versions:['v1','v2']}};
+    view.sync(new Map([['1',{c:{...c,version:'v2'},data:next}]]),c,new Set(['1']));
+    const packet = messages.filter(m=>m.type==='content').at(-1);
+    assert.equal(view.active.version,'v2'); assert.equal(packet.resume.oldOriginal,'Old.');
+    assert.equal(packet.resume.drafts.A,'Candidate draft'); assert.equal(packet.resume.blockDraft,'Source draft'); assert.equal(packet.resume.note,'Note draft');
+    assert(packet.resume.candidateDraftStale && packet.resume.sourceDraftStale && packet.resume.selectionStale);
+    await receive({type:'save',instance:'page',id:'1',version:'v2',option:'A',value:'Candidate draft'});
+    assert(messages.some(m=>m.error && m.message.includes('旧原文')));
+});
+
 test('manual rebase preserves block draft and rejects stale displayed revisions', async () => {
     let receive, called = 0; const messages = [];
     const c = {repo:'/fixture',owner:'.codex-review/state.json',id:'1',version:'v1'};

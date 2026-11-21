@@ -54,6 +54,19 @@ class NativeReview(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '安全'):
             prepare(unsafe, unsafe.index('inside'), unsafe.index('}\n', unsafe.index('inside')), 'paragraph')
 
+    def test_target_block_ignores_unrelated_damage_but_rejects_local_ambiguity(self):
+        from review_blocks import index_target, prepare
+        text = '\\begin{document}\nFirst paragraph.\n\nSecond paragraph.\n\\end{document}\n'
+        start = text.index('First paragraph.'); end = text.index('\n', start) + 1
+        marked, block = prepare(text, start, end, 'paragraph')
+        damaged = marked + '% TS-BLOCK-BEGIN broken\n'
+        row = index_target(damaged, block['id'])
+        self.assertEqual(damaged[row['start']:row['end']], 'First paragraph.\n')
+        with self.assertRaises(ValueError):
+            index_target(damaged[:row['end']] + '% TS-BLOCK-BEGIN broken\n' + damaged[row['end']:], block['id'])
+        with self.assertRaises(ValueError):
+            index_target(damaged + marked[row['marker_start']:row['marker_end']], block['id'])
+
     def test_question_container_allows_nested_blocks_but_not_crossing_boundaries(self):
         from review_blocks import index, prepare
         text = '\\begin{document}\nQuestion.\n\nFirst response.\n\nSecond response.\n\\end{document}\n'
@@ -536,6 +549,7 @@ class NativeReview(unittest.TestCase):
             'before': 'The model is strong and fast.', 'options': options, 'fewer_options_reason': 'Two alternatives'}); r.persist(updated, digest(r.raw))
         r = review(); old = r.state['edits'][item['id']]['versions'][-1]
         updated, _ = r.feedback({'id': item['id'], 'version': old, 'side': 'original', 'start': 0, 'end': 3, 'quote': 'The', 'text': 'Keep this note'}); r.persist(updated, digest(r.raw))
+        r = review(); updated, _ = r.feedback({'id': item['id'], 'version': old, 'side': 'original', 'start': 24, 'end': 28, 'quote': 'fast', 'text': 'Preserve this exact quote'}); r.persist(updated, digest(r.raw))
         file = self.root / 'main.tex'; file.write_bytes(file.read_bytes().replace(b'The model is strong', b'A model is strong'))
         r = review(); text = r.read('main.tex'); updated, sync = r.sync_block(item['id'], old, r.source_digest(text))
         self.assertTrue(sync['changed']); self.assertEqual(sync['options'][0]['after'], 'A model is reliable and fast.')
@@ -543,6 +557,7 @@ class NativeReview(unittest.TestCase):
         edit = r.state['edits'][item['id']]
         self.assertEqual(edit['versions'][0], old); self.assertEqual(edit['requests'][0]['version'], old)
         self.assertTrue(edit['requests'][0]['source_stale']); self.assertTrue(r.inspect(item['id'])['source_match'])
+        self.assertFalse(edit['requests'][1].get('source_stale', False))
         unchanged = r.raw; text = r.read('main.tex'); updated, result = r.sync_block(item['id'], edit['versions'][-1], r.source_digest(text))
         self.assertFalse(result['changed']); self.assertEqual(review().raw, unchanged)
         file.write_bytes(file.read_bytes().replace(b'strong', b'powerful'))
@@ -551,6 +566,45 @@ class NativeReview(unittest.TestCase):
             r.sync_block(item['id'], edit['versions'][-1], r.source_digest(text))
         self.assertEqual(review().raw, before)
         self.assertIn(b'powerful', file.read_bytes())
+
+    def test_saved_batch_keeps_conflicts_independent_and_checks_source_cas(self):
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file':'main.tex', 'kind':'paragraph', 'start':start, 'end':end,
+                                          'source_revision':r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        ids = []
+        for before, after in [('strong', 'reliable'), ('fast', 'quick')]:
+            r = review(); updated, item = r.propose({'file':'main.tex', 'kind':'manuscript', 'block_id':block['block_id'],
+                'before':before, 'after':after}); r.persist(updated, digest(r.raw)); ids.append(item['id'])
+        r = review(); version = r.state['edits'][ids[1]]['versions'][-1]
+        updated, _ = r.feedback({'id':ids[1], 'version':version, 'side':'original', 'start':0, 'end':4, 'quote':'fast', 'text':'Keep this note'}); r.persist(updated, digest(r.raw))
+        source = self.root / 'main.tex'; source.write_bytes(source.read_bytes().replace(b'strong', b'powerful') + b'% TS-BLOCK-BEGIN broken\n')
+        r = review(); revision = r.source_digest(r.read('main.tex')); before = r.raw
+        updated, result = r.sync_saved({'main.tex':revision})
+        self.assertEqual([x['id'] for x in result['conflicts']], [ids[0]])
+        self.assertEqual([x['id'] for x in result['items']], [ids[1]])
+        r.persist(updated, digest(r.raw)); r = review()
+        self.assertEqual(len(r.state['edits'][ids[0]]['versions']), 1)
+        self.assertEqual(len(r.state['edits'][ids[1]]['versions']), 2)
+        self.assertFalse(r.state['edits'][ids[1]]['requests'][0].get('source_stale', False))
+        self.assertNotEqual(before, r.raw)
+        updated, result = r.sync_saved({'main.tex':revision})
+        self.assertFalse(result['changed']); self.assertEqual(review().raw, r.raw)
+        source.write_bytes(source.read_bytes().replace(b'powerful', b'powerful again'))
+        with self.assertRaisesRegex(Conflict, '再次变化'):
+            review().sync_saved({'main.tex':revision})
+        r = review(); revision = r.source_digest(r.read('main.tex'))
+        updated, result = r.sync_saved({'main.tex':revision}); self.assertTrue(result['changed'])
+        state_before = r.raw; source.write_bytes(source.read_bytes().replace(b'powerful again', b'powerful latest'))
+        with self.assertRaisesRegex(Conflict, 'Concurrent source/state'):
+            r.persist(updated, digest(r.raw))
+        self.assertEqual(review().raw, state_before)
+        from unittest.mock import patch
+        r = review(); revision = r.source_digest(r.read('main.tex'))
+        with patch.object(r, 'sync_block', side_effect=Conflict('broken immutable object')):
+            with self.assertRaisesRegex(Conflict, 'broken immutable object'):
+                r.sync_saved({'main.tex':revision})
 
     def test_manual_rebase_uses_exact_current_selection_and_preserves_history(self):
         self.install_sidecar(dict(self.review().state, schema=3))
@@ -563,6 +617,8 @@ class NativeReview(unittest.TestCase):
                                    'options':options, 'fewer_options_reason':'Two options'})
         r.persist(changed, digest(r.raw)); r = review(); version = r.inspect(item['id'])['version']
         changed, _ = r.feedback({'id':item['id'], 'version':version, 'side':'original', 'start':0, 'end':3, 'quote':'The', 'text':'Keep this note'})
+        r.persist(changed, digest(r.raw)); r = review()
+        changed, _ = r.feedback({'id':item['id'], 'version':version, 'side':'original', 'start':13, 'end':19, 'quote':'strong', 'text':'Changed quote'})
         r.persist(changed, digest(r.raw)); file = self.root/'main.tex'
         file.write_bytes(file.read_bytes().replace(b'The model is strong', 'The model is powerful 🙂'.encode()))
         r = review(); card = r.inspect(item['id']); current = card['block']['text'].replace('\r\n','\n')
@@ -586,7 +642,8 @@ class NativeReview(unittest.TestCase):
         r = review()
         card = r.inspect(item['id']); self.assertEqual(card['original'],quote); self.assertTrue(card['source_match'])
         self.assertEqual([o['after'] for o in card['options']], ['Manual A.','Manual B.'])
-        self.assertEqual(card['edit']['versions'][0],version); self.assertTrue(card['edit']['requests'][0]['source_stale'])
+        self.assertEqual(card['edit']['versions'][0],version); self.assertFalse(card['edit']['requests'][0].get('source_stale',False))
+        self.assertTrue(card['edit']['requests'][1]['source_stale'])
         self.assertEqual(card['edit']['requests'][0]['text'],'Keep this note')
         with self.assertRaisesRegex(Conflict, '已变化'):
             r.manual_rebase(item['id'],version,spec)

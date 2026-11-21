@@ -29,6 +29,10 @@ class Conflict(ValueError):
     pass
 
 
+class SyncConflict(Conflict):
+    """An individual saved item needs author reconciliation."""
+
+
 class FieldConflict(Conflict):
     def __init__(self, field, message):
         super().__init__(message)
@@ -413,7 +417,7 @@ class Review:
             self.timings['locate_s'] += time.perf_counter() - started
 
     def block_row(self, text, file, block_id):
-        from review_blocks import index
+        from review_blocks import index, index_target
         def indexed(name, source):
             cached = self._block_indexes.get(name)
             if cached is None or cached[0] != source:
@@ -421,13 +425,21 @@ class Review:
                 self._block_indexes[name] = cached
             return cached[1]
         try:
-            row = indexed(file, text)[block_id]
+            try:
+                row = indexed(file, text)[block_id]
+            except ValueError:
+                row = index_target(text, block_id)
             for other in self.state['rounds'][-1]['files']:
                 if other == file:
                     continue
                 source = self.read(other)
-                if block_id in source and block_id in indexed(other, source):
-                    raise Conflict('审核块 ID 在多个文件中重复：' + block_id)
+                if block_id in source:
+                    try:
+                        duplicate = block_id in indexed(other, source)
+                    except ValueError:
+                        duplicate = any(block_id in line for line in source.splitlines() if line.startswith('% TS-BLOCK-'))
+                    if duplicate:
+                        raise Conflict('审核块 ID 在多个文件中重复：' + block_id)
             return row
         except Conflict:
             raise
@@ -450,7 +462,7 @@ class Review:
             old_block = self.contents(anchor['block_snapshot'], 'block.tex')
             current = text[row['start']:row['end']]
             if current != old_block:
-                raise Conflict('正文已修改，需同步批注：' + block_id)
+                raise Conflict('正文已修改；请核对重叠内容并人工调整：' + block_id)
             a, b = row['start'] + anchor['start'], row['start'] + anchor['end']
             if text[a:b] != self.live_excerpt(edit, item):
                 raise Conflict('审核块中的候选范围与原文不一致：' + block_id)
@@ -613,10 +625,13 @@ class Review:
         text = self.read(edit['file'])
         if self.source_digest(text) != source_revision:
             raise Conflict('正文已变化；请重新预览同步。')
-        row = self.block_row(text, edit['file'], edit['block_id'])
+        try:
+            row = self.block_row(text, edit['file'], edit['block_id'])
+        except Conflict as error:
+            raise SyncConflict(str(error)) from error
         anchor = edit['anchor']
         if anchor.get('conflict'):
-            raise Conflict(anchor['conflict'])
+            raise SyncConflict(anchor['conflict'])
         old_block = self.contents(anchor['block_snapshot'], 'block.tex')
         current = text[row['start']:row['end']]
         item = self.payload(edit)
@@ -624,7 +639,7 @@ class Review:
         try:
             result = reconcile(old_block, current, anchor['start'], anchor['end'], options)
         except ValueError as error:
-            raise Conflict(str(error)) from error
+            raise SyncConflict(str(error)) from error
         if result is None:
             return {}, {'id': id_, 'version': version, 'changed': False}
         start, end, before, options = result
@@ -635,12 +650,48 @@ class Review:
                                      'span.json': json.dumps(updated, ensure_ascii=False).encode('utf-8')}, 'synchronized review item ' + id_)
         edit['versions'].append(new_version)
         self.bind(edit, text, row['start'] + start, row['start'] + end)
-        for note in edit.get('requests', []):
-            if note.get('side') == 'original' and note.get('version') == version and before != item['before']:
-                note['source_stale'] = True
-        edit['status'] = 'rework'
+        self.mark_original_stale(edit, before, version, item['before'])
         return {}, {'id': id_, 'version': new_version, 'previous_version': version, 'changed': True,
                     'before': before, 'options': options, 'source_revision': source_revision}
+
+    def mark_original_stale(self, edit, before, previous_version, previous_before):
+        from review_blocks import changes
+        for note in edit.get('requests', []):
+            if note.get('side') != 'original':
+                continue
+            a, b = note['start'], note['end']
+            note_before = previous_before if note['version'] == previous_version else json.loads(self.contents(note['version'], 'span.json'))['before']
+            edits = changes(note_before, before)
+            if any((x < b and y > a) or (x == y and a < x < b) for x, y, _ in edits):
+                note['source_stale'] = True
+                continue
+            shift = sum(len(value) - (y - x) for x, y, value in edits if y <= a)
+            if before[a + shift:b + shift] != note['quote']:
+                note['source_stale'] = True
+
+    def sync_saved(self, sources):
+        """Reconcile pending items in saved files, retaining independent conflicts."""
+        self.assert_ready()
+        if not self.sidecar:
+            raise Conflict('自动同步需要固定块模式。')
+        if not isinstance(sources, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in sources.items()):
+            raise Conflict('自动同步需要文件及其已保存版本。')
+        for rel, revision in sources.items():
+            if self.source_digest(self.read(rel)) != revision:
+                raise Conflict('正文已再次变化；未保存自动同步结果。')
+        results, conflicts = [], []
+        for id_, edit in self.state['edits'].items():
+            if edit['status'] not in PENDING or edit.get('file') not in sources:
+                continue
+            original = copy.deepcopy(edit)
+            try:
+                _, result = self.sync_block(id_, edit['versions'][-1], sources[edit['file']])
+                if result['changed']:
+                    results.append(result)
+            except SyncConflict as error:
+                self.state['edits'][id_] = original
+                conflicts.append({'id': id_, 'message': str(error)})
+        return {}, {'changed': bool(results), 'items': results, 'conflicts': conflicts}
 
     def relocate(self, id_, version, spec):
         self.assert_ready()
@@ -1197,9 +1248,7 @@ class Review:
         if rework:
             edit["status"] = "rework"
             if manual_anchor is not None and original != old['before']:
-                for request in edit.get('requests', []):
-                    if request.get('side') == 'original':
-                        request['source_stale'] = True
+                self.mark_original_stale(edit, original, edit['versions'][-2], old['before'])
             if discard_annotations:
                 edit.pop('requests', None)
             resolved = spec.get("resolve_requests", [])
@@ -1843,6 +1892,7 @@ def main():
     p = sub.add_parser('sync-block', help='Preview or explicitly synchronize non-overlapping changes; JSON on stdin')
     p.add_argument('--id', required=True)
     p.add_argument('--version', required=True)
+    sub.add_parser('sync-saved', help='Reconcile pending fixed-block items against saved files; JSON on stdin')
     p = sub.add_parser('manual-rebase', help='Explicitly bind existing options to the author-selected current block range')
     p.add_argument('--id', required=True)
     p.add_argument('--version', required=True)
@@ -1945,6 +1995,8 @@ def dispatch(r, args):
             updated, result = r.save_block_source(args.id, args.version, json.loads(sys.stdin.read()))
         elif args.command == 'sync-block':
             updated, result = r.sync_block(args.id, args.version, json.loads(sys.stdin.read())['source_revision'])
+        elif args.command == 'sync-saved':
+            updated, result = r.sync_saved(json.loads(sys.stdin.read())['sources'])
         elif args.command == 'manual-rebase':
             updated, result = r.manual_rebase(args.id, args.version, json.loads(sys.stdin.read()))
         elif args.command == "migrate":
@@ -1994,7 +2046,7 @@ def dispatch(r, args):
             if args.option and len(args.accept) != 1:
                 raise Conflict('--option requires exactly one accepted ID')
             updated, result = r.decide(args.accept, args.reject, {ids[0]: args.version} if args.version else None, args.option)
-        if args.apply and not (args.command in ('save-block-source', 'sync-block', 'reassociate-block') and not result['changed']):
+        if args.apply and not (args.command in ('save-block-source', 'sync-block', 'sync-saved', 'reassociate-block') and not result['changed']):
             started = time.perf_counter()
             r.persist(updated, args.expect)
             result['timings'] = {'persistence_s': time.perf_counter() - started}

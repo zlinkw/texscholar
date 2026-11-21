@@ -16,7 +16,7 @@ let comparison = 'original', draftFrame;
 const math = globalThis.TeXScholarMath;
 const instance = crypto.randomUUID();
 let rendering = false, stateFrame, restoration, toolbarSize;
-let sourceDraftStale = false, candidateDraftStale = false;
+let sourceDraftStale = false, candidateDraftStale = false, oldOriginal;
 let selectedBlockRevision;
 $('currentBlock').addEventListener('pointerup', () => {selectedBlockRevision = data?.block?.source_revision;});
 $('currentBlock').addEventListener('keyup', () => {selectedBlockRevision = data?.block?.source_revision;});
@@ -78,7 +78,7 @@ function readingAnchor() {
     return node ? {id: node.id, top: node.getBoundingClientRect().top} : undefined;
 }
 function snapshot() {
-    return {c: {...current}, drafts: Object.fromEntries(drafts), blockDraft: data?.block || sourceDraftStale ? $('blockSource').value : undefined, sourceDraftStale, candidateDraftStale, note: $('note').value, selected, editingNote,
+    return {c: {...current}, drafts: Object.fromEntries(drafts), blockDraft: data?.block || sourceDraftStale ? $('blockSource').value : undefined, sourceDraftStale, candidateDraftStale, oldOriginal, note: $('note').value, selected, editingNote,
         composer: !$('noteComposer').hidden, scope: $('scopeChoice').value, selectionStale, sourceMode, chinese, focused, comparison,
         compare: $('compare').checked, scrollTop: restoration?.scrollTop ?? window.scrollY, anchor: restoration?.anchor ?? readingAnchor(), focus: document.activeElement?.id,
         editors: options.filter(o => !$('editor-' + o.label).hidden).map(o => o.label),
@@ -169,6 +169,8 @@ function draftWarning() {
     $('draftStale').hidden = !sourceDraftStale && !candidateDraftStale;
     $('draftStale').textContent = [sourceDraftStale && '原文草稿基于旧正文，已保留；请复制或放弃后载入最新。', candidateDraftStale && '候选草稿基于旧正文，已保留；请核对后人工更新。'].filter(Boolean).join(' ');
     $('resetSourceDraft').hidden = !sourceDraftStale || !data?.block;
+    $('oldBaseline').hidden = !oldOriginal || !candidateDraftStale && !sourceDraftStale && !$('note').value.trim();
+    $('oldBaselineText').textContent = oldOriginal || '';
 }
 function buttons() {
     $('note').readOnly = !!waiting;
@@ -786,7 +788,7 @@ window.addEventListener('message', ({data: message}) => {
         data.block = message.block; data.source_match = message.source_match; data.conflict = message.conflict;
         if (data.block && !sourceDraftStale) $('blockSource').value = data.block.text.replace(/\r\n/g, '\n');
         $('blockEditor').hidden = !data.block && !sourceDraftStale;
-        $('currentBlockPanel').hidden = !data.block || message.source_match !== false;
+        $('currentBlockPanel').hidden = !data.block || message.source_match !== false && !candidateDraftStale && !sourceDraftStale && !(oldOriginal && $('note').value.trim());
         $('currentBlock').value = data.block?.text.replace(/\r\n/g, '\n') || '';
         $('locationConflict').hidden = message.source_match !== false;
         $('locationConflict').textContent = message.source_match === false ? '正文或审核块需核对：' + message.conflict + '。候选和批注仍保留。' : '';
@@ -820,7 +822,7 @@ window.addEventListener('message', ({data: message}) => {
         current = message.c; data = message.data; options = message.options;
         const resume = message.resume;
         selectedBlockRevision = undefined;
-        sourceDraftStale = !!resume?.sourceDraftStale; candidateDraftStale = !!resume?.candidateDraftStale;
+        sourceDraftStale = !!resume?.sourceDraftStale; candidateDraftStale = !!resume?.candidateDraftStale; oldOriginal = resume?.oldOriginal;
         showRelatedReturn(message.relatedReturn);
         navigationFilter = message.navigationFilter;
         $('directoryQuery').value = navigationFilter.query; $('directoryKind').value = navigationFilter.kind; $('directoryNotes').checked = navigationFilter.notes;
@@ -839,7 +841,7 @@ window.addEventListener('message', ({data: message}) => {
         document.querySelector('[data-action="relocate"]').hidden = current.owner === '.codex-review/state.json';
         $('blockEditor').hidden = !data.block && !sourceDraftStale;
         $('blockSource').value = resume?.blockDraft ?? data.block?.text.replace(/\r\n/g, '\n') ?? '';
-        $('currentBlockPanel').hidden = !data.block || data.source_match !== false;
+        $('currentBlockPanel').hidden = !data.block || data.source_match !== false && !candidateDraftStale && !sourceDraftStale && !(oldOriginal && resume?.note?.trim());
         $('currentBlock').value = data.block?.text.replace(/\r\n/g, '\n') || '';
         draftWarning();
         renderDirectory(message.directory);

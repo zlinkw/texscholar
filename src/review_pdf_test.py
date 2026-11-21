@@ -310,6 +310,24 @@ class ReviewPDF(unittest.TestCase):
     apply = NativeReview.apply
     proposal = NativeReview.proposal
 
+    def test_fixed_block_preview_uses_automatically_synchronized_source(self):
+        from source_review import Review, digest
+        NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        changed, block = r.prepare_block({'file':'main.tex','kind':'paragraph','start':start,'end':end,'source_revision':r.source_digest(text)})
+        r.persist(changed,digest(r.raw)); r = review()
+        changed, item = r.propose({'file':'main.tex','kind':'manuscript','block_id':block['block_id'],
+                                  'before':'The model is strong and fast.','after':'The model is reliable and fast.'})
+        r.persist(changed,digest(r.raw)); file = self.root / 'main.tex'
+        file.write_bytes(file.read_bytes().replace(b'The model is strong',b'A model is strong'))
+        source = file.read_bytes(); r = review(); changed, result = r.sync_saved({'main.tex':r.source_digest(r.read('main.tex'))})
+        r.persist(changed,digest(r.raw)); version = result['items'][0]['version']
+        rendered = preview(self.root,'.codex-review/state.json',file,item['id'],version,'missing-git',
+                           str(BIN / ('latexdiff' + EXE)),str(BIN / ('latexmk' + EXE)))
+        self.assertEqual(rendered['shown_ids'],[item['id']]); self.assertEqual(file.read_bytes(),source)
+        self.assertIn('reliable', ' '.join(page.extract_text() for page in PdfReader(rendered['pdf']).pages))
+
     def test_formal_source_compiles_with_incomplete_migration_state(self):
         state = self.root / '.codex-review' / 'state.json'
         state.write_bytes(b'{"schema":3,"transaction":')

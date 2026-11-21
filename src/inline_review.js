@@ -129,6 +129,8 @@ function createInlineReview(vscode, context, execute = run) {
     let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
     let watchedScope, watcher, stateWatcher, autoRefresh, renderedOwnerHash, refreshChain = Promise.resolve();
     const changedFiles = new Set(), reviewFiles = new Set(), deferredFiles = new Set();
+    const synchronizedVersions = new Map();
+    const synchronizationConflicts = new Map();
     const shownPanels = new Set(), openedPDFs = new Set(), pdfMetadata = new Map();
     const pdfRequests = new Map();
     const pdfGenerations = new Map();
@@ -332,6 +334,10 @@ function createInlineReview(vscode, context, execute = run) {
         if (scope.owner && (!activeScope || explicit)) {
             activeScope = {repo: scope.repo, owner: scope.owner};
             await refresh(activeScope, explicit);
+            if (scope.owner === '.codex-review/state.json') {
+                for (const file of reviewFiles) changedFiles.add(file);
+                await flushRefresh(true);
+            }
             // Track external state-file changes without showing/moving its editor.
             await vscode.workspace.openTextDocument(uri(scope, scope.owner));
         } else await showPanel(scope.repo, explicit);
@@ -360,17 +366,61 @@ function createInlineReview(vscode, context, execute = run) {
         }
         return false;
     }
-    function flushRefresh() {
+    async function synchronizeSaved(c, files) {
+        if (c.owner !== '.codex-review/state.json') return;
+        const state = await backend(c, ['cards']);
+        const sources = {};
+        for (const [rel, text] of Object.entries(state.sources)) {
+            const file = path.join(c.repo, rel);
+            if (!files.some(p => sameFile(p, file))) continue;
+            const doc = vscode.workspace.textDocuments.find(d => d.uri.scheme === 'file' && sameFile(d.uri.fsPath, file));
+            if (doc && (doc.isDirty || doc.getText() !== text)) continue;
+            sources[rel] = crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+        }
+        if (!Object.keys(sources).length) return;
+        const owner = vscode.workspace.textDocuments.find(d => d.uri.scheme === 'file' && sameFile(d.uri.fsPath, path.join(c.repo, c.owner)));
+        if (owner?.isDirty) return {sources:{}, deferred:Object.keys(sources)};
+        const result = await backend(c, ['sync-saved'], {sources}, state.sha256);
+        if (result.changed) for (const item of result.items) synchronizedVersions.set(item.id, item.version);
+        for (const item of result.conflicts) synchronizationConflicts.set(item.id, item.message);
+        return {sources, deferred:[]};
+    }
+    function flushRefresh(force = false) {
         if (busy || autoRefresh || !changedFiles.size) return autoRefresh || Promise.resolve();
         autoRefresh = (async () => {
+            const processed = new Map();
             while (changedFiles.size && !busy) {
                 const files = [...changedFiles]; changedFiles.clear();
                 try {
-                    if (await changedSinceRender(files)) await refresh(watchedScope);
+                    if (files.some(file => sameFile(file, path.join(watchedScope.repo, watchedScope.owner))))
+                        for (const file of deferredFiles) if (!files.some(p => sameFile(p, file))) files.push(file);
+                    let changed = force || await changedSinceRender(files);
+                    if (!changed) for (const file of files) {
+                        const previous = processed.get(file);
+                        if (previous === undefined) continue;
+                        const text = (await fs.readFile(file, 'utf8')).replace(/^\uFEFF/, '');
+                        if (crypto.createHash('sha256').update(text, 'utf8').digest('hex') !== previous) {changed = true; break;}
+                    }
+                    if (busy) {for (const file of files) changedFiles.add(file); break;}
+                    if (changed) {
+                        force = false;
+                        busy = true;
+                        try {
+                            const {sources = {}, deferred = []} = await synchronizeSaved(watchedScope, files) || {};
+                            for (const [rel, revision] of Object.entries(sources || {})) processed.set(path.join(watchedScope.repo, rel), revision);
+                            await refresh(watchedScope, false, true);
+                            for (const rel of deferred) deferredFiles.add(path.join(watchedScope.repo, rel));
+                            for (const [rel, revision] of Object.entries(sources || {})) {
+                                const file = path.join(watchedScope.repo, rel);
+                                const record = [...records.values()].find(r => sameFile(file, path.join(r.c.repo, r.data.edit.file)));
+                                if (record && crypto.createHash('sha256').update(record.data.source.text, 'utf8').digest('hex') !== revision) deferredFiles.add(file);
+                            }
+                        }
+                        finally {busy = false; synchronizationConflicts.clear();}
+                    }
                 } catch (error) {
-                    // A queued file event already supplies a newer read target.
-                    // Drain that event instead of reporting a superseded packet.
-                    if (!changedFiles.size) throw error;
+                    const superseded = changedFiles.size && /审核卡片读取期间原文发生变化|正文已再次变化|Concurrent source\/state modification|Stale\/missing --expect/.test(error.message);
+                    if (!superseded) vscode.window.showErrorMessage('自动同步未完成：' + error.message);
                 }
             }
         })().catch(error => vscode.window.showErrorMessage(error.message)).finally(() => {
@@ -382,6 +432,7 @@ function createInlineReview(vscode, context, execute = run) {
     function watchScope(c) {
         if (watchedScope && sameFile(watchedScope.repo, c.repo) && watchedScope.owner === c.owner) return;
         watcher?.dispose(); stateWatcher?.dispose(); changedFiles.clear(); reviewFiles.clear(); deferredFiles.clear(); renderedOwnerHash = undefined; ownerAfterWrite = undefined;
+        synchronizedVersions.clear();
         watchedScope = {repo: c.repo, owner: c.owner};
         watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(c.repo, '**/*.tex'));
         const changed = resource => requestRefresh(resource.fsPath);
@@ -391,13 +442,13 @@ function createInlineReview(vscode, context, execute = run) {
             context.subscriptions.push(stateWatcher, stateWatcher.onDidChange(changed), stateWatcher.onDidCreate(changed), stateWatcher.onDidDelete(changed));
         }
     }
-    function refresh(c, explicitPanel = false) {
-        const task = refreshChain.then(() => renderRefresh(c, explicitPanel));
+    function refresh(c, explicitPanel = false, automatic = false) {
+        const task = refreshChain.then(() => renderRefresh(c, explicitPanel, automatic));
         // Recover the sequencing tail only; the caller still receives failures.
         refreshChain = task.catch(() => {});
         return task;
     }
-    async function renderRefresh(c, explicitPanel = false) {
+    async function renderRefresh(c, explicitPanel = false, automatic = false) {
         const started = performance.now();
         watchScope(c);
         const state = await backend(c, ['cards']);
@@ -431,6 +482,7 @@ function createInlineReview(vscode, context, execute = run) {
         for (const [id, data] of Object.entries(state.cards)) {
             if (records.has(id)) continue;
             const edit = data.edit;
+            if (!data.source_match && synchronizationConflicts.has(id)) data.conflict = synchronizationConflicts.get(id);
             if (!OPEN.has(edit.status)) continue;
             const selected = {...c, id, version: edit.versions.at(-1)};
             if (!data.source_match) {
@@ -458,8 +510,11 @@ function createInlineReview(vscode, context, execute = run) {
         });
         if (presentationChanged) for (const record of records.values()) workbenchPDFStatus.delete(choiceKey(record.c));
         renderedOwnerHash = state.sha256;
-        workbench.sync(new Map(records), c);
-        translateTitles(c, state);
+        const synchronizedIds = new Set([...synchronizedVersions].filter(([id, version]) => records.get(id)?.c.version === version).map(([id]) => id));
+        workbench.sync(new Map(records), c, synchronizedIds);
+        for (const id of synchronizedIds) synchronizedVersions.delete(id);
+        for (const [id, version] of synchronizedVersions) if (state.edits[id]?.versions.at(-1) !== version) synchronizedVersions.delete(id);
+        if (!automatic) translateTitles(c, state);
         decorate();
         await setContext();
         await showPanel(c.repo, explicitPanel);

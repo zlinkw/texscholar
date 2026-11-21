@@ -34,7 +34,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     fs.writeFileSync(file, value, 'utf8');
     if (state) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n% CODEX-REVIEW-STATE-END', 'utf8');
     const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [], reveals = [];
-    let receive, panels = 0, provider, fileChanged, configurationChanged, selectionHandler, sourceValue, cardsHook, pdfHook, migrationHook, manualHook;
+    let receive, panels = 0, provider, fileChanged, texChanged, saveHandler, configurationChanged, selectionHandler, sourceValue, cardsHook, pdfHook, migrationHook, manualHook, syncHook;
     const original = value, edit = {file: path.basename(file), kind: 'manuscript', deferred: true, status: 'pending', versions: ['v1'], requests: [], questions: []};
     const start = Array.from(original.slice(0, original.indexOf('First'))).length;
     const data = {version: 'v1', edit, original: 'First sentence.', candidate: 'Better sentence.', options: [
@@ -69,9 +69,9 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
             getWorkspaceFolder: () => ({uri: uri(root)}),
             findFiles: async () => tex ? [uri(file), ...(state ? [uri(owner)] : [])] : [],
             getConfiguration: () => ({get: (key, fallback) => key === 'translation.autoTranslate' ? false : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback}),
-            openTextDocument: async () => document, onDidChangeTextDocument: disposable, onDidSaveTextDocument: disposable,
+            openTextDocument: async () => document, onDidChangeTextDocument: disposable, onDidSaveTextDocument: f => {saveHandler = f; return disposable();},
             onDidChangeConfiguration: f => {configurationChanged = f; return disposable();},
-            createFileSystemWatcher: () => ({dispose() {}, onDidChange: f => {fileChanged = f; return disposable();}, onDidCreate: disposable, onDidDelete: disposable})},
+            createFileSystemWatcher: () => ({dispose() {}, onDidChange: f => {if (!texChanged) texChanged = f; fileChanged = f; return disposable();}, onDidCreate: disposable, onDidDelete: disposable})},
         commands: {registerCommand: (id, handler) => {handlers.set(id, handler); return disposable();}, getCommands: async () => ['chatgpt.addFileToThread', 'workbench.action.moveEditorToNewWindow'],
             async executeCommand(...args) {calls.push(args); if (args[0] === 'vscode.openWith') {
                 const tab = {input: {uri: args[1]}, group: pdfGroup}; pdfGroup.tabs.push(tab); pdfGroup.activeTab = tab;
@@ -82,6 +82,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         backendCalls.push({args, input});
         if (args.includes('migrate-state') || args.includes('recover-migration')) return JSON.stringify(await migrationHook(args,input));
         if (args.includes('manual-rebase')) return JSON.stringify(await manualHook(args,input));
+        if (args.includes('sync-saved')) return JSON.stringify(await syncHook(args,input));
         if (args.some(x => String(x).endsWith('document_roles.py'))) return JSON.stringify({status: 'unconfirmed'});
         if (args.includes('cards')) {
             const snapshot = JSON.stringify({session: 'batch', sha256: 'fresh', edits: Object.fromEntries(Object.entries(allCards).map(([id, item]) => [id, item.edit])),
@@ -110,11 +111,70 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     };
     const ui = createInlineReview(vscode, {subscriptions: []}, backend);
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
-        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;},
+        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;}, set syncHook(fn) {syncHook = fn;},
         rows: () => provider.getChildren(), receive: m => receive(m),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
-        changed: () => fileChanged(uri(owner)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
+        changed: () => fileChanged(uri(owner)), saved: () => saveHandler(document), savedDocument: doc => saveHandler(doc), texChanged: () => texChanged(uri(file)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
 }
+
+test('saved fixed-block sources synchronize once while dirty buffers wait', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    await f.ui.refresh({repo:f.root, owner:'.codex-review/state.json'});
+    let count = 0;
+    f.syncHook = async (_, input) => {count++; assert.deepEqual(Object.keys(input.sources), ['paper.tex']); return {changed:false, items:[], conflicts:[]};};
+    f.value = f.original + ' Saved.'; fs.writeFileSync(f.file, f.value, 'utf8');
+    await Promise.all([f.saved(), f.texChanged()]);
+    assert.equal(count, 1);
+    await f.texChanged(); assert.equal(count, 1);
+    f.document.isDirty = true; f.value += ' Unsaved.';
+    await f.texChanged(); assert.equal(count, 1);
+    f.document.isDirty = false; fs.writeFileSync(f.file, f.value, 'utf8');
+    await f.saved(); assert.equal(count, 2);
+});
+
+test('saved source waits for a dirty sidecar and resumes on its save event', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    const owner = path.join(f.root,'.codex-review','state.json'); fs.mkdirSync(path.dirname(owner)); fs.writeFileSync(owner,'state','utf8');
+    const stateDoc = {uri:{scheme:'file',fsPath:owner},isDirty:true,getText:()=> 'state'};
+    f.vscode.workspace.textDocuments.push(stateDoc);
+    await f.ui.refresh({repo:f.root, owner:'.codex-review/state.json'});
+    let count = 0; f.syncHook = async () => {count++; return {changed:false,items:[],conflicts:[]};};
+    f.value = f.original + ' Saved.'; fs.writeFileSync(f.file,f.value,'utf8');
+    await f.saved(); assert.equal(count,0);
+    stateDoc.isDirty = false; await f.savedDocument(stateDoc); assert.equal(count,1);
+});
+
+test('a second saved source during reconciliation is handled after the first', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    await f.ui.refresh({repo:f.root, owner:'.codex-review/state.json'});
+    let release, started; const ready = new Promise(resolve => {started = resolve;}); const inputs = [];
+    f.syncHook = async (_, input) => {
+        inputs.push(input.sources['paper.tex']);
+        if (inputs.length === 1) {started(); await new Promise(resolve => {release = resolve;});}
+        return {changed:false, items:[], conflicts:[]};
+    };
+    f.value = f.original + ' First.'; fs.writeFileSync(f.file, f.value, 'utf8');
+    const first = f.saved(); await ready;
+    f.value = f.original + ' Second.'; fs.writeFileSync(f.file, f.value, 'utf8');
+    const second = f.saved(); release(); await Promise.all([first, second]);
+    assert.equal(inputs.length, 2); assert.notEqual(inputs[0], inputs[1]);
+});
+
+test('a delayed save event still reconciles a source rendered during earlier work', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    await f.ui.refresh({repo:f.root, owner:'.codex-review/state.json'});
+    let release, started; const ready = new Promise(resolve => {started = resolve;}); const inputs = [];
+    f.syncHook = async (_, input) => {
+        inputs.push(input.sources['paper.tex']);
+        if (inputs.length === 1) {started(); await new Promise(resolve => {release = resolve;});}
+        return {changed:false, items:[], conflicts:[]};
+    };
+    f.value = f.original + ' First.'; fs.writeFileSync(f.file, f.value, 'utf8');
+    const first = f.saved(); await ready;
+    f.value = f.original + ' Second.'; fs.writeFileSync(f.file, f.value, 'utf8');
+    release(); await first; assert.equal(inputs.length, 1);
+    await f.saved(); assert.equal(inputs.length, 2); assert.notEqual(inputs[0], inputs[1]);
+});
 
 test('manual rebase previews exact current selection and applies only after confirmation', async () => {
     const f=hostFixture(); await f.ui.ready;
