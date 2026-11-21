@@ -41,3 +41,5 @@ R1 根因：候选锚点位于固定块起点 0，作者在块内起点插入不
 M6 实核 `e53e639` 与远端 master 相同，本地及远端无 `v0.9.53` 标签，GitHub 未找到该版本 Release，目标输出目录不存在；版本提升为 0.9.53。真实论文只读，未进行清理或自动重载。
 
 版本相关 MCP 2 项及发行工具 12 项均退出 0，日志 `m6-version-check.log`、`m6-release-check.log`。一次打包 `C:/Python314/python.exe -B -X utf8 scripts/build.py --output dist/v0.9.53` 退出 0，`m6-package.log`：VSIX SHA256 `19eccc8877662c1af12e0d4658e6d7ab2e7f9e150a8d54065b3e33a10da98c6b`，源码包 SHA256 `c0037c9eaa5787700fe07ed769d56ed7cbd5f1820e036cf1193f4df0a166af40`。发布和安装将复用同一产物。
+
+版本源码提交 `03f6cb2945e9468524d30a61503a16d10577a395` 普通推送后 fetch 一致；附注标签 `v0.9.53` 指向该提交并含双包摘要，已普通推送。`publish_release.py` 退出 0，正式 [Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.53) 的三个附件摘要与本地产物一致，日志 `m6-publish.log`。`code.cmd --install-extension dist/v0.9.53/texscholar-0.9.53.vsix --force` 退出 0，日志 `m6-install.log` 有 Node `url.parse` 弃用警告。未做包后冒烟或重载真实 VS Code/MCP；未运行含清理备份后段、独立 PDF/translation 全组及 Mac 实机。
