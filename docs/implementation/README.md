@@ -1,6 +1,6 @@
 # TeXScholar 实施索引
 
-活动计划：[接收合并提速与核心流程修复](accept-merge/plan.md)。依据独立 Sol 自查报告实施，单项接收至下一项可操作争取 1 秒；真实论文只读保护。
+活动计划：[接收合并提速与核心流程修复](accept-merge/plan.md)。M5通过，最终隔离页面后台场景459/556/494ms；M6待发布安装。依据独立Sol报告实施，真实论文只读保护。
 
 已完成计划：[保存与定时自动 Git 备份](auto-git-backup/plan.md)。0.9.52 已发布并安装；验收、发行及未测范围见该目录的 [execution.md](auto-git-backup/execution.md)。
 
