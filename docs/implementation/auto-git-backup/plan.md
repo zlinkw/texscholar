@@ -45,3 +45,9 @@ G1–G3 已由 Terra 实现、小验收并提交推送 359fde041cdbf0dc2f2a95d99
 G4 R1 未通过：新 saved_done 已确认远端成功，但后端 status/backup_packet 仍返回旧投影失败或过滤无 session 的新备份日志，导致 AI 读取过时备份状态。原始证据 D:/latex-writing-checks/auto-git-backup-20261121/controller-g4/status-after-save-first.json、save-observation-first.json 及该隔离项目 ledger。已明确工具返修原 Terra：新备份持久状态与 backend/MCP/cards 消费者协调，旧历史/字段语义保留，不改审核决定，不清历史装恢复。总控隔离 UI 已关闭，无在途检查，租约已交还 Terra。有效保存/暂存保护证据复用，修复后仅补状态链路和重开验证，G5 仍须最终通过。
 
 控制器准备阶段的扩展依赖和 CRLF 边界错误，以及仅等 done 而遗漏队列末尾 idle 的观察器缺陷，均如实保留，未冒充产品失败/通过；CLI 返回 0 也未覆盖控制器实际失败。新方案明确取代 0.9.51 手改需人工备份的限制，历史失败记录不改写。
+
+R1 已提交推送 7e09e4c6e36d4f901bea18fc71f0a52810dd5e4f。总控核实际 diff、小验收日志和字段契约后，在原隔离样例仅补验修复影响：实际 VS Code 重开、启动无变化不提交/fetch/push，source_review.status 与真实 MCP Server.read_context 均报告 idle/已保存源码无变化，并以 saved_backup_done 正确保留远端提交 5b3db6；旧 auto_backup_done 仍为空，不混淆旧源码快照字段。旧失败原文仍在 ledger，原始审核 state 与保存后观察逐字相同，正式正文仅为作者预定手改，延期批注、定位冲突和范围外部分暂存均保全。真实 webview DOM 显示回复 a 的定位冲突、延期批注及“已保存源码无变化”，没有备份弹窗；不是鼠标接收或真实 GitHub 论文上传。
+
+最终补验原证据同 controller-g4：phase-2-result.json、phase-2-process.json、reopened.json、ui-observed-2.json、mcp-after-reopen.json；控制器进程/CLI 均退出 0。原保存与实际本地远端 Git 证据复用，未重跑定时器/全组；GitHub 元数据及地址仍由隔离 fixture 替代。另一次辅助断言误把 accepted 纯源码快照与含固定标记正文直接比较，确认差异只有已建立的标记后，按既有 MARKER 语义比较正式正文通过，未改产品或现场求绿。
+
+总控明确 G4 通过，允许原 Terra 继续 G5。尚未发布安装，不提前标整份完成；Terra 可在交付后的文档收尾精确更新 G1–G5 勾选及本节实际回执，所有历史失败/未测范围保留。

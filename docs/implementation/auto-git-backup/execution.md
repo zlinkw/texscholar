@@ -29,3 +29,9 @@
 - `r1-backend-consumers.log`：定向执行 `native_review_test.NativeReview` 的 `test_sidecar_backup_preserves_source_conflicts_and_backup_journal`、`test_sidecar_checkpoint_preserves_all_rounds_versions_and_notes`、`test_preparing_block_alone_is_not_a_source_checkpoint` 及 `source_review_test.Flow` 的 `test_edit_feedback`、`test_state_only_saves_are_atomic_without_interrupted_intent`，5 项退出 0。无删除回归。
 - `r1-inline-metadata-final.log`：`node --test --test-concurrency=1 src/inline_review.test.js`，29 项退出 0。原 G1–G3 的 editor 133 项有效覆盖未因本轮状态字段补齐而机械重跑；backup 全组清理后段及独立 PDF、translation 组仍未运行。
 - `r1-metadata-serialization.log`：模式 `acceptance during a background|a save arriving during local backup|a failed queued commit|saved backup restores a pending legacy`，4 项退出 0。状态写入与同一项目的本地备份元数据串行，覆盖保存发生在本地提交期间、旧任务恢复及 hook 失败原因的持久化，不新增自动重试。
+
+## G5：版本与交付
+
+总控已明确通过 G4 并移交交付租约，最终补验证据与限制见 plan.md。确认本地及远端无 v0.9.52 标签，GitHub 未找到该版本 Release；版本改为 0.9.52。版本相关 MCP 2 项和发行工具 12 项通过、均退出 0，日志 `g5-version-check.log`、`g5-release-check.log`；发行工具中模拟 EOF 的测试按设计重试读取并通过。
+
+仅一次本地打包 `python -B -X utf8 scripts/build.py --output dist/v0.9.52`，退出 0，日志 `g5-package.log`。VSIX SHA256 `e8430551c62aff17d90300f192a0573536d3ebd58f677e958688f82cabde9db0`；源码包 SHA256 `8bc0e08dc83a66ad321bc532c18db90c3f20fe09f74afb7a55362fc33cde6c7c`。后续发布与安装复用这两份产物；尚待提交、正式发行及安装。
