@@ -47,7 +47,7 @@ F1最小回归：关闭页A→B空→C空；另一项目页活跃；快连续B/C
 - [x] D3 Terra：明确批量前置检查归属，最小合并重复进程或读取，保持完整事务与动态依据；补必要正确性回归和同形前后阶段计时。
 - [x] D4 Terra：最终受影响分组、必要消费者/小验收，审本次diff新增判断/抽象/依赖均有实际用途；冻结交完整包及测试/UI租约。不要提前替总控做相同完整D5混合验收。
 - [x] D5 总控：首轮新30项混合验收加R1后新六项定向补验组合通过。真实三稿恢复并逐组件保存、无页连续空批及项目切换窗口、重启与旧回调衔接、部分混合方案批量接收/下一项/延期批注与counter/范围外暂存、真实后台及草稿消费者均有有效证据。首次失败保留，未受影响有效范围复用。
-- [ ] D6 Terra：实际版本/tag唯一核对，必要版本/MCP和发行工具检查，一次打包、精确源码提交/普通push/fetch、附注tag双包摘要、正式Release/API附件核对和同一VSIX安装；维护execution/plan/index收尾普通推送，完整交包供总控核元数据。禁止包后冒烟/自动reload/真实论文操作。
+- [x] D6 Terra：实际版本/tag唯一核对，必要版本/MCP和发行工具检查，一次打包、精确源码提交/普通push/fetch、附注tag双包摘要、正式Release/API附件核对和同一VSIX安装均完成；总控已核元数据。未做包后冒烟、自动reload或真实论文操作。
 
 每个内聚验证批通过后审diff，只stage本任务源码/测试/文档（本计划/index获准纳入），普通commit/push origin/master/fetch核相等，不夹无关暂存、运行产物或秘密。远端推进、保护或凭据失败按原规则停止相关交付报告，不reset/rebase/merge/force、换remote或分支。字段/文件较多按内聚接口分批，不以最小修改留下缺失消费者。
 
@@ -75,6 +75,16 @@ R1冻结代码`a77dde60d64542ea8715769b97f3298f46647645`已审实际diff和65项
 
 D5按现有有效覆盖与本轮定向补验明确通过，可进入D6。未测cleanup后段、独立PDF/translation全组、冷启动/复杂真实论文/实网论文上传、Mac/强杀/真实五分钟及AI自然语言质量对照，不补机械全组或包后冒烟；不承诺每次一秒或收益百分比。真实论文、全局配置及已安装扩展未操作；本轮无文件删除，所有自有进程已结束，CIM精确检查无controller-r1-final在途。
 
+## D6交付及最终核实
+
+0.9.56正式发布并安装。版本/MCP两项和发行工具12项检查均exit0，构建一次exit0；版本源码提交`845eb629bd2de8d709e64c8b3411197b341b25b5`仅有必要package版本变化及已批准文档，产品逻辑维持D5冻结候选。远端附注tag `v0.9.56`对象`9580dab9c9d26a2ac0e52d428c4f82ab4c4375d0`解引用同一源码提交，注释含双包SHA256。Terra执行尾提交`f438706437f4ad324dc489468ec21f74f9d43f9b`普通push/fetch后HEAD==origin/master且clean。
+
+总控再次fetch并核远端tag，用真实GitHub Release API独立核正式、非draft/非prerelease状态及三个uploaded附件digest，与本地最终产物SHA256逐一一致：VSIX `567cac5633d472cf9116a460ee343eb11fbca6176d3733881d3d7afa6841c3ec`，源码包 `61ea8cfa400766ec2a3f018ee0c5568095abf71d5bfcf455a36942f71b65b744`，SHA256SUMS `0a13162493fd4a0d24cd3141e7e1bc51bca8f8045e7532bc93cef49c7fd37384`。正式[Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.56)。最终VSIX路径`D:/GitRepo/texscholar/dist/v0.9.56/texscholar-0.9.56.vsix`。
+
+真实VSCode CLI安装同一VSIX exit0、安装成功，Node DEP0169弃用警告原样保留；总控又直接读取当前extensions.json和安装manifest，核local-research.latex-writing-tools版本0.9.56、source=vsix、pinned=true。总控metadata脚本exit0，原API、argv/cwd/退出、摘要与登记结论在`d6-controller-api.*`及`d6-controller-meta.json`；未重新构建、打开归档验收、跑包后冒烟或重载。用户需自行重载对应VSCode窗口并重启MCP客户端连接才启用新版本。
+
+全计划已完成。真实论文、未保存草稿、作者既有批注及范围外暂存受保护；无文件删除。初始D5/R1真实失败、不利计时及未测范围继续保留，不声称冷启动或所有机器稳定一秒。源码、正式发行、同包安装及最终记录按各自实际回执核实，结案文档的最终Git身份以普通commit/push/fetch回执为准。
+
 ## 当前归属
 
-现任总控为 `local/01a1fe7c-cc49-70d0-ac4c-af5e77c7b6ba`，旧总控自然达到caveman门槛后完成交班；新总控实际resolved/observed为gpt-6.1-sol/high/default、match/continue，旧turn结束并已归档。R1冻结产品代码 `a77dde60d64542ea8715769b97f3298f46647645` 的D5已明确通过，总控测试/UI无在途，产品继续冻结；下一动作按真实消息向原Terra交D6版本核对、必要检查、正式发布和同包安装。总控只维护plan/index并最终核元数据，不重新打包或包后冒烟。预计0.9.56尚不是已发布事实。
+现任总控为 `local/01a1fe7c-cc49-70d0-ac4c-af5e77c7b6ba`，原Terra为`local/01a1fd60-2da5-74e0-8e68-e266cf679881`。D5明确通过，D6已完成并由总控核元数据结案；所有执行命令已结束、测试/UI/安装租约释放，无待派工作或在途操作。保持现有源码、证据及真实论文现场，不追加测试、发行、reload或清理。
