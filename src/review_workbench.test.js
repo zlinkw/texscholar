@@ -619,6 +619,18 @@ test('stash closes and restores only the exact session and source baseline', asy
     assert.deepEqual(messages.filter(m=>m.type==='content').at(-1).stashes,[]);
 });
 
+test('a draft already stale before stashing cannot be restored as an exact draft', async () => {
+    let receive,dispose;const values={},messages=[], c={repo:'/stale',owner:'state',id:'1',version:'v2'};
+    const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+    const data={id:'1',version:'v2',original:'Current',source_match:true,edit:{file:'x',kind:'manuscript',versions:['v1','v2'],requests:[]},options:[{label:'A',after:'Current candidate'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},dispose(){dispose();},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={session:()=> 's',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}]};
+    const open=async()=>{const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'p'});return view;};
+    await open();await receive({type:'stashClose',instance:'p',id:'1',version:'v2',state:{c,drafts:{A:'Old draft'},oldOriginal:'Old',candidateDraftStale:true,sourceDraftStale:true}});
+    await open();const stash=messages.filter(m=>m.type==='content').at(-1).stashes[0];assert.equal(stash.exact,false);assert.equal(stash.state.oldOriginal,'Old');
+    await receive({type:'restoreStash',instance:'p',id:'1',version:'v2',stash:stash.id});assert(messages.some(m=>m.error&&m.message.includes('基准已变化')));
+});
+
 test('history remains read-only and adopts only into the current draft', async () => {
     let receive; const messages=[], writes=[];
     const c={repo:'/history',owner:'state',id:'1',version:'v2'};
@@ -686,4 +698,29 @@ test('question review survives an unrelated prefix but not moving its fixed bloc
     const first=messages.findLast(m=>m.type==='content').questions[0];await receive({type:'checkQuestion',instance:'p',id:'1',version:'v1',questionKey:first.key,snapshot:first.snapshot});
     state.sources['main.tex']='Unrelated prefix.\n\n'+state.sources['main.tex'];locate();view.sync(records,c);assert.equal(messages.findLast(m=>m.type==='questionRows').questions[0].checked,true);
     state.sources['main.tex']='Unrelated prefix.\n\nAuthor context.\nAnother paragraph.\n\n'+chunk;locate();view.sync(records,c);assert.equal(messages.findLast(m=>m.type==='questionRows').questions[0].recheck,true);
+});
+
+test('single workspace draft record retains only current and previous batch per project', async () => {
+    let receive, dispose, session='s1';const values={}, messages=[];
+    const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+    const c={repo:'/limited',owner:'state',id:'1',version:'v1'}, other={...c,repo:'/other'};
+    const data=t=>({id:'1',version:t.version,original:'Original',source_match:true,edit:{file:'x',kind:'manuscript',versions:[t.version],requests:[]},options:[{label:'A',after:'Candidate'}]});
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{showWarningMessage:async()=> '替换暂存',createWebviewPanel:()=>({visible:true,reveal(){},dispose(){dispose();},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={session:()=>session,read:async t=>data(t),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data(c).edit}]};
+    async function stash(target,text){const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services);view.setRecords(new Map([['1',{c:target,data:data(target)}]]));await view.show(target);await receive({type:'ready',instance:'p'});await receive({type:'stashClose',instance:'p',id:'1',version:target.version,state:{c:target,drafts:{A:text},note:'note',scope:'group',editors:[],textareas:{},expandedNotes:[]}});}
+    await stash(other,'other');await stash(c,'first');
+    const count=()=>Object.entries(values.reviewDrafts).filter(([k,d])=>k!=='_batches'&&d.c.repo==='/limited');
+    const size=JSON.stringify(values.reviewDrafts).length;
+    for(let i=0;i<5;i++){c.version='v'+(i+2);await stash(c,'other');}
+    assert.equal(count().length,1);assert.equal(count()[0][1].state.drafts.A,'other');assert.equal(JSON.stringify(values.reviewDrafts).length,size);
+    session='s2';await stash(c,'batch2');session='s3';await stash(c,'batch3');
+    assert.deepEqual(count().map(([,d])=>d.session).sort(),['s2','s3']);
+    assert(Object.values(values.reviewDrafts).some(d=>d?.c?.repo==='/other'&&d.state.drafts.A==='other'));
+    assert.deepEqual(values.reviewDrafts._batches[JSON.stringify(['/limited','state'])],['s3','s2']);
+    for (const next of ['s4','s5']) {
+        session=next;const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services);
+        view.setRecords(new Map([['1',{c,data:data(c)}]]));await view.show(c);
+    }
+    assert.equal(count().length,0,'batches without stashes still advance the retention window');
+    assert(Object.values(values.reviewDrafts).some(d=>d?.c?.repo==='/other'));
 });

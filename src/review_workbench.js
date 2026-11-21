@@ -78,7 +78,7 @@ function createWorkbench(vscode, context, services) {
     let translationRun, translationRequested = false, retryTranslation = false, translationEpoch = 0;
     let lastRecords = new Map(), sourceSelection;
     let ready = false, client, uiState, notice, reading, handoffRetry;
-    let appearanceWork = Promise.resolve();
+    let appearanceWork = Promise.resolve(), draftWork = Promise.resolve(), draftScope;
     let navigationFilter = {query: '', kind: '', notes: false};
     let relatedReturn, showRequest = 0;
     let history;
@@ -127,10 +127,35 @@ function createWorkbench(vscode, context, services) {
         await context.workspaceState.update('reviewPostponed', stored);
     }
     const draftKey = (c, session) => JSON.stringify([c.repo, c.owner, session, c.id]);
+    function rollDrafts(saved, c, session) {
+        const scope = JSON.stringify([c.repo,c.owner]), entries = Object.entries(saved).filter(([k,d]) => k !== '_batches' && d.c.repo === c.repo && d.c.owner === c.owner);
+        const known = saved._batches?.[scope];
+        if (!entries.length && !known) return saved;
+        const seen = [...new Set(entries.map(([,d]) => d.session))];
+        const previous = known?.[0] === session ? known[1] : known?.[0] || seen.filter(s => s !== session).at(-1);
+        const batches = [session, ...(previous && previous !== session ? [previous] : [])];
+        const remove = entries.filter(([,d]) => !batches.includes(d.session)).map(([k]) => k);
+        if (!remove.length && JSON.stringify(known) === JSON.stringify(batches)) return saved;
+        const next = {...saved, _batches:{...saved._batches, [scope]:batches}};
+        for (const k of remove) delete next[k];
+        return next;
+    }
+    function updateDrafts(c, session, change = value => value, background = false) {
+        const task = draftWork.then(async () => {
+            if (services.session(c) !== session) {
+                if (background) return;
+                throw new Error('审核批次已变化，未修改暂存草稿。');
+            }
+            const old = context.workspaceState.get('reviewDrafts', {}), next = change(rollDrafts(old, c, session));
+            if (next !== old) await context.workspaceState.update('reviewDrafts', next);
+        });
+        draftWork = task.catch(() => {});
+        return task;
+    }
     function storedDrafts(c) {
         if (!context.workspaceState || !services.session) return [];
         const session = services.session(c);
-        return Object.entries(context.workspaceState.get('reviewDrafts', {})).filter(([, d]) =>
+        return Object.entries(context.workspaceState.get('reviewDrafts', {})).filter(([k, d]) => k !== '_batches' &&
             d.c.repo === c.repo && d.c.owner === c.owner && d.c.id === c.id).map(([id, d]) => {
             const selected = d.state.selected;
             const question = selected?.question && (loaded.edit.questions || []).find(q =>
@@ -139,7 +164,8 @@ function createWorkbench(vscode, context, services) {
                 ? d.state.drafts[selected.option] ?? options(loaded).find(o => o.label === selected.option)?.after : selected?.side === 'original' ? loaded.original : undefined;
             const selectionMatches = !selected || (!selected.question || !!question) && (selected.side === 'translation'
                 || selectedText?.replace(/\r\n/g, '\n') === selected.value);
-            const exact = d.session === session && d.c.version === c.version && loaded.source_match !== false && d.original === loaded.original
+            const exact = !d.state.candidateDraftStale && !d.state.sourceDraftStale && !d.state.selectionStale
+                && d.session === session && d.c.version === c.version && loaded.source_match !== false && d.original === loaded.original
                 && JSON.stringify(d.block) === JSON.stringify(loaded.block)
                 && JSON.stringify(d.options) === JSON.stringify(options(loaded).map(o => [o.label, o.after])) && selectionMatches;
             return {id, session: d.session, version:d.c.version, original:d.original, block:d.block, state:d.state, exact};
@@ -291,6 +317,9 @@ function createWorkbench(vscode, context, services) {
         const data = await (advance && services.readNext ? services.readNext(c) : services.read(c));
         if (request !== showRequest) return;
         if (data.id !== undefined && data.id !== c.id || data.version !== undefined && data.version !== c.version) throw new Error('读取卡片身份不一致；未切换或接收。');
+        const session = services.session?.(c);
+        if (session && context.workspaceState) await updateDrafts(c, session);
+        if (request !== showRequest || session && services.session(c) !== session) return;
         active = {...c}; loaded = data; dirty = noteDirty = false; hasPending = false; sourceSelection = undefined; history = undefined;
         uiState = notice = handoffRetry = undefined;
         if (restore) {uiState = readingState(restore.state); navigationFilter = restore.filter;}
@@ -311,6 +340,11 @@ function createWorkbench(vscode, context, services) {
     }
     function sync(records, scope, synchronized = new Set()) {
         if (!active || active.repo !== scope.repo || active.owner !== scope.owner) return;
+        const session = services.session?.(active), identity = session && JSON.stringify([active.repo,active.owner,session]);
+        if (identity && identity !== draftScope && context.workspaceState) {
+            draftScope = identity;
+            updateDrafts({...active}, session, undefined, true).catch(error => vscode.window.showErrorMessage('草稿批次更新失败：' + error.message));
+        }
         lastRecords = records;
         const next = records.get(active.id);
         post({type: 'directory', directory: directory()});
@@ -540,10 +574,12 @@ function createWorkbench(vscode, context, services) {
                     if (answer !== '替换暂存') return;
                     if (!valid(c) || panel !== operationPanel || services.session(c) !== session) return;
                 }
-                const saved = {...context.workspaceState.get('reviewDrafts', {})};
-                if (JSON.stringify(existing) !== JSON.stringify(saved[k])) throw new Error('暂存草稿已变化，未覆盖。');
-                saved[k] = {c, session, original:loaded.original, block:loaded.block, options:options(loaded).map(o => [o.label,o.after]), state};
-                await context.workspaceState.update('reviewDrafts', saved);
+                const record = {c, session, original:loaded.original, block:loaded.block, options:options(loaded).map(o => [o.label,o.after]), state};
+                await updateDrafts(c, session, saved => {
+                    if (JSON.stringify(existing) !== JSON.stringify(saved[k])) throw new Error('暂存草稿已变化，未覆盖。');
+                    const next = {...saved, [k]:record};
+                    return rollDrafts(next, c, session);
+                });
                 if (valid(c) && panel === operationPanel && services.session(c) === session) operationPanel.dispose();
                 return;
             }
@@ -554,8 +590,8 @@ function createWorkbench(vscode, context, services) {
                     const answer = await vscode.window.showWarningMessage('确定放弃这份暂存草稿？', {modal:true}, '放弃暂存');
                     if (answer !== '放弃暂存') return;
                     if (!valid(c) || panel !== operationPanel) return;
-                    const saved = {...context.workspaceState.get('reviewDrafts', {})}; delete saved[draft.id];
-                    await context.workspaceState.update('reviewDrafts', saved);
+                    const session = services.session(c);
+                    await updateDrafts(c, session, saved => {const next = {...saved}; delete next[draft.id]; return next;});
                     if (valid(c) && panel === operationPanel) sendContent(false);
                 } else {
                     if (!draft.exact) throw new Error('暂存的批次、版本或正文基准已变化；请对照旧草稿人工处理，不能直接恢复。');

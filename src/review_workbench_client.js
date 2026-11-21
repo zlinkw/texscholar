@@ -320,7 +320,7 @@ function renderStash() {
     const d = stashes.find(item => item.id === $('stashChoice').value);
     if (!d) return;
     $('stashStatus').textContent = d.exact ? '基准一致，可恢复草稿；恢复不代表保存或接收。' : '批次、版本或原文基准已变化；仅供对照，不能直接恢复。';
-    $('stashOriginal').textContent = d.block?.text ?? d.original;
+    $('stashOriginal').textContent = d.state.oldOriginal ?? d.block?.text ?? d.original;
     $('stashCurrent').textContent = data.block?.text ?? data.original;
     $('stashContents').textContent = [...Object.entries(d.state.drafts || {}).map(([label,value]) => '候选 ' + label + '\n' + value),
         ...(d.state.blockDraft === undefined ? [] : ['原文草稿\n' + d.state.blockDraft]), ...(d.state.note ? ['未提交批注\n' + d.state.note] : [])].join('\n\n');
