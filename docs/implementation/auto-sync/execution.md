@@ -17,3 +17,5 @@ backend 首轮 128 项通过，完整日志 backend-d4ae9b50f3cf4732b4970abf0dc9
 最终后端复验 129/129，退出码 0，完整日志 D:/latex-writing-checks/auto-sync-20261121/backend-0a8c8e3d3f514b538a46d51094dfa20b；定向固定块 PDF 渲染复验 1/1，退出码 0，日志 targeted-pdf-final.log。编辑器实现及测试未再更改，沿用 editor-95bfb1d9e12d4c2887a57dd0858f2150 的 133/133。现冻结产品源码，移交测试/UI租约给总控执行独占 A4；未提交、推送、发行或安装。
 
 总控明确通过 A4，接回交付租约。远端 master 与基线 e6efedb66ed312fd6d8f683226e6c9f43e384d5a 一致；版本改为 0.9.51，README 批注文案修正。版本检查 2/2 与发行工具检查 12/12 退出码 0，日志分别为 version-check.log、release-check.log。一次打包退出码 0，package.log：VSIX SHA256 29664e8bc4a452ac28e62e6b507701567a5d44c4e37d4bbdccda4d8295354598；源码包 SHA256 48a9fffe9da0d41b7d84a56bf73afb9a86d88f7a4ec4575e559c5097237e614a。待提交推送、正式发行及安装，未重载。
+
+源码提交 f4704a4d195acea40061ae9fbefe77c9594e8e22 已普通推送 origin/master，fetch 后 HEAD 相同；附注标签 v0.9.51 含两包摘要并已推送。publish_release.py 退出码 0，[正式 Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.51) 已发布且附件摘要核对通过，日志 publish.log。同一 VSIX 安装退出码 0，日志 install.log 含 Node url.parse 弃用警告。没有执行包后冒烟或重载；不自动迁移真实论文。PDF 完整组、backup 和 translation 本轮未运行，隔离 A4 的后台 Git 投影归属失败保留在计划中。
