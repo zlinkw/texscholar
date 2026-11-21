@@ -921,11 +921,23 @@ class Review:
             self.state = {"schema": 3 if self.sidecar else 2 if self.storage == "files" else 1, "session": uuid.uuid4().hex, "next": [int(n), value],
                           "rounds": [], "edits": {}, "submission": None}
         if self.storage == 'files':
-            saved = (self.backup_status().get('saved_done') or {}).get('review') or {}
+            saved_done = self.backup_status().get('saved_done') or {}
+            saved = saved_done.get('review') or {}
+            if (saved.get('accepted') or saved.get('history')) and saved.get('session') == self.state['session'] and saved_done.get('commit'):
+                for ref in ('HEAD', 'origin/master'):
+                    check = subprocess.run([self.git_exe, '-C', str(self.repo), 'merge-base', '--is-ancestor', saved_done['commit'], ref],
+                                           env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    if check.returncode == 1:
+                        saved = {}
+                        break
+                    if check.returncode:
+                        raise Conflict('无法核对已备份成果的 Git 历史：' + check.stderr.decode('utf-8', 'replace').strip())
             published = saved.get('accepted', {}) if saved.get('session') == self.state['session'] else {}
             if self.state.get('pending_backup') or any(
                     e['status'] == 'accepted' and e['versions'] and e.get('published_version') != e['versions'][-1]
-                    and published.get(id_) != e['versions'][-1] for id_, e in self.state['edits'].items()):
+                    and published.get(id_) != e['versions'][-1]
+                    and not (saved.get('session') == self.state['session'] and e['versions'][-1] in saved.get('history', {}).get(id_, {}))
+                    for id_, e in self.state['edits'].items()):
                 raise Conflict('请先完成已接收成果的提交与推送，再开始新批次；未清除任何旧记录。')
             if any(e['status'] in PENDING and not e.get('deferred', False) for e in self.state['edits'].values()):
                 raise Conflict('旧式候选仍在正文中，请先核对并转换为候选与正文分离的审核方式。')

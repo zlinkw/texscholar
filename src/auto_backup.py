@@ -36,7 +36,20 @@ def saved_ledger(root, mutation=None):
         return data
 
 
-def saved_update(root, spec):
+def saved_proofs(previous, review, commit, ancestor):
+    """Keep exact, remotely confirmed versions only along the verified history."""
+    history = {}
+    old = previous.get('review') or {}
+    if ancestor and old.get('session') == review.get('session'):
+        history = copy.deepcopy(old.get('history', {}))
+        for id_, version in old.get('accepted', {}).items():
+            history.setdefault(id_, {})[version] = {'commit':previous['commit'], 'sources':old.get('sources', {})}
+    for id_, version in review.get('accepted', {}).items():
+        history.setdefault(id_, {})[version] = {'commit':commit, 'sources':review.get('sources', {})}
+    return {**review, 'history':history}
+
+
+def saved_update(root, spec, git_exe='git'):
     def update(data):
         job = data.get('saved_job')
         if not job or job['token'] != spec['token']:
@@ -44,8 +57,23 @@ def saved_update(root, spec):
         if spec.get('done'):
             if job.get('commit') != spec.get('commit'):
                 raise Conflict('自动备份提交身份不一致。')
+            previous = data.get('saved_done') or {}
+            review = job.get('review')
+            if review or previous.get('review'):
+                ancestor = False
+                if previous.get('commit'):
+                    env = {k:v for k,v in os.environ.items() if not k.upper().startswith('GIT_')}
+                    result = subprocess.run([git_exe, 'merge-base', '--is-ancestor', previous['commit'], job['parent']], cwd=root, env=env, capture_output=True)
+                    if result.returncode not in (0, 1):
+                        raise Conflict(result.stderr.decode('utf-8', 'replace').strip() or '无法核对备份历史。')
+                    ancestor = result.returncode == 0
+                if review:
+                    review = saved_proofs(previous, review, job['commit'], ancestor)
+                elif ancestor:
+                    old = previous['review']
+                    review = saved_proofs(previous, {'session':old['session'], 'accepted':{}, 'sources':{}}, job['commit'], True)
             data['saved_done'] = {'commit': job['commit'], 'files': job['files'],
-                                  **({'review': job['review']} if job.get('review') else {}),
+                                  **({'review': review} if review else {}),
                                   **({'review_error': job['review_error']} if job.get('review_error') else {})}
             del data['saved_job']
             if not data.get('saved_pending'):
@@ -112,7 +140,7 @@ def saved_recover(root, git_exe):
         if actual != expected:
             raise Conflict('待上传备份内容不一致：' + name)
     if not job.get('commit'):
-        data = saved_update(root, {'token':job['token'], 'commit':head}); job = data['saved_job']
+        data = saved_update(root, {'token':job['token'], 'commit':head}, git_exe); job = data['saved_job']
     return {'job':job, 'commit':head}
 
 
@@ -223,34 +251,14 @@ def saved_commit(root, git_exe, spec):
         previous = entry.split(b' ', 2)[2].split(b'\t', 1)[0].decode() if entry else None
         if oid != previous:
             expected[name] = oid
-    if not expected:
-        if previous_job:
-            def clear_uncommitted(data):
-                if data.get('saved_job') != previous_job:
-                    raise Conflict('自动备份任务已变化。')
-                del data['saved_job']
-            saved_ledger(root, clear_uncommitted)
-        return {'unchanged': True, 'commit': parent, 'files': []}
+    if expected and spec.get('confirm_review') is not None:
+        raise Conflict('远端确认期间源码已变化；未创建提交或记录凭据。')
     def unchanged():
         for name, original in originals.items():
             path = root / name
             if (path.read_bytes() if path.exists() else None) != original:
                 raise Conflict('备份期间源码发生变化：' + name)
-    unchanged()
-    selected = list(expected)
-    index_before = git('ls-files', '--stage', '-z').split(b'\0')
-    outside = sorted(row for row in index_before if row and row.split(b'\t', 1)[1].decode('utf-8') not in selected)
-    stats = git('diff', '--numstat', parent, '--', *selected).decode('utf-8', 'replace').strip()
-    diff = git('diff', '--no-ext-diff', '--unified=0', parent, '--', *selected).decode('utf-8', 'replace')
-    trigger = spec.get('trigger', '保存')
-    if trigger not in ('启动', '保存', '定时', '接收', '重试'):
-        raise Conflict('未知自动备份触发来源。')
-    stamp = datetime.now().astimezone().isoformat(timespec='seconds')
-    token = uuid.uuid4().hex
-    job = {'token':token, 'parent':parent, 'files':expected, 'trigger':trigger}
-    def prepare(data):
-        if data.get('job') or data.get('saved_job') != previous_job:
-            raise Conflict('备份任务在准备期间发生变化。')
+    def capture_review():
         unchanged()
         if spec.get('owner'):
             try:
@@ -285,12 +293,66 @@ def saved_commit(root, git_exe, spec):
                         except (Conflict, ValueError, KeyError):
                             continue
                     accepted[id_] = edit['versions'][-1]
-                job['review'] = {'session':r.state['session'], 'accepted':accepted,
-                                 'accepted_snapshot':r.state['accepted'],
-                                 'sources':{name:{'sha256':digest(raw), 'blob':blobs[name]}
-                                            for name, raw in originals.items() if name in blobs and raw is not None}}
+                return {'session':r.state['session'], 'accepted':accepted,
+                        'accepted_snapshot':r.state['accepted'],
+                        'sources':{name:{'sha256':digest(raw), 'blob':blobs[name]}
+                                   for name, raw in originals.items() if name in blobs and raw is not None}}, None
             except (Conflict, OSError, ValueError, KeyError, json.JSONDecodeError) as error:
-                job['review_error'] = str(error)
+                return None, str(error)
+        return None, None
+
+    if not expected:
+        if previous_job:
+            def clear_uncommitted(data):
+                if data.get('saved_job') != previous_job:
+                    raise Conflict('自动备份任务已变化。')
+                del data['saved_job']
+            saved_ledger(root, clear_uncommitted)
+        review = None
+        if spec.get('owner'):
+            with writer_lock_at(root / '.codex-review'):
+                review, _ = capture_review()
+        old_done = ledger_data.get('saved_done') or {}
+        old = old_done.get('review') or {}
+        known = old.get('history', {}) if old.get('session') == (review or {}).get('session') else {}
+        missing = {id_:version for id_,version in (review or {}).get('accepted', {}).items()
+                   if version not in known.get(id_, {}) and not (old.get('session') == review['session'] and old.get('accepted', {}).get(id_) == version)}
+        if spec.get('confirm_review') is not None:
+            if review != spec['confirm_review'] or git('rev-parse', 'HEAD').decode().strip() != parent:
+                raise Conflict('远端确认期间审核或源码已变化；未记录凭据。')
+            def confirm(data):
+                current, error = capture_review()
+                if error or current != review or data.get('saved_job') or git('rev-parse', 'HEAD').decode().strip() != parent:
+                    raise Conflict('远端确认期间审核或源码已变化；未记录凭据。')
+                previous = data.get('saved_done') or {}
+                ancestor = False
+                if previous.get('commit'):
+                    result = subprocess.run([git_exe, 'merge-base', '--is-ancestor', previous['commit'], parent], cwd=root, env=env, capture_output=True)
+                    if result.returncode not in (0, 1):
+                        raise Conflict(result.stderr.decode('utf-8', 'replace').strip() or '无法核对备份历史。')
+                    ancestor = result.returncode == 0
+                data['saved_done'] = {'commit':parent, 'files':{}, 'review':saved_proofs(previous, current, parent, ancestor)}
+            saved_ledger(root, confirm)
+            return {'unchanged':True, 'commit':parent, 'files':[], 'confirmed':True}
+        return {'unchanged': True, 'commit': parent, 'files': [], **({'review_proof':review} if missing else {})}
+    unchanged()
+    selected = list(expected)
+    index_before = git('ls-files', '--stage', '-z').split(b'\0')
+    outside = sorted(row for row in index_before if row and row.split(b'\t', 1)[1].decode('utf-8') not in selected)
+    stats = git('diff', '--numstat', parent, '--', *selected).decode('utf-8', 'replace').strip()
+    diff = git('diff', '--no-ext-diff', '--unified=0', parent, '--', *selected).decode('utf-8', 'replace')
+    trigger = spec.get('trigger', '保存')
+    if trigger not in ('启动', '保存', '定时', '接收', '重试'):
+        raise Conflict('未知自动备份触发来源。')
+    stamp = datetime.now().astimezone().isoformat(timespec='seconds')
+    token = uuid.uuid4().hex
+    job = {'token':token, 'parent':parent, 'files':expected, 'trigger':trigger}
+    def prepare(data):
+        if data.get('job') or data.get('saved_job') != previous_job:
+            raise Conflict('备份任务在准备期间发生变化。')
+        review, error = capture_review()
+        if review: job['review'] = review
+        if error: job['review_error'] = error
         data['saved_job'] = job
     saved_ledger(root, prepare)
     def commit_message(statistics, patch):
@@ -573,7 +635,7 @@ def main():
         root = Path(args.project).resolve(strict=True)
         result = (saved_commit(root, args.git, json.load(sys.stdin)) if args.operation == 'saved-local' else
                   saved_recover(root, args.git) if args.operation == 'saved-status' else
-                  saved_event(root, json.load(sys.stdin)) if args.operation == 'saved-event' else saved_update(root, json.load(sys.stdin)))
+                  saved_event(root, json.load(sys.stdin)) if args.operation == 'saved-event' else saved_update(root, json.load(sys.stdin), args.git))
         print(json.dumps(result, ensure_ascii=False))
         return
     if not args.state:

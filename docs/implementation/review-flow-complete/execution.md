@@ -1,0 +1,7 @@
+# 审核流程修复与协作功能执行记录
+
+2026-11-21：唯一 Terra `local/01a1fd60-2da5-74e0-8e68-e266cf679881` 实核 `gpt-6.1-terra/high/default`，无轮换条件；接管产品、测试和 UI 租约，已读取计划及独立报告。基线 `b6bd02cf3980c4bffa04827e8b08a89378490c8a` 与 `origin/master` 一致。总控保有计划、索引和 P8；真实论文只读，隔离样例及日志保留于 `D:/latex-writing-checks/review-flow-complete-20261121`。开始 P1，P8 前不发行。
+
+P1：同 session 的已发布精确版本保留原提交和源码 blob，后续成功备份仅在旧提交为新父提交祖先时继承；begin 同时核当前 HEAD 和已知远端引用的历史关系。原文方案无文件变化时，只在发现缺少已接收凭据时核实私有远端及确切 HEAD，再重新核对源码和审核状态并记录；普通无变化检查无新任务和空提交。真实隔离 Git 两反例在 `p1-repro.log` 退出 1；修后 `p1-backup-final.log` 自动备份 30 项退出 0，并覆盖离线、未发布、范围外暂存和远端推进。随后补历史来源保全与 Git 历史门的小调整，相关五项 `p1-backup-final2.log` 退出 0，覆盖历史原提交/blob、会话/版本错误、无关提交、离线及无变化。
+
+后端权威组首轮 `backend-fdfd0cb96b094d86b4ca54618a88b470` 退出 1，两个 Git 夹具对象路径超过 Windows 路径上限；将现有 `SOURCE_REVIEW_FIXTURES` 指到同一隔离根的短子路径后，`backend-893a572e19094533923f7efae9c760c9` 132 项退出 0。命令为 `C:/Python314/python.exe -X utf8 scripts/check.py --group backend --node "C:/Program Files/nodejs/node.exe"`，`LOCAL_LATEX_TEST_ROOT` 为上述隔离根、`SOURCE_REVIEW_FIXTURES` 为其 `f` 子目录、`SOURCE_REVIEW_GIT=D:/Git/cmd/git.exe`。备份组命令为 `C:/Program Files/nodejs/node.exe --test --test-concurrency=1 --test-name-pattern "^(saved backup|automatic saved checkpoint|offline automatic|a later backup|automatic backup|automatic checkpoint|acceptance during|a save arriving|a saved event|a failed queued|unchanged accepted original)" src/backup.test.js`，最终五项按相应名称定向；cwd 仓库根，Git/Python 与项目 test-support 显式指定，日志完整保留。

@@ -153,6 +153,14 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
             }
             local = await helper('saved-local', {parent:head, files, new_files:newFiles, trigger, owner});
             if (local.unchanged) {
+                if (local.review_proof) {
+                    const plan = {root,git,execute,options,repository:githubRepository(pushUrls[0])};
+                    await verifyPrivate(plan);
+                    await git(['fetch','origin','master']);
+                    if ((await git(['rev-parse','origin/master'])).trim() !== head || (await git(['rev-parse','HEAD'])).trim() !== head)
+                        throw new Error('远端 master 已推进或分叉；未记录审核发布凭据');
+                    await helper('saved-local', {parent:head, files, new_files:newFiles, trigger, owner, confirm_review:local.review_proof});
+                }
                 const value = {status:'idle',message:'已保存源码无变化'};
                 const recorded = await helper('saved-event',{action:'idle',...value}); notify(recorded.saved_status || value); return {skipped:true};
             }

@@ -1,5 +1,7 @@
 # TeXScholar 实施索引
 
+活动计划：[审核流程修复与四项协作功能](review-flow-complete/plan.md)。用户已批准五项修复及四项新功能，原 Terra 连续实现，总控最终验收后发布安装；真实论文只读保护。
+
 已完成计划：[接收合并提速与核心流程修复](accept-merge/plan.md)。0.9.53 已发布安装；最终隔离页面后台场景459/556/494ms，其他样本与未测范围见计划和执行记录。
 
 已完成计划：[保存与定时自动 Git 备份](auto-git-backup/plan.md)。0.9.52 已发布并安装；验收、发行及未测范围见该目录的 [execution.md](auto-git-backup/execution.md)。

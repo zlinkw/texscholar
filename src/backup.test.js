@@ -411,6 +411,54 @@ test('saved backup proves fixed-block acceptance after a separate safe author ed
     const common=['-X','utf8',path.join(SCRIPTS,'source_review.py'),'--project',f.root,'--state','.codex-review/state.json','--git',GIT];
     const status=JSON.parse(await run(PYTHON,[...common,'status'],f.root));
     assert.equal(status.saved_backup_done.review.accepted['1'],ledger.saved_done.review.accepted['1']);
+    fs.writeFileSync(path.join(f.root,'main.tex'),fs.readFileSync(path.join(f.root,'main.tex'),'utf8').replace('Revised','Author adjusted'),'utf8');
+    const later=await automaticBackup(f.root,'.codex-review/state.json',{git:GIT,gh:'fixture-gh',python:PYTHON},()=>{},f.execute);
+    assert.notEqual(later.commit,result.commit); assert.equal((await f.git(['rev-parse','origin/master'])).trim(),later.commit);
+    const latest=JSON.parse(await run(PYTHON,[...common,'status'],f.root));
+    const ledgerFile=path.join(f.root,'.codex-review/automatic-backup.json');
+    const confirmed=JSON.parse(fs.readFileSync(ledgerFile,'utf8'));
+    const version=ledger.saved_done.review.accepted['1'];
+    assert.equal(confirmed.saved_done.review.history['1'][version].commit,result.commit);
+    assert.equal(confirmed.saved_done.review.history['1'][version].sources['main.tex'].blob,ledger.saved_done.review.sources['main.tex'].blob);
+    const original=JSON.stringify(confirmed);
+    confirmed.saved_done.review.session='another-session';fs.writeFileSync(ledgerFile,JSON.stringify(confirmed));
+    await assert.rejects(run(PYTHON,[...common,'--apply','--expect',latest.sha256,'begin','--round','blocked','--files','main.tex'],f.root),/请先完成已接收成果/);
+    confirmed.saved_done.review.session=ledger.saved_done.review.session;
+    confirmed.saved_done.review.history['1']={'different-version':confirmed.saved_done.review.history['1'][version]};
+    fs.writeFileSync(ledgerFile,JSON.stringify(confirmed));
+    await assert.rejects(run(PYTHON,[...common,'--apply','--expect',latest.sha256,'begin','--round','blocked','--files','main.tex'],f.root),/请先完成已接收成果/);
+    const unrelated=(await f.git(['commit-tree',(await f.git(['rev-parse','HEAD^{tree}'])).trim()], 'unrelated history\n')).trim();
+    const diverged=JSON.parse(original);diverged.saved_done.commit=unrelated;fs.writeFileSync(ledgerFile,JSON.stringify(diverged));
+    await assert.rejects(run(PYTHON,[...common,'--apply','--expect',latest.sha256,'begin','--round','blocked','--files','main.tex'],f.root),/请先完成已接收成果/);
+    fs.writeFileSync(ledgerFile,original);
+    await run(PYTHON,[...common,'--apply','--expect',latest.sha256,'begin','--round','round-2','--files','main.tex'],f.root);
+});
+
+test('unchanged accepted original is confirmed against remote without an empty commit', async () => {
+    const f=await fixture('saved-original-proof');
+    const code=[
+        'import sys', 'from pathlib import Path', 'from source_review import Review,digest', 'root=Path(sys.argv[1])',
+        'def apply(method,*args,initialize=False):',
+        ' r=Review(root,".codex-review/state.json",initialize=initialize)',
+        ' with r.writer_lock():',
+        '  r=Review(root,".codex-review/state.json",initialize=initialize); updated,result=getattr(r,method)(*args); r.persist(updated,digest(r.raw))',
+        ' return result',
+        'apply("begin","round-1",["main.tex"],initialize=True)',
+        'r=Review(root,".codex-review/state.json"); text=r.read("main.tex")',
+        'block=apply("prepare_block",{"file":"main.tex","kind":"paragraph","start":0,"end":len(text),"source_revision":r.source_digest(text)})',
+        'item=apply("propose",{"file":"main.tex","kind":"manuscript","block_id":block["block_id"],"before":"Original sentence.","options":[{"label":"A","after":"Original sentence.","reason":"Keep"},{"label":"B","after":"Revised sentence.","reason":"Change"}],"fewer_options_reason":"Two"})',
+        'r=Review(root,".codex-review/state.json"); apply("decide",[item["id"]],[],{item["id"]:r.state["edits"][item["id"]]["versions"][-1]},"A")'
+    ].join('\n');
+    await run(PYTHON,['-X','utf8','-c',code,f.root],f.root);
+    const options={git:GIT,gh:'fixture-gh',python:PYTHON};
+    const offline=(exe,args,cwd,input)=>args[0]==='fetch'?Promise.reject(new Error('offline fixture')):f.execute(exe,args,cwd,input);
+    await assert.rejects(automaticBackup(f.root,'.codex-review/state.json',options,()=>{},offline),/offline fixture/);
+    const common=['-X','utf8',path.join(SCRIPTS,'source_review.py'),'--project',f.root,'--state','.codex-review/state.json','--git',GIT];
+    let status=JSON.parse(await run(PYTHON,[...common,'status'],f.root));
+    await assert.rejects(run(PYTHON,[...common,'--apply','--expect',status.sha256,'begin','--round','blocked','--files','main.tex'],f.root),/请先完成已接收成果/);
+    await automaticBackup(f.root,'.codex-review/state.json',options,()=>{},f.execute);
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),f.baseline);
+    status=JSON.parse(await run(PYTHON,[...common,'status'],f.root));
     await run(PYTHON,[...common,'--apply','--expect',status.sha256,'begin','--round','round-2','--files','main.tex'],f.root);
 });
 
