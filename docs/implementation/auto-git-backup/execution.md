@@ -35,3 +35,5 @@
 总控已明确通过 G4 并移交交付租约，最终补验证据与限制见 plan.md。确认本地及远端无 v0.9.52 标签，GitHub 未找到该版本 Release；版本改为 0.9.52。版本相关 MCP 2 项和发行工具 12 项通过、均退出 0，日志 `g5-version-check.log`、`g5-release-check.log`；发行工具中模拟 EOF 的测试按设计重试读取并通过。
 
 仅一次本地打包 `python -B -X utf8 scripts/build.py --output dist/v0.9.52`，退出 0，日志 `g5-package.log`。VSIX SHA256 `e8430551c62aff17d90300f192a0573536d3ebd58f677e958688f82cabde9db0`；源码包 SHA256 `8bc0e08dc83a66ad321bc532c18db90c3f20fe09f74afb7a55362fc33cde6c7c`。后续发布与安装复用这两份产物；尚待提交、正式发行及安装。
+
+源码与版本提交 `8450284994cdee1436935d8428d4ea2fa46e5047` 普通推送后 fetch 一致；附注标签 `v0.9.52` 指向该提交，包含上述双包摘要，普通推送退出 0。`python -B -X utf8 scripts/publish_release.py --tag v0.9.52 --repo zlinkw/texscholar --artifacts dist/v0.9.52` 退出 0，[正式 Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.52) 的附件摘要与本地一致、非 draft 且非 prerelease。`code --install-extension D:/GitRepo/texscholar/dist/v0.9.52/texscholar-0.9.52.vsix` 退出 0 并报告安装成功；有 Node `url.parse` 弃用警告。日志 `g5-commit.log`、`g5-push.log`、`g5-fetch.log`、`g5-tag-push.log`、`g5-publish.log` 和 `g5-install.log`。未包后冒烟或自动重载 VS Code/MCP，真实论文未操作；含清理的 backup 后段、独立 backend 全组、PDF、translation 未运行。

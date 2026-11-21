@@ -1,6 +1,6 @@
 # TeXScholar 实施索引
 
-活动计划：[保存与定时自动 Git 备份](auto-git-backup/plan.md)。唯一 Terra 实现及小验收，总控最终验收后发布安装；真实论文只读。
+已完成计划：[保存与定时自动 Git 备份](auto-git-backup/plan.md)。0.9.52 已发布并安装；验收、发行及未测范围见该目录的 [execution.md](auto-git-backup/execution.md)。
 
 已完成计划：[保存后自动同步](auto-sync/plan.md)。0.9.51 已发布并安装；验收与发行事实见该目录的 [execution.md](auto-sync/execution.md)。
 
