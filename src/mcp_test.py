@@ -253,6 +253,33 @@ class MCP(unittest.TestCase):
             server.call('rework_options', {**args, 'version': saved['version'], 'expected_sha256': digest(self.review().raw)})
         self.assertEqual((self.root / 'main.tex').read_bytes(), accepted)
 
+    def test_rework_fulfillment_validates_request_and_exact_option_range(self):
+        server = self.server(); base = {'project':str(self.root), 'state':'reply.tex'}
+        options = [{'label':k, 'after':'Candidate ' + k + '.', 'reason':k} for k in 'ABC']
+        id_ = self.apply('propose_options', {'file':'main.tex', 'kind':'manuscript', 'before':'The model is strong and fast.', 'options':options})['id']
+        version = self.review().state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id':id_, 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'请补限定'})
+        self.apply('feedback', {'id':id_, 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'另一条要求'})
+        request = self.review().state['edits'][id_]['requests'][0]
+        revised = [{**o, 'after':o['after'] + ' Limited.'} for o in options]
+        mapping = {'request':request['id'], 'request_version':version, 'request_text':request['text'], 'option':'A',
+                   'start':13, 'end':20, 'quote':'Limited', 'explanation':'加入限定。', 'status':'partial'}
+        before = self.review().raw
+        args = {**base, 'id':id_, 'version':version, 'expected_sha256':digest(before), 'spec':{'options':revised, 'discard_annotations':False}}
+        for invalid in ({**mapping, 'request':'missing'}, {**mapping, 'request_version':'wrong'}, {**mapping, 'start':0}):
+            with self.assertRaises(ValueError): server.call('rework_options', {**args, 'spec':{**args['spec'], 'fulfillment':[invalid]}})
+            self.assertEqual(self.review().raw, before)
+        saved = server.call('rework_options', {**args, 'spec':{**args['spec'], 'fulfillment':[mapping]}})
+        result = self.review().inspect(id_)
+        self.assertEqual(result['fulfillment'], [mapping])
+        self.assertEqual(len(result['edit']['requests']), 2)
+        context = server.call('read_context', {**base, 'ids':[id_]})['context']['items'][id_]
+        self.assertEqual(context['fulfillment'], [mapping])
+        updated = [{**o, 'after':o['after'] + ' Again.'} for o in revised]
+        server.call('rework_options', {**args, 'version':saved['version'], 'expected_sha256':saved['sha256'],
+                                      'spec':{'options':updated, 'discard_annotations':False}})
+        self.assertEqual(self.review().inspect(id_)['fulfillment'], [])
+
     def test_default_context_is_local_and_confirmed_roles_are_compact(self):
         main = self.root / 'main.tex'
         main.write_bytes(main.read_bytes().replace(b'\\end{document}', b'\n\nDistant paragraph.\n\nFar away context.\n\\end{document}'))

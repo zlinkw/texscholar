@@ -660,6 +660,7 @@ class Review:
         updated = {**item, 'before': before, 'after': options[0]['after'], 'options': options,
                    'left': text[max(0, row['start'] + start - 120):row['start'] + start],
                    'right': text[row['start'] + end:row['start'] + end + 120]}
+        updated.pop('fulfillment', None)
         new_version = self.snapshot({'original.tex': before.encode('utf-8'), 'candidate.tex': options[0]['after'].encode('utf-8'),
                                      'span.json': json.dumps(updated, ensure_ascii=False).encode('utf-8')}, 'synchronized review item ' + id_)
         edit['versions'].append(new_version)
@@ -1249,6 +1250,28 @@ class Review:
             item['fewer_options_reason'] = spec.get('fewer_options_reason', '')
         if 'intent' in spec:
             item['intent'] = copy.deepcopy(spec['intent'])
+        if 'fulfillment' in spec:
+            if not rework or not isinstance(spec['fulfillment'], list):
+                raise FieldConflict('spec.fulfillment', 'Fulfillment applies to existing review requests only')
+            requests = {r['id']: r for r in edit.get('requests', []) if r['status'] == 'open'}
+            choices = {o['label']: o['after'] for o in options or []}
+            mappings = []
+            for mapping in spec['fulfillment']:
+                if not isinstance(mapping, dict) or set(mapping) != {'request','request_version','request_text','option','start','end','quote','explanation','status'}:
+                    raise FieldConflict('spec.fulfillment', 'Each mapping needs the exact request, option, range and explanation')
+                if any(not isinstance(mapping[k], str) for k in ('request','request_version','request_text','option','quote','explanation','status')):
+                    raise FieldConflict('spec.fulfillment', 'Mapping identity and explanation must be text')
+                request = requests.get(mapping['request'])
+                candidate = choices.get(mapping['option'])
+                a_, b_ = mapping['start'], mapping['end']
+                if not request or request['version'] != mapping['request_version'] or request['text'] != mapping['request_text']:
+                    raise FieldConflict('spec.fulfillment', 'Request identity or text has changed')
+                if candidate is None or type(a_) is not int or type(b_) is not int or not 0 <= a_ < b_ <= len(candidate) or candidate[a_:b_] != mapping['quote']:
+                    raise FieldConflict('spec.fulfillment', 'Range must match the complete selected option')
+                if mapping['status'] not in ('attempted','partial','author','evidence') or not isinstance(mapping['explanation'], str) or not mapping['explanation'].strip():
+                    raise FieldConflict('spec.fulfillment', 'Mapping needs a valid status and explanation')
+                mappings.append(copy.deepcopy(mapping))
+            item['fulfillment'] = mappings
         if self.storage == 'files':
             item['batch'] = self.state['session']
         if manual_anchor is not None:
@@ -1494,6 +1517,7 @@ class Review:
         result['options'] = [dict(o) if reuse_diff else {**o, 'changes': word_changes(result['original'], o['after'])} for o in options]
         result['fewer_options_reason'] = shown.get('fewer_options_reason', '')
         result['intent'] = shown.get('intent')
+        result['fulfillment'] = shown.get('fulfillment', [])
         if reuse_diff:
             result['diff_reused'] = True
         else:

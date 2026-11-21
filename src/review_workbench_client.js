@@ -471,16 +471,21 @@ function noteOrigin(n) {
     const generation = data.edit.versions.indexOf(n.version) + 1;
     return origin + (generation ? ' · v' + generation : '');
 }
+function fulfillmentText(n) {
+    if (data.source_match === false || n.source_stale) return '<p>原文或批注基准已变化，请重新核对返修说明。</p>';
+    const mappings = (data.fulfillment || []).filter(m => m.request === n.id && m.request_version === n.version && m.request_text === n.text);
+    return mappings.length ? mappings.map(m => '<p>返修说明（已保存本版） · 方案 ' + esc(m.option) + ' · ' + esc(({attempted:'已尝试',partial:'部分',author:'待作者',evidence:'待证据'})[m.status]) + '：' + esc(m.explanation) + '（' + esc(m.quote) + '）</p>').join('') : '<p>本版未说明此要求的处理情况。</p>';
+}
 function renderPreviousNotes() {
     const container = $('previousNotes');
     const active = new Set((data.edit.requests || []).map(n => n.id));
     const notes = (data.edit.previous_feedback?.requests || []).filter(n => !active.has(n.id));
     $('previousFeedback').hidden = !notes.length;
-    const signature = JSON.stringify([notes, notes.map(n => data.edit.versions.indexOf(n.version))]);
+    const signature = JSON.stringify([notes, notes.map(n => data.edit.versions.indexOf(n.version)), data.fulfillment, data.source_match]);
     if (container.dataset.signature === signature) return;
     container.dataset.signature = signature;
     container.innerHTML = notes.map(n => '<div class="note"><strong>' + esc(noteOrigin(n)) + '</strong><div class="review-text">' + esc(n.text) + '</div>' +
-        ((n.display_context?.quote ?? n.quote) ? '<details><summary>此前选区</summary><div class="review-text">' + esc(n.display_context?.quote ?? n.quote) + '</div></details>' : '') + '</div>').join('');
+        ((n.display_context?.quote ?? n.quote) ? '<details><summary>此前选区</summary><div class="review-text">' + esc(n.display_context?.quote ?? n.quote) + '</div></details>' : '') + fulfillmentText(n) + '</div>').join('');
 }
 function renderNotes(requests) {
     renderPreviousNotes();
@@ -492,14 +497,16 @@ function renderNotes(requests) {
     for (const n of requests) {
         let node = [...container.children].find(node => node.dataset.noteId === n.id);
         if (!node) {node = document.createElement('div'); node.className = 'note'; node.dataset.noteId = n.id; container.appendChild(node);}
-        const signature = JSON.stringify([n, n.version === current.version]);
+        const mappings = (data.fulfillment || []).filter(m => m.request === n.id && m.request_version === n.version && m.request_text === n.text);
+        const signature = JSON.stringify([n, n.version === current.version, mappings, data.source_match]);
         if (node.dataset.signature === signature) continue;
         node.dataset.signature = signature;
         if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
         const context = n.display_context;
         const origin = noteOrigin(n);
         node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + (n.source_stale ? ' · 原批注，内容已变' : '') + '</strong><div class="review-text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
-            (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '');
+            (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '') +
+            fulfillmentText(n);
     }
     placeComposer();
     buttons();
@@ -871,7 +878,7 @@ window.addEventListener('message', ({data: message}) => {
         $('locationConflict').textContent = message.source_match === false ? '正文或审核块需核对：' + message.conflict + '。候选和批注仍保留。' : '';
         $('syncBlock').hidden = !data.block || message.source_match !== false;
         $('repairBlock').hidden = current.owner !== '.codex-review/state.json' || !data.edit.block_id || message.source_match !== false;
-        draftWarning(); dirty(); return;}
+        renderNotes(data.edit.requests || []); draftWarning(); dirty(); return;}
     if (message.type === 'titles') {data.edit.location = message.location; $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (message.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length; renderDirectory(message.directory); return;}
     if (message.type === 'titleStatus') {$('titleStatus').textContent = message.message; return;}
     if (message.type === 'backupStatus') {$('backupStatus').textContent = message.message || '后台 Git 备份尚无任务'; return;}

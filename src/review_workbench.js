@@ -190,7 +190,7 @@ function createWorkbench(vscode, context, services) {
     function packet() {
         const {file, kind, block_id, location: originalLocation, display_location, versions, requests, questions, previous_feedback} = loaded.edit;
         const location = display_location || originalLocation;
-        return {type: 'content', c: active, data: {original: loaded.original, source_match: loaded.source_match, conflict: loaded.conflict, block: loaded.block, edit: {file, kind, block_id, location, versions, requests, questions, previous_feedback}, intent: loaded.intent, fewer_options_reason: loaded.fewer_options_reason},
+        return {type: 'content', c: active, data: {original: loaded.original, source_match: loaded.source_match, conflict: loaded.conflict, block: loaded.block, edit: {file, kind, block_id, location, versions, requests, questions, previous_feedback}, intent: loaded.intent, fulfillment: loaded.fulfillment || [], fewer_options_reason: loaded.fewer_options_reason},
             options: options(loaded), directory: directory(), session: services.session?.(active), navigationFilter, style: services.style(), stashes: storedDrafts(active), questions: questionTable(active),
             sourceSelection, resume: uiState, reading, busy: handling, relatedReturn: relatedReturn?.c.id,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
