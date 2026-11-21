@@ -949,6 +949,7 @@ window.addEventListener('message', ({data: message}) => {
         if (resume) {for (const [label, value] of Object.entries(resume.drafts)) drafts.set(label, value); focused = options.some(o => o.label === resume.focused) ? resume.focused : undefined;}
         for (const o of options) {
             if (saved ? o.label === message.option : !refresh || JSON.stringify(o) !== JSON.stringify(oldOptions.find(old => old.label === o.label))) renderOption(o);
+            if (resume && drafts.has(o.label)) $('edit-' + o.label).value = drafts.get(o.label);
             const article = $('option-' + o.label);
             article.classList.toggle('focused', focused === o.label); article.classList.toggle('folded', !!focused && focused !== o.label);
             article.querySelector('[data-action="focus"]').textContent = focused === o.label ? '返回比较' : '展开';
