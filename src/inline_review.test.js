@@ -34,7 +34,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     fs.writeFileSync(file, value, 'utf8');
     if (state) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n% CODEX-REVIEW-STATE-END', 'utf8');
     const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [], reveals = [];
-    let receive, panels = 0, provider, fileChanged, texChanged, saveHandler, configurationChanged, selectionHandler, sourceValue, cardsHook, pdfHook, migrationHook, manualHook, syncHook;
+    let receive, panels = 0, provider, fileChanged, texChanged, saveHandler, configurationChanged, selectionHandler, sourceValue, cardsHook, cardsTransform, pdfHook, migrationHook, manualHook, syncHook, saveSourceHook;
     const original = value, edit = {file: path.basename(file), kind: 'manuscript', deferred: true, status: 'pending', versions: ['v1'], requests: [], questions: []};
     const start = Array.from(original.slice(0, original.indexOf('First'))).length;
     const data = {version: 'v1', edit, original: 'First sentence.', candidate: 'Better sentence.', options: [
@@ -82,11 +82,13 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         backendCalls.push({args, input});
         if (args.includes('migrate-state') || args.includes('recover-migration')) return JSON.stringify(await migrationHook(args,input));
         if (args.includes('manual-rebase')) return JSON.stringify(await manualHook(args,input));
+        if (args.includes('save-block-source')) return JSON.stringify(await saveSourceHook(args,input));
         if (args.includes('sync-saved')) return JSON.stringify(await syncHook(args,input));
         if (args.some(x => String(x).endsWith('document_roles.py'))) return JSON.stringify({status: 'unconfirmed'});
         if (args.includes('cards')) {
-            const snapshot = JSON.stringify({session: 'batch', sha256: 'fresh', edits: Object.fromEntries(Object.entries(allCards).map(([id, item]) => [id, item.edit])),
-                cards: Object.fromEntries(Object.entries(allCards).filter(([, item]) => ['pending', 'rework'].includes(item.edit.status))), sources: {[path.basename(file)]: sourceValue ?? value}});
+            const packet = {session: 'batch', sha256: 'fresh', edits: Object.fromEntries(Object.entries(allCards).map(([id, item]) => [id, item.edit])),
+                cards: Object.fromEntries(Object.entries(allCards).filter(([, item]) => ['pending', 'rework'].includes(item.edit.status))), sources: {[path.basename(file)]: sourceValue ?? value}};
+            const snapshot = JSON.stringify(cardsTransform ? cardsTransform(structuredClone(packet), args, input) : packet);
             if (cardsHook) await cardsHook();
             return snapshot;
         }
@@ -99,7 +101,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
             {id: 'other', file: edit.file, version: 'v9', current_version: 'v9', original: 'Other original', candidate: 'Other candidate', requests: [{text: 'other item'}]}],
             known_feedback: [{id: '1', version: 'v1', fingerprint: 'first-receipt'}, {id: 'other', version: 'v9', fingerprint: 'other-receipt'}]});
         if (args.includes('decide')) {edit.status = args.includes('--accept') ? 'accepted' : 'rejected';
-            if (edit.status === 'accepted') value = value.replace(data.original, data.options.find(o => o.label === args.at(-1)).after);
+            if (edit.status === 'accepted') value = value.replace(data.original, data.options.find(o => o.label === args[args.indexOf('--option') + 1]).after);
             return '{}';}
         if (args.some(x => String(x).endsWith('review_pdf.py'))) {
             if (pdfHook) await pdfHook(args);
@@ -111,11 +113,54 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     };
     const ui = createInlineReview(vscode, {subscriptions: []}, backend);
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
-        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;}, set syncHook(fn) {syncHook = fn;},
+        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set cardsTransform(fn) {cardsTransform = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;}, set syncHook(fn) {syncHook = fn;}, set saveSourceHook(fn) {saveSourceHook = fn;},
         rows: () => provider.getChildren(), receive: m => receive(m),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
         changed: () => fileChanged(uri(owner)), saved: () => saveHandler(document), savedDocument: doc => saveHandler(doc), texChanged: () => texChanged(uri(file)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
 }
+
+test('refresh reuses only exact immutable option differences and keeps fresh source metadata', async () => {
+    const f=hostFixture(); await f.ui.ready;
+    f.data.options.forEach((option,i)=>{option.changes=[{old_start:i,new_start:i}];option.scope={old_start:i};});
+    const scope={repo:f.root,owner:'reply.tex'};await f.ui.refresh(scope);
+    f.cardsTransform=(packet,args,input)=>{
+        assert(args.includes('--reuse-diffs')); assert.equal(input['1'],'v1');
+        packet.cards['1'].diff_reused=true;
+        packet.cards['1'].options.forEach(option=>{delete option.changes;delete option.scope;});
+        delete packet.cards['1'].changes;
+        return packet;
+    };
+    await f.ui.refresh(scope);
+    assert.deepEqual(f.ui.records.get('1').data.options[1].changes,[{old_start:1,new_start:1}]);
+    const c=f.rows()[0].children[0].command.arguments[0];await f.ui.open(c);await f.receive({type:'ready',instance:'page'});
+    assert.deepEqual(f.packets.filter(m=>m.type==='content').at(-1).options[1].changes,[{old_start:1,new_start:1}]);
+    f.cardsTransform=(packet)=>{packet.cards['1'].diff_reused=true;packet.cards['1'].options[0].after='unexpected';return packet;};
+    await assert.rejects(f.ui.refresh(scope),/不可变候选版本/);
+});
+
+test('advance can display a pending card while its editor buffer is dirty', async () => {
+    const f=hostFixture();await f.ui.ready;
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const c=f.rows()[0].children[0].command.arguments[0];
+    f.document.isDirty=true; f.value += ' Unsaved';
+    await f.ui.workbench.show(c,undefined,true);
+    assert.equal(f.ui.workbench.active.id,'1');
+    assert.equal(f.edit.status,'pending');
+});
+
+test('workbench source save reconciles before replacing the rendered snapshot', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    f.data.block={id:'block-1',text:'First sentence.',source_revision:'r1'};
+    await f.ui.refresh({repo:f.root,owner:'.codex-review/state.json'});
+    const c=f.rows()[0].children[0].command.arguments[0]; await f.ui.open(c); await f.receive({type:'ready',instance:'page'});
+    f.saveSourceHook=async (_,input)=>{f.value=f.value.replace('First sentence.',input.text); fs.writeFileSync(f.file,f.value,'utf8'); return {changed:true};};
+    f.syncHook=async ()=>{f.data.version='v2';f.edit.versions.push('v2');f.data.original='Manual sentence.';f.data.block={id:'block-1',text:'Manual sentence.',source_revision:'r2'};return {changed:true,items:[{id:'1',version:'v2'}],conflicts:[]};};
+    await f.receive({type:'saveSource',instance:'page',id:'1',version:'v1',value:'Manual sentence.'});
+    const operations=f.backendCalls.map(call=>call.args.find(arg=>['save-block-source','sync-saved','cards'].includes(arg))).filter(Boolean);
+    assert(operations.indexOf('sync-saved')>operations.indexOf('save-block-source'));
+    assert.equal(f.packets.filter(m=>m.type==='content').at(-1).c.version,'v2');
+    assert.equal(f.edit.status,'pending');
+});
 
 test('saved fixed-block sources synchronize once while dirty buffers wait', async () => {
     const f = hostFixture(); await f.ui.ready;

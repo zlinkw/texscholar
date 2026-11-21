@@ -74,6 +74,76 @@ test('automatic version keeps candidate, source and note drafts on their old bas
     assert(messages.some(m=>m.error && m.message.includes('旧原文')));
 });
 
+test('saving source applies queued automatic version while keeping other drafts', async () => {
+    let receive, view; const messages = [];
+    const c = {repo:'/fixture',owner:'.codex-review/state.json',id:'1',version:'v1'};
+    const data = {version:'v1',original:'Old.',source_match:true,block:{id:'b',text:'Old.\n',source_revision:'r1'},
+        edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate.',reason:'A',changes:[]}]};
+    const vscode = {Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{
+        cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const next = {...data,version:'v2',original:'New.',block:{id:'b',text:'New.\n',source_revision:'r2'},edit:{...data.edit,versions:['v1','v2']}};
+    const services = {read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[],
+        saveSource:async()=>view.sync(new Map([['1',{c:{...c,version:'v2'},data:next}]]),c,new Set(['1']))};
+    view=createWorkbench(vscode,{subscriptions:[]},services); view.setRecords(new Map([['1',{c,data}]]));
+    await view.show(c); await receive({type:'ready',instance:'page'});
+    await receive({type:'dirty',instance:'page',id:'1',version:'v1',dirty:true,noteDirty:true,state:{drafts:{A:'Draft'},blockDraft:'New.\n',note:'Note'}});
+    await receive({type:'saveSource',instance:'page',id:'1',version:'v1',value:'New.\n'});
+    const packet=messages.filter(m=>m.type==='content').at(-1);
+    assert.equal(view.active.version,'v2'); assert.equal(packet.resume.oldOriginal,'Old.');
+    assert.equal(packet.resume.drafts.A,'Draft'); assert.equal(packet.resume.note,'Note');
+    assert.equal(packet.resume.blockDraft,undefined); assert.equal(packet.resume.sourceDraftStale,false);
+    assert.equal(packet.resume.candidateDraftStale,true);
+});
+
+test('typing another source draft during save does not discard it', async () => {
+    let receive, view, release, started; const messages=[];
+    const c={repo:'/fixture',owner:'.codex-review/state.json',id:'1',version:'v1'};
+    const data={version:'v1',original:'Old.',source_match:true,block:{id:'b',text:'Old.\n',source_revision:'r1'},
+        edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate.',reason:'A',changes:[]}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{
+        cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const begun=new Promise(resolve=>{started=resolve;});
+    const next={...data,version:'v2',original:'Saved.',block:{id:'b',text:'Saved.\n',source_revision:'r2'},edit:{...data.edit,versions:['v1','v2']}};
+    const services={read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[],
+        saveSource:async()=>{started();await new Promise(resolve=>{release=resolve;});view.sync(new Map([['1',{c:{...c,version:'v2'},data:next}]]),c,new Set(['1']));}};
+    view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));
+    await view.show(c);await receive({type:'ready',instance:'page'});
+    await receive({type:'dirty',instance:'page',id:'1',version:'v1',dirty:true,state:{drafts:{},blockDraft:'Saved.\n'}});
+    const saving=receive({type:'saveSource',instance:'page',id:'1',version:'v1',value:'Saved.\n'});await begun;
+    await receive({type:'dirty',instance:'page',id:'1',version:'v1',dirty:true,state:{drafts:{},blockDraft:'Still typing'}});
+    release();await saving;
+    const packet=messages.filter(m=>m.type==='content').at(-1);
+    assert.equal(packet.resume.blockDraft,'Still typing');assert.equal(packet.resume.sourceDraftStale,true);
+});
+
+test('in-flight source save cannot apply another repository synchronization to the current drafts', async () => {
+    let receive, view, release, started; const messages=[];
+    const a={repo:'/a',owner:'state.json',id:'1',version:'v1'}, b={...a,repo:'/b'};
+    const make=(original,version='v1')=>({version,original,source_match:true,block:{id:'b',text:original+'\n',source_revision:version},
+        edit:{file:'main.tex',kind:'manuscript',versions:['v1',version],requests:[]},options:[{label:'A',after:'Candidate.',reason:'A',changes:[]}]});
+    const a1=make('A old.'), b1=make('B old.'), a2=make('A new.','v2'), b2=make('B new.','v2');
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{
+        cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const begun=new Promise(resolve=>{started=resolve;});
+    const services={read:async c=>structuredClone(c.repo==='/a'?a1:b1),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[],
+        saveSource:async()=>{view.sync(new Map([['1',{c:{...a,version:'v2'},data:a2}]]),a,new Set(['1']));started();await new Promise(resolve=>{release=resolve;});}};
+    view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c:a,data:a1}]]));
+    await view.show(a);await receive({type:'ready',instance:'page'});
+    const saving=receive({type:'saveSource',instance:'page',id:'1',version:'v1',value:'A saved.\n'});await begun;
+    await view.show(b);await receive({type:'dirty',instance:'page',id:'1',version:'v1',dirty:true,noteDirty:true,
+        state:{drafts:{A:'B candidate draft'},blockDraft:'A saved.\n',note:'B note draft'}});
+    view.sync(new Map([['1',{c:{...b,version:'v2'},data:b2}]]),b);
+    release();await saving;
+    assert.deepEqual(view.active,b);
+    const packet=messages.filter(m=>m.type==='content').at(-1);
+    assert.equal(packet.data.original,'B old.');
+    await receive({type:'ready',instance:'reopened-page'});
+    const current=messages.filter(m=>m.type==='content').at(-1);
+    assert.equal(current.data.original,'B old.');assert.equal(current.resume.drafts.A,'B candidate draft');
+    assert.equal(current.resume.blockDraft,'A saved.\n');assert.equal(current.resume.note,'B note draft');
+    assert(messages.some(m=>m.type==='conflict'));
+});
+
 test('manual rebase preserves block draft and rejects stale displayed revisions', async () => {
     let receive, called = 0; const messages = [];
     const c = {repo:'/fixture',owner:'.codex-review/state.json',id:'1',version:'v1'};
@@ -120,6 +190,42 @@ test('out-of-order reads and retired page messages cannot change the clicked dec
     await receive({type:'accept',id:'ds',version:'version-ds',instance:'current-page',option:'A'});
     assert.deepEqual(accepted.map(c=>[c.id,c.version]),[['ds','version-ds']]);
     assert(records.has('dp')&&records.has('dq')&&records.has('dr'));
+});
+
+test('a later explicit navigation wins over an in-flight automatic advance', async () => {
+    let receive, view, release, started;
+    const make=id=>({c:{repo:'/fixture',owner:'reply.tex',id,version:'v1'},data:{id,version:'v1',original:'Old',source_match:true,
+        edit:{file:'reply.tex',kind:'response',status:'pending',versions:['v1'],requests:[]},options:[{label:'A',after:'New',reason:'A',changes:[]}]}});
+    const records=new Map(['1','2','3'].map(id=>[id,make(id)]));
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{
+        cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage(){}}})}};
+    const begun=new Promise(resolve=>{started=resolve;});
+    const services={read:async c=>structuredClone(records.get(c.id).data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,
+        directory:()=>[...records].map(([id,r])=>({id,version:r.c.version,...r.data.edit})),
+        accept:async c=>{started();await new Promise(resolve=>{release=resolve;});records.delete(c.id);view.sync(records,c);}};
+    view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(records);await view.show(records.get('1').c);await receive({type:'ready',instance:'page'});
+    const accepting=receive({type:'accept',instance:'page',id:'1',version:'v1',option:'A'});await begun;
+    await view.show(records.get('3').c);release();await accepting;
+    assert.equal(view.active.id,'3');assert(records.has('2')&&records.has('3'));
+});
+
+test('automatic advance becomes usable while the list reveal is still running', async () => {
+    let receive, view, release; const messages=[];
+    const make=id=>({c:{repo:'/fixture',owner:'reply.tex',id,version:'v1'},data:{id,version:'v1',original:'Old',source_match:true,
+        edit:{file:'reply.tex',kind:'response',status:'pending',versions:['v1'],requests:[]},options:[{label:'A',after:'New',reason:'A',changes:[]}]}});
+    const records=new Map(['1','2'].map(id=>[id,make(id)]));
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{
+        cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const gate=new Promise(resolve=>{release=resolve;});
+    const services={read:async c=>structuredClone(records.get(c.id).data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,
+        directory:()=>[...records].map(([id,r])=>({id,version:r.c.version,...r.data.edit})),
+        activeChanged:c=>c.id==='2'?gate:Promise.resolve(),accept:async c=>{records.delete(c.id);view.sync(records,c);}};
+    view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(records);await view.show(records.get('1').c);await receive({type:'ready',instance:'page'});
+    const accepting=receive({type:'accept',instance:'page',id:'1',version:'v1',option:'A'});
+    try {
+        await new Promise(resolve=>setImmediate(resolve));
+        assert.equal(view.active.id,'2');assert(messages.some(m=>m.type==='busy'&&m.action===false));
+    } finally {release();await accepting;}
 });
 test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts and next acceptance', async () => {
     let receive, creations = 0, htmlWrites = 0, confirmation, disposed, panel, changed;

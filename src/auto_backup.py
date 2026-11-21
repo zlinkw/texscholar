@@ -44,10 +44,15 @@ def saved_update(root, spec):
         if spec.get('done'):
             if job.get('commit') != spec.get('commit'):
                 raise Conflict('自动备份提交身份不一致。')
-            data['saved_done'] = {'commit': job['commit'], 'files': job['files']}
+            data['saved_done'] = {'commit': job['commit'], 'files': job['files'],
+                                  **({'review': job['review']} if job.get('review') else {}),
+                                  **({'review_error': job['review_error']} if job.get('review_error') else {})}
             del data['saved_job']
             if not data.get('saved_pending'):
-                data['saved_status'] = {'status':'done', 'commit':spec['commit'], 'message':'已备份 ' + spec['commit'][:8]}
+                message = '已备份 ' + spec['commit'][:8]
+                if job.get('review_error'):
+                    message += '；审核发布凭据未记录：' + job['review_error']
+                data['saved_status'] = {'status':'done', 'commit':spec['commit'], 'message':message}
         else:
             job['commit'] = spec['commit']
             if not data.get('saved_pending'):
@@ -70,6 +75,8 @@ def saved_event(root, spec):
         elif spec['action'] in ('failed', 'idle'):
             if not data.get('saved_pending'):
                 data['saved_status'] = {key:spec[key] for key in ('status', 'message', 'commit') if key in spec}
+                if spec['action'] == 'idle' and (data.get('saved_done') or {}).get('review_error'):
+                    data['saved_status']['message'] += '；审核发布凭据未记录：' + data['saved_done']['review_error']
         else:
             raise Conflict('未知自动备份状态。')
     return saved_ledger(root, update)
@@ -201,7 +208,7 @@ def saved_commit(root, git_exe, spec):
     attrs = git('check-attr', 'filter', 'working-tree-encoding', '--', *names).decode().splitlines()
     if any(not line.endswith((': unspecified', ': unset')) for line in attrs):
         raise Conflict('备份范围含自定义 Git 内容转换规则；未提交。')
-    expected, modes = {}, {}
+    expected, modes, blobs = {}, {}, {}
     for name, raw in files.items():
         entries = git('ls-tree', '-z', parent, '--', name).split(b'\0')
         entry = next((e for e in entries if e), None)
@@ -212,6 +219,7 @@ def saved_commit(root, git_exe, spec):
             raise Conflict('自动备份仅支持普通文件：' + name)
         modes[name] = mode
         oid = None if raw is None else git('hash-object', '--path=' + name, '--stdin', data=raw).decode().strip()
+        blobs[name] = oid
         previous = entry.split(b' ', 2)[2].split(b'\t', 1)[0].decode() if entry else None
         if oid != previous:
             expected[name] = oid
@@ -243,6 +251,46 @@ def saved_commit(root, git_exe, spec):
     def prepare(data):
         if data.get('job') or data.get('saved_job') != previous_job:
             raise Conflict('备份任务在准备期间发生变化。')
+        unchanged()
+        if spec.get('owner'):
+            try:
+                r = Review(root, spec['owner'], git_exe)
+                r.assert_ready()
+                accepted = {}
+                for id_, edit in r.state['edits'].items():
+                    name = edit['file']
+                    if edit['status'] != 'accepted' or not edit['versions'] or name not in files or files[name] is None:
+                        continue
+                    text = r.read(name)
+                    if r.original[name] != originals[name]:
+                        raise Conflict('备份期间源码发生变化：' + name)
+                    try:
+                        r.locate_edit(text, edit)
+                    except Conflict:
+                        from review_blocks import reconcile
+                        try:
+                            if r.sidecar:
+                                anchor = edit['anchor']
+                                row = r.block_row(text, name, edit['block_id'])
+                                old = r.contents(anchor['block_snapshot'], 'block.tex')
+                                current = text[row['start']:row['end']]
+                                start, end = anchor['start'], anchor['end']
+                            else:
+                                old = r.contents(r.state['accepted'], name)
+                                current = text
+                                start, end = r.locate_edit(old, edit)
+                            mapped = reconcile(old, current, start, end, [])
+                            if mapped is None or mapped[2] != r.payload(edit)['after']:
+                                continue
+                        except (Conflict, ValueError, KeyError):
+                            continue
+                    accepted[id_] = edit['versions'][-1]
+                job['review'] = {'session':r.state['session'], 'accepted':accepted,
+                                 'accepted_snapshot':r.state['accepted'],
+                                 'sources':{name:{'sha256':digest(raw), 'blob':blobs[name]}
+                                            for name, raw in originals.items() if name in blobs and raw is not None}}
+            except (Conflict, OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+                job['review_error'] = str(error)
         data['saved_job'] = job
     saved_ledger(root, prepare)
     def commit_message(statistics, patch):

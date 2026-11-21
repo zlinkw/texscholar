@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
-const {inspectBackup,backupProject,finishReview,automaticBackup,enqueueAutomatic,activateAutomatic,run} = require('./backup');
+const {inspectBackup,backupProject,finishReview,automaticBackup,enqueueAutomatic,activateAutomatic,reviewWriter,run} = require('./backup');
 const GIT = process.env.LOCAL_LATEX_GIT;
 async function fixture(label) {
     const parent = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT,label+'-'));
@@ -183,10 +183,13 @@ test('saved backup schedules startup save and five-minute checks without UI prom
     saved({uri:uri(path.join(root,'.codex-review','state.json'))}); await new Promise(resolve=>setImmediate(resolve));
     assert.equal(calls.length,2);
     intervals[0].fn(); await new Promise(resolve=>setImmediate(resolve)); assert.equal(calls[2][5],'定时');
+    fs.mkdirSync(path.join(root,'.codex-review')); fs.writeFileSync(path.join(root,'.codex-review','state.json'),'{}','utf8');
+    saved({uri:uri(path.join(root,'main.tex'))}); await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls[3][1],'.codex-review/state.json');
     vscode.workspace.workspaceFolders = [];
     folders({added:[],removed:[folder]}); assert(intervals[0].cleared);
     saved({uri:uri(path.join(root,'main.tex'))}); await new Promise(resolve=>setImmediate(resolve));
-    assert.equal(calls.length,3); assert.deepEqual(logs,[]);
+    assert.equal(calls.length,4); assert.deepEqual(logs,[]);
     subscriptions.forEach(subscription=>subscription.dispose());
 });
 
@@ -273,10 +276,13 @@ test('saved backup works without a review and ignores damaged independent review
     const f = await fixture('saved-bad-sidecar'); f.edit();
     fs.mkdirSync(path.join(f.root,'.codex-review')); fs.writeFileSync(path.join(f.root,'.codex-review','state.json'),'{broken','utf8');
     const options = {git:GIT,gh:'fixture-gh',python:PYTHON};
-    const result = await automaticBackup(f.root,null,options,()=>{},f.execute,'保存');
+    const events=[];
+    const result = await automaticBackup(f.root,'.codex-review/state.json',options,value=>events.push(value),f.execute,'保存');
     assert.equal(await f.git(['show',result.commit+':main.tex']),'Revised sentence.\n');
     assert.equal(fs.readFileSync(path.join(f.root,'.codex-review','state.json'),'utf8'),'{broken');
-    assert.equal((await automaticBackup(f.root,null,options,()=>{},f.execute)).skipped,true);
+    assert.match(events.at(-1).message,/审核发布凭据未记录/);
+    assert.equal((await automaticBackup(f.root,null,options,value=>events.push(value),f.execute)).skipped,true);
+    assert.match(events.at(-1).message,/审核发布凭据未记录/);
 });
 
 test('saved backup retains its local commit when the target is not verified private', async () => {
@@ -365,12 +371,47 @@ test('automatic saved checkpoint preserves delayed notes, manual source and stag
     const after = await f.status();
     assert.deepEqual(after.edits['2'],before.edits['2']);
     assert.deepEqual(after.edits.a,before.edits.a);
+    const ledger = JSON.parse(fs.readFileSync(path.join(f.root,'.codex-review/automatic-backup.json'),'utf8'));
+    assert.equal(ledger.saved_done.review.accepted['1'],before.edits['1'].versions.at(-1));
+    assert.equal(ledger.saved_done.review.accepted_snapshot,before.accepted);
+    assert.equal(after.saved_backup_done.review.accepted['1'],before.edits['1'].versions.at(-1));
     assert(after.edits['2'].requests[0].text.includes('PRIVATE'));
     assert(fs.readFileSync(path.join(f.root,'reply.tex')).equals(rawOwner), 'background progress never invalidates a foreground state-file receipt');
     assert(events.some(e=>e.status==='local')); assert.equal(events.at(-1).status,'done');
     assert.equal((await f.git(['diff','--cached','--name-only'])).trim(),'');
     const again = await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
     assert.equal(again.skipped,true);
+    await f.backend(['begin','--round','round-2','--files','main.tex','reply.tex']);
+});
+
+test('saved backup proves fixed-block acceptance after a separate safe author edit', async () => {
+    const f=await fixture('saved-sidecar-proof');
+    const code=[
+        'import sys',
+        'from pathlib import Path',
+        'from source_review import Review,digest',
+        'root=Path(sys.argv[1])',
+        'def apply(method,*args,initialize=False):',
+        ' r=Review(root,".codex-review/state.json",initialize=initialize)',
+        ' with r.writer_lock():',
+        '  r=Review(root,".codex-review/state.json",initialize=initialize); updated,result=getattr(r,method)(*args); r.persist(updated,digest(r.raw))',
+        ' return result',
+        'apply("begin","round-1",["main.tex"],initialize=True)',
+        'r=Review(root,".codex-review/state.json"); text=r.read("main.tex")',
+        'block=apply("prepare_block",{"file":"main.tex","kind":"paragraph","start":0,"end":len(text),"source_revision":r.source_digest(text)})',
+        'item=apply("propose",{"file":"main.tex","kind":"manuscript","block_id":block["block_id"],"before":"Original","after":"Revised"})',
+        'r=Review(root,".codex-review/state.json"); apply("decide",[item["id"]],[],{item["id"]:r.state["edits"][item["id"]]["versions"][-1]})',
+        'p=root/"main.tex"; p.write_bytes(p.read_bytes().replace(b"sentence.",b"sentence. Additional author text."))'
+    ].join('\n');
+    await run(PYTHON,['-X','utf8','-c',code,f.root],f.root);
+    const result=await automaticBackup(f.root,'.codex-review/state.json',{git:GIT,gh:'fixture-gh',python:PYTHON},()=>{},f.execute);
+    const ledger=JSON.parse(fs.readFileSync(path.join(f.root,'.codex-review/automatic-backup.json'),'utf8'));
+    assert(ledger.saved_done.review.accepted['1']);
+    assert.equal(await f.git(['show',result.commit+':main.tex']),'Revised sentence. Additional author text.\n');
+    const common=['-X','utf8',path.join(SCRIPTS,'source_review.py'),'--project',f.root,'--state','.codex-review/state.json','--git',GIT];
+    const status=JSON.parse(await run(PYTHON,[...common,'status'],f.root));
+    assert.equal(status.saved_backup_done.review.accepted['1'],ledger.saved_done.review.accepted['1']);
+    await run(PYTHON,[...common,'--apply','--expect',status.sha256,'begin','--round','round-2','--files','main.tex'],f.root);
 });
 
 test('offline automatic push preserves one local commit and retries while later acceptance remains queued', async () => {
@@ -381,6 +422,7 @@ test('offline automatic push preserves one local commit and retries while later 
     const local = (await f.git(['rev-parse','HEAD'])).trim();
     const ledger = JSON.parse(fs.readFileSync(path.join(f.root,'.codex-review/automatic-backup.json'),'utf8'));
     assert.equal(ledger.saved_job.commit,local);
+    await assert.rejects(f.backend(['begin','--round','blocked','--files','main.tex','reply.tex']),/请先完成已接收成果/);
     await f.backend(['decide','--accept','a']);
     const next = await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
     assert.notEqual(next.commit,local);
@@ -483,7 +525,9 @@ test('acceptance during a background network wait completes and the queue backs 
     await secondQueued; assert.equal((await f.status()).auto_backup.status,'queued');
     release(); await waitingSecondStart;
     assert.equal((await f.status()).auto_backup.status,'queued','an older completed push cannot claim the newer save is backed up');
-    releaseSecond(); await queue;
+    try {await assert.rejects(f.backend(['begin','--round','too-early','--files','main.tex','reply.tex']),/请先完成已接收成果/);}
+    finally {releaseSecond();}
+    await queue;
     const after = await f.status();
     assert.equal(events.at(-1).status,'done');
     assert.equal(after.auto_backup.status,'done');
@@ -510,6 +554,22 @@ test('a save arriving during local backup metadata is serialized and checked aft
     assert.equal((await f.git(['rev-parse','HEAD'])).trim(),(await f.git(['rev-parse','origin/master'])).trim());
     assert(!events.some(value=>value.status==='failed'));
     assert.equal(events.at(-1).status,'idle');
+});
+
+test('a saved event blocked by a review writer is resumed after that writer finishes', async () => {
+    const f = await fixture('saved-review-lock'); f.edit();
+    const code='import sys; from pathlib import Path; from source_review import writer_lock_at\nwith writer_lock_at(Path(sys.argv[1])/".codex-review"):\n print("locked",flush=True); sys.stdin.readline()';
+    const child=cp.spawn(PYTHON,['-X','utf8','-u','-c',code,f.root],{cwd:f.root,env:process.env,stdio:['pipe','pipe','pipe'],windowsHide:true});
+    let errors=''; child.stderr.on('data',data=>{errors+=data.toString('utf8');});
+    await new Promise((resolve,reject)=>{child.stdout.once('data',resolve);child.once('error',reject);child.once('exit',code=>reject(new Error('lock fixture exited '+code+': '+errors)));});
+    const options={git:GIT,gh:'fixture-gh',python:PYTHON}, events=[];
+    const finishWriter=reviewWriter(f.root);
+    const queue=enqueueAutomatic(f.root,null,options,value=>events.push(value),f.execute);
+    await new Promise(resolve=>setImmediate(resolve));
+    child.stdin.end('\n'); await new Promise(resolve=>child.once('exit',resolve));
+    finishWriter(); await queue;
+    assert.equal(await f.git(['show','origin/master:main.tex']),'Revised sentence.\n');
+    assert(!events.some(value=>value.status==='failed'));
 });
 
 test('a failed queued commit records the real hook error even when its metadata operation failed', async () => {

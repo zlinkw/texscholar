@@ -1133,6 +1133,15 @@ class NativeReview(unittest.TestCase):
             expected = self.review().inspect(id_, source=True)
             expected['source'].pop('text')
             self.assertEqual(card, expected)
+        reused = self.review().cards({first: packet['cards'][first]['version']})
+        cached = reused['cards'][first]
+        self.assertTrue(cached.pop('diff_reused'))
+        self.assertNotIn('changes', cached)
+        for option in cached['options']:
+            self.assertNotIn('changes', option)
+            self.assertNotIn('scope', option)
+        self.assertEqual(cached['source'], packet['cards'][first]['source'])
+        self.assertEqual(reused['cards'][second], packet['cards'][second])
         self.assertEqual(packet['cards'][first]['edit']['requests'][0]['text'], '保留原文，继续审核。')
         self.assertEqual({name: (self.root / name).read_bytes() for name in before}, before)
         self.assertEqual(sorted(p.name for p in (self.root / '.codex-review/objects').iterdir()), objects)
@@ -1163,6 +1172,26 @@ class NativeReview(unittest.TestCase):
             with self.assertRaisesRegex(Conflict, '读取期间原文发生变化'):
                 review.cards()
         self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
+
+    def test_decision_receipt_contains_final_state_and_reusable_next_card(self):
+        first = self.proposal()
+        second = self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'Unchanged context after.',
+                                       'after':'The final context remains unchanged.'})['id']
+        review = self.review()
+        versions = {id_: review.state['edits'][id_]['versions'][-1] for id_ in (first, second)}
+        argv = [sys.executable, '-X', 'utf8', str(Path(__file__).with_name('source_review.py')),
+                '--project', str(self.root), '--state', 'reply.tex', '--apply', '--expect', digest(review.raw),
+                'decide', '--accept', first, '--version', versions[first], '--return-cards']
+        result = subprocess.run(argv, input=json.dumps({'reuse':versions}).encode('utf-8'), capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8'))
+        receipt = json.loads(result.stdout.decode('utf-8'))
+        self.assertTrue(receipt['applied'])
+        self.assertEqual(receipt['cards_packet']['edits'][first]['status'], 'accepted')
+        self.assertNotIn(first, receipt['cards_packet']['cards'])
+        self.assertTrue(receipt['cards_packet']['cards'][second]['diff_reused'])
+        self.assertTrue(receipt['cards_packet']['cards'][second]['source_match'])
+        self.assertIn('The model is reliable and compact.', (self.root / 'main.tex').read_text(encoding='utf-8'))
+        self.assertNotIn('transaction', self.review().state)
 
     def test_selected_feedback_rework_and_acceptance_need_no_git(self):
         old = (self.root / 'main.tex').read_bytes()

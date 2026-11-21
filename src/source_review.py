@@ -921,9 +921,11 @@ class Review:
             self.state = {"schema": 3 if self.sidecar else 2 if self.storage == "files" else 1, "session": uuid.uuid4().hex, "next": [int(n), value],
                           "rounds": [], "edits": {}, "submission": None}
         if self.storage == 'files':
+            saved = (self.backup_status().get('saved_done') or {}).get('review') or {}
+            published = saved.get('accepted', {}) if saved.get('session') == self.state['session'] else {}
             if self.state.get('pending_backup') or any(
                     e['status'] == 'accepted' and e['versions'] and e.get('published_version') != e['versions'][-1]
-                    for e in self.state['edits'].values()):
+                    and published.get(id_) != e['versions'][-1] for id_, e in self.state['edits'].items()):
                 raise Conflict('请先完成已接收成果的提交与推送，再开始新批次；未清除任何旧记录。')
             if any(e['status'] in PENDING and not e.get('deferred', False) for e in self.state['edits'].values()):
                 raise Conflict('旧式候选仍在正文中，请先核对并转换为候选与正文分离的审核方式。')
@@ -1462,7 +1464,7 @@ class Review:
         return updated, {'accepted': accept, 'rejected': reject,
                          'accepted_source': self.state['accepted'] if accept else None}
 
-    def inspect(self, id_, version=None, source=False):
+    def inspect(self, id_, version=None, source=False, reuse_diff=False):
         self.assert_ready()
         edit = self.state["edits"][id_]
         if not edit['versions'] and edit.get('checkpoint'):
@@ -1476,12 +1478,15 @@ class Review:
                   "original": self.contents(version, "original.tex"), "candidate": self.contents(version, "candidate.tex")}
         shown = json.loads(self.contents(version, 'span.json'))
         started = time.perf_counter()
-        result['options'] = [{**o, 'changes': word_changes(result['original'], o['after'])} for o in
-                             shown.get('options', [{'label': 'A', 'after': result['candidate'], 'reason': '已有单方案；可由 AI 重新生成三方案'}])]
+        options = shown.get('options', [{'label': 'A', 'after': result['candidate'], 'reason': '已有单方案；可由 AI 重新生成三方案'}])
+        result['options'] = [dict(o) if reuse_diff else {**o, 'changes': word_changes(result['original'], o['after'])} for o in options]
         result['fewer_options_reason'] = shown.get('fewer_options_reason', '')
         result['intent'] = shown.get('intent')
-        for option in result['options']:
-            option['scope'] = change_scope(result['original'], option['after'], option['changes'])
+        if reuse_diff:
+            result['diff_reused'] = True
+        else:
+            for option in result['options']:
+                option['scope'] = change_scope(result['original'], option['after'], option['changes'])
         self.timings['diff_scope_s'] += time.perf_counter() - started
         if edit.get('accepted_option'):
             result['candidate'] = self.option(shown, edit['accepted_option'])['after']
@@ -1510,7 +1515,8 @@ class Review:
                     start, end = start + len(block), end + len(block)
             result["source"] = {"text": raw, "start": start, "end": end,
                                 "side": "original" if edit.get("deferred", False) else "candidate"}
-            result["changes"] = word_changes(result["original"], result["candidate"])
+            if not reuse_diff:
+                result["changes"] = word_changes(result["original"], result["candidate"])
         return result
 
     def feedback(self, spec):
@@ -1795,7 +1801,7 @@ class Review:
                     edit["conflict"] = str(exc)
         return result
 
-    def cards(self):
+    def cards(self, reuse=None):
         """One read-only UI packet; shared source text occurs once per file."""
         self.assert_ready()
         self._read_cache = {}
@@ -1804,12 +1810,14 @@ class Review:
         for id_, edit in result['edits'].items():
             if edit['status'] not in PENDING:
                 continue
-            data = self.inspect(id_, source=True)
+            reuse_diff = bool(reuse and reuse.get(id_) == edit['versions'][-1])
+            data = self.inspect(id_, source=True, reuse_diff=True) if reuse_diff else self.inspect(id_, source=True)
             edit['source_match'] = data['source_match']
             if not data['source_match']:
                 edit['conflict'] = data['conflict']
                 data['source'] = {'start': 0, 'end': 0, 'side': 'original', 'text': self.original[edit['file']].decode('utf-8-sig')}
-                data['changes'] = word_changes(data['original'], data['candidate'])
+                if not data.get('diff_reused'):
+                    data['changes'] = word_changes(data['original'], data['candidate'])
             text = data['source'].pop('text')
             file = edit['file']
             if file in result['sources'] and result['sources'][file] != text:
@@ -1928,12 +1936,15 @@ def main():
     p.add_argument("--reject", nargs="*", default=[])
     p.add_argument("--version", help="Displayed immutable version, for a single-item GUI decision")
     p.add_argument('--option', choices=list('ABC'), help='Explicit candidate option to accept')
-    sub.add_parser('decide-batch', help='UTF-8 JSON {items:[{id,version,option}]} in explicit insertion order')
+    p.add_argument('--return-cards', action='store_true', help='Return a fresh post-commit card packet; optional immutable versions in JSON stdin')
+    p = sub.add_parser('decide-batch', help='UTF-8 JSON {items:[{id,version,option}]} in explicit insertion order')
+    p.add_argument('--return-cards', action='store_true', help='Return a fresh post-commit card packet')
     p = sub.add_parser('relocate', help='Repair only the exact location; preserve candidate versions and annotations')
     p.add_argument('--id', required=True)
     p.add_argument('--version', required=True)
     sub.add_parser("status")
-    sub.add_parser("cards", help="Read pending UI cards with shared live-source text; no PDF or writes")
+    p = sub.add_parser("cards", help="Read pending UI cards with shared live-source text; no PDF or writes")
+    p.add_argument('--reuse-diffs', action='store_true', help='Read immutable item versions from JSON stdin and omit their unchanged diffs')
     sub.add_parser('feedback-context', help='Read open notes with their exact original/candidate generation; no writes')
     sub.add_parser("feedback", help="UTF-8 JSON anchored author annotation on stdin")
     p = sub.add_parser("inspect")
@@ -1981,7 +1992,7 @@ def dispatch(r, args):
     elif args.command == "status":
         result = r.status()
     elif args.command == "cards":
-        result = r.cards()
+        result = r.cards(json.loads(sys.stdin.read()) if args.reuse_diffs else None)
     elif args.command == 'feedback-context':
         result = r.feedback_context()
     elif args.command == "inspect":
@@ -2047,7 +2058,8 @@ def dispatch(r, args):
         elif args.command == 'relocate':
             updated, result = r.relocate(args.id, args.version, json.loads(sys.stdin.read()))
         elif args.command == 'decide-batch':
-            items = json.loads(sys.stdin.read())['items']
+            spec = json.loads(sys.stdin.read())
+            items = spec['items']
             if not isinstance(items, list) or not items or any(not isinstance(i, dict) or
                     not all(isinstance(i.get(k), str) and i[k] for k in ('id', 'version', 'option')) for i in items):
                 raise Conflict('Provide nonempty items with exact id/version/option')
@@ -2059,6 +2071,7 @@ def dispatch(r, args):
                 raise Conflict("--version requires exactly one decision ID")
             if args.option and len(args.accept) != 1:
                 raise Conflict('--option requires exactly one accepted ID')
+            spec = json.loads(sys.stdin.read()) if args.return_cards else {}
             updated, result = r.decide(args.accept, args.reject, {ids[0]: args.version} if args.version else None, args.option)
         if args.apply and not (args.command in ('save-block-source', 'sync-block', 'sync-saved', 'reassociate-block') and not result['changed']):
             started = time.perf_counter()
@@ -2067,6 +2080,12 @@ def dispatch(r, args):
             if args.command in ('feedback', 'rework-options', 'edit-option', 'manual-rebase'):
                 result['card'] = r.inspect(result['id'], source=True)
                 result['owner_text'] = (r.state_bytes() if r.sidecar else r.encode(r.embedded())).decode('utf-8-sig')
+            if args.command in ('decide', 'decide-batch') and args.return_cards:
+                try:
+                    current = Review(r.repo, r.state_rel, r.git_exe)
+                    result['cards_packet'] = current.cards(spec.get('reuse', {}))
+                except (Conflict, OSError, ValueError, KeyError) as error:
+                    result['cards_error'] = str(error)
         result.update({"applied": args.apply, "expected_sha256": digest(r.raw)})
     return result
 

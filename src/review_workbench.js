@@ -56,6 +56,7 @@ ${assets.script ? `<script nonce="${nonce}" src="${assets.script}"></script>` : 
 
 function createWorkbench(vscode, context, services) {
     let panel, active, loaded, dirty = false, noteDirty = false, handling = false, pending, hasPending = false;
+    const pendingSynchronized = new Map();
     const translations = new Map();
     let translationRun, translationRequested = false, retryTranslation = false, translationEpoch = 0;
     let lastRecords = new Map(), sourceSelection;
@@ -130,11 +131,13 @@ function createWorkbench(vscode, context, services) {
     }
     async function decideAndAdvance(c, action, option) {
         const list = filterItems(directory(), navigationFilter), index = list.findIndex(r => r.id === c.id);
+        const request = showRequest;
         await services[action]({...c, option, workbench: true});
+        if (request !== showRequest) return;
         const eligible = new Set(filterItems(directory(), navigationFilter).map(r => r.id));
         const next = list.slice(index + 1).concat(list.slice(0, Math.max(0, index))).find(r => eligible.has(r.id) && r.id !== c.id);
         hasPending = false;
-        if (next) await show(lastRecords.get(next.id).c);
+        if (next) await show(lastRecords.get(next.id).c, undefined, true);
         else post({type: 'unavailable', message: '当前筛选范围没有下一项；可清除筛选查看其余项目。未自动提交 Git 或判定科学问题完成。'});
     }
     async function handoffSavedNote(c) {
@@ -214,11 +217,11 @@ function createWorkbench(vscode, context, services) {
             if (ownLock) {handling = false; post({type: 'busy', action: false});}
         }
     }
-    async function show(c, restore) {
+    async function show(c, restore, advance = false) {
         const request = ++showRequest;
         if (active && key(active) === key(c) && panel && !restore) {panel.reveal(); await services.activeChanged?.(active); return;}
         if (!await allowSwitch()) {if (active) await services.activeChanged?.(active); return;}
-        const data = await services.read(c);
+        const data = await (advance && services.readNext ? services.readNext(c) : services.read(c));
         if (request !== showRequest) return;
         if (data.id !== undefined && data.id !== c.id || data.version !== undefined && data.version !== c.version) throw new Error('读取卡片身份不一致；未切换或接收。');
         active = {...c}; loaded = data; dirty = noteDirty = false; hasPending = false; sourceSelection = undefined;
@@ -234,7 +237,9 @@ function createWorkbench(vscode, context, services) {
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
-        await services.activeChanged?.(active);
+        const selected = services.activeChanged?.(active);
+        if (advance) Promise.resolve(selected).catch(error => vscode.window.showErrorMessage('论文评论定位失败：' + error.message));
+        else await selected;
     }
     function sync(records, scope, synchronized = new Set()) {
         if (!active || active.repo !== scope.repo || active.owner !== scope.owner) return;
@@ -242,7 +247,14 @@ function createWorkbench(vscode, context, services) {
         const next = records.get(active.id);
         post({type: 'directory', directory: directory()});
         post({type: 'pdfStatus', message: services.pdfStatus(active)});
-        if (handling) {pending = next; hasPending = true; return;}
+        if (handling) {
+            pending = next; hasPending = true;
+            for (const id of synchronized) if (records.has(id)) {
+                const c = records.get(id).c;
+                pendingSynchronized.set(JSON.stringify([c.repo, c.owner, id]), {...c});
+            }
+            return;
+        }
         if (!next) {post({type: 'unavailable', message: '当前项已处理或原文冲突；未覆盖任何未保存内容。'}); return;}
         if (next.c.version === active.version) {
             const questionsChanged = JSON.stringify(loaded.edit.questions) !== JSON.stringify(next.data.edit.questions);
@@ -476,10 +488,13 @@ function createWorkbench(vscode, context, services) {
             } else if (message.type === 'saveSource') {
                 if (uiState?.sourceDraftStale) throw new Error('原文草稿基于旧正文；请先复制或放弃后载入最新。');
                 if (!loaded.block || typeof message.value !== 'string') throw new Error('当前块不可编辑，请先核对标记。');
-                if (noteDirty || Object.entries(uiState?.drafts || {}).some(([label, value]) => options(loaded).some(o => o.label === label && o.after.replace(/\r\n/g, '\n') !== value)))
-                    throw new Error('请先保存候选草稿和批注，再保存原文。');
                 await services.saveSource(c, loaded.block, message.value);
-                loaded = await services.read(c); dirty = false; uiState = readingState(uiState); sendContent();
+                if (!valid(c)) return;
+                const savedText = message.value.replace(/\r\n/g, '\n');
+                if (uiState?.blockDraft === savedText) uiState.blockDraft = undefined;
+                dirty = uiState?.blockDraft !== undefined && uiState.blockDraft !== savedText ||
+                    Object.entries(uiState?.drafts || {}).some(([label, value]) => options(loaded).some(o => o.label === label && o.after.replace(/\r\n/g, '\n') !== value));
+                if (!hasPending) {loaded = await services.read(c); sendContent();}
                 return post({type: 'result', message: '原文已保存；受影响的候选将自动协调。'});
             } else if (message.type === 'manualRebase') {
                 if (!loaded.block || message.block_id !== loaded.block.id || message.source_revision !== loaded.block.source_revision)
@@ -509,9 +524,11 @@ function createWorkbench(vscode, context, services) {
                 if (dirty || noteDirty) throw new Error('请先保存候选和批注，再批量接收。');
                 const items = message.items;
                 if (!Array.isArray(items) || !items.length || items.some(i => !lastRecords.has(i.id) || lastRecords.get(i.id).c.version !== i.version)) throw new Error('选中项已过期，请重新核对。');
+                const request = showRequest;
                 await services.acceptBatch(items.map(i => ({...c, ...i, repo: c.repo, owner: c.owner})));
+                if (request !== showRequest) return;
                 const next = filterItems(directory(), navigationFilter)[0];
-                if (next) await show(lastRecords.get(next.id).c);
+                if (next) await show(lastRecords.get(next.id).c, undefined, true);
                 else post({type: 'unavailable', message: '当前筛选范围已无待审项；其他批注与科学问题状态独立保留。'});
             } else if (message.type === 'accept' || message.type === 'reject') {
                 if (dirty || noteDirty) throw new Error('请先保存候选和返修要求，再接收或拒绝。');
@@ -536,7 +553,12 @@ function createWorkbench(vscode, context, services) {
         } catch (error) {post({type: 'result', error: true, message: error.message});}
         finally {
             handling = false;
-            if (hasPending && (!dirty && !noteDirty || pending?.c.version === active.version)) {const next = pending; hasPending = false; sync(next ? new Map(lastRecords) : lastRecords, {repo: active.repo, owner: active.owner});}
+            const synchronized = new Set([...pendingSynchronized.values()].filter(c => c.repo === active.repo && c.owner === active.owner &&
+                lastRecords.get(c.id)?.c.version === c.version && lastRecords.get(c.id)?.c.repo === c.repo && lastRecords.get(c.id)?.c.owner === c.owner).map(c => c.id));
+            pendingSynchronized.clear();
+            if (hasPending && (!dirty && !noteDirty || pending?.c.version === active.version || synchronized.has(active.id))) {
+                hasPending = false; sync(lastRecords, {repo: active.repo, owner: active.owner}, synchronized);
+            }
             post({type: 'busy', action: false});
         }
     }

@@ -175,7 +175,10 @@ function createInlineReview(vscode, context, execute = run) {
             '--state', c.owner, '--git', cfg.get('gitPath', 'git')];
         if (expect) argv.push('--apply', '--expect', expect);
         const started = performance.now();
-        const raw = await execute(cfg.get('pythonPath', 'python'), [...argv, ...args], c.repo, input);
+        const finishWriter = expect ? require('./backup').reviewWriter(c.repo) : undefined;
+        let raw;
+        try {raw = await execute(cfg.get('pythonPath', 'python'), [...argv, ...args], c.repo, input);}
+        finally {finishWriter?.();}
         const processMs = performance.now() - started, parseStarted = performance.now();
         const result = JSON.parse(raw);
         diagnostics?.appendLine(JSON.stringify({stage:'backend',operation:args[0],id:c.id,version:c.version,
@@ -208,6 +211,22 @@ function createInlineReview(vscode, context, execute = run) {
         cleanBuffers(c, data.edit.file);
         const shown = vscode.workspace.textDocuments.find(doc => doc.uri.scheme === 'file' && sameFile(doc.uri.fsPath, path.join(c.repo, data.edit.file)));
         if (shown && shown.getText() !== data.source.text) throw new Error('编辑区正在同步磁盘内容，请待同步后重新点击；没有覆盖任何内容。');
+        return data;
+    }
+    async function currentFromRecords(c, requireMatch = true) {
+        const record = records.get(c.id);
+        if (!record || record.c.repo !== c.repo || record.c.owner !== c.owner || record.c.version !== c.version ||
+            requireMatch && !record.data.source_match) return requireMatch ? current(c) : readCurrent(c, false);
+        const data = record.data;
+        if (requireMatch) cleanBuffers(c, data.edit.file);
+        else if (vscode.workspace.textDocuments.some(doc => doc.uri.scheme === 'file' && doc.isDirty &&
+            [path.join(c.repo, c.owner), path.join(c.repo, data.edit.file)].some(file => sameFile(file, doc.uri.fsPath)))) return readCurrent(c, false);
+        const [owner, source] = await Promise.all([
+            fs.readFile(path.join(c.repo, c.owner)), fs.readFile(path.join(c.repo, data.edit.file))]);
+        const text = source.toString('utf8').replace(/^\uFEFF/, '');
+        const shown = vscode.workspace.textDocuments.find(doc => doc.uri.scheme === 'file' && sameFile(doc.uri.fsPath, path.join(c.repo, data.edit.file)));
+        if (crypto.createHash('sha256').update(owner).digest('hex') !== data.sha256 || text !== data.source.text || shown && shown.getText() !== text)
+            return requireMatch ? current(c) : readCurrent(c, false);
         return data;
     }
     function range(doc, data) {
@@ -442,16 +461,38 @@ function createInlineReview(vscode, context, execute = run) {
             context.subscriptions.push(stateWatcher, stateWatcher.onDidChange(changed), stateWatcher.onDidCreate(changed), stateWatcher.onDidDelete(changed));
         }
     }
-    function refresh(c, explicitPanel = false, automatic = false) {
-        const task = refreshChain.then(() => renderRefresh(c, explicitPanel, automatic));
+    function reusableVersions(c, source = records) {
+        return Object.fromEntries([...source].filter(([, record]) => record.c.repo === c.repo && record.c.owner === c.owner)
+            .map(([id, record]) => [id, record.c.version]));
+    }
+    function refresh(c, explicitPanel = false, automatic = false, packet) {
+        const task = refreshChain.then(() => renderRefresh(c, explicitPanel, automatic, packet));
         // Recover the sequencing tail only; the caller still receives failures.
         refreshChain = task.catch(() => {});
         return task;
     }
-    async function renderRefresh(c, explicitPanel = false, automatic = false) {
+    async function renderRefresh(c, explicitPanel = false, automatic = false, packet) {
         const started = performance.now();
         watchScope(c);
-        const state = await backend(c, ['cards']);
+        const oldRecords = new Map(records);
+        if (packet) {
+            const owner = await fs.readFile(path.join(c.repo, c.owner));
+            if (crypto.createHash('sha256').update(owner).digest('hex') !== packet.sha256) packet = undefined;
+            else for (const [file, text] of Object.entries(packet.sources)) {
+                if ((await fs.readFile(path.join(c.repo, file), 'utf8')).replace(/^\uFEFF/, '') !== text) {packet = undefined; break;}
+            }
+        }
+        if (packet && Object.entries(packet.cards).some(([id, data]) => data.diff_reused && oldRecords.get(id)?.data.version !== data.version)) packet = undefined;
+        const state = packet || await backend(c, ['cards', '--reuse-diffs'], reusableVersions(c, oldRecords));
+        for (const [id, data] of Object.entries(state.cards)) if (data.diff_reused) {
+            const previous = oldRecords.get(id)?.data;
+            if (!previous || previous.version !== data.version || previous.original !== data.original || previous.candidate !== data.candidate ||
+                previous.options.length !== data.options.length || data.options.some((o, i) => o.label !== previous.options[i].label || o.after !== previous.options[i].after))
+                throw new Error('不可变候选版本与已显示内容不一致；已停止复用差异。');
+            data.options = data.options.map((o, i) => ({...o, changes: previous.options[i].changes, scope: previous.options[i].scope}));
+            data.changes = previous.changes;
+            delete data.diff_reused;
+        }
         latestReviewState = state;
         require('./backup').restoreAutomaticStatus(c.repo, state.auto_backup);
         workbench.backupStatus?.(require('./backup').automaticStatus(c.repo));
@@ -464,7 +505,6 @@ function createInlineReview(vscode, context, execute = run) {
         }
         batch = state.session;
         const documents = new Map(), documentViews = new Map();
-        const oldRecords = new Map(records);
         const blocked = new Set();
         for (const [file, text] of Object.entries(state.sources)) {
             const doc = await vscode.workspace.openTextDocument(uri(c, file));
@@ -593,24 +633,26 @@ function createInlineReview(vscode, context, execute = run) {
         return {...c};
     }
     async function accept(arg) {
-        const c = decisionContext(arg), data = await current(c);
+        const c = decisionContext(arg), data = await currentFromRecords(c);
         if (data.options?.length > 1 && !c.option) {await openWorkbench(c); return;}
         const navigation = pdfMetadata.get(c.repo + '|' + c.id) || context.workspaceState?.get('reviewPDFMeta', {})[c.repo + '|' + c.id];
         const ordered = orderedRecords(), index = ordered.findIndex(record => record.c.id === c.id);
         const following = ordered.slice(index + 1).map(record => record.c.id);
-        await backend(c, ['decide', '--accept', c.id, '--version', c.version, ...(data.options?.length && data.options.length > 1 ? ['--option', c.option || 'A'] : data.options?.length && c.option ? ['--option', c.option] : [])], undefined, data.sha256);
+        const result = await backend(c, ['decide', '--accept', c.id, '--version', c.version, ...(data.options?.length && data.options.length > 1 ? ['--option', c.option || 'A'] : data.options?.length && c.option ? ['--option', c.option] : []), '--return-cards'], {reuse:reusableVersions(c)}, data.sha256);
         vscode.window.showInformationMessage(`${c.id} 已接收并保存；Git 备份已在后台排队，未决批注保留。`);
         scheduleBackup(c);
-        await refresh(c);
+        if (result.cards_error) vscode.window.showErrorMessage('接收已保存，但刷新卡片失败：' + result.cards_error);
+        await refresh(c, false, false, result.cards_packet);
         const next = following.map(id => records.get(id)).find(Boolean);
         if (next && !c.workbench) await openWorkbench(next.c);
         if (navigation && config().get('reviewPDF.autoUpdateAfterAccept', true)) scheduleAcceptedPDF(c, navigation);
     }
     async function reject(arg) {
-        const c = decisionContext(arg), data = await readCurrent(c, false);
+        const c = decisionContext(arg), data = await currentFromRecords(c, false);
         cleanBuffers(c, data.edit.file);
-        await backend(c, ['decide', '--reject', c.id, '--version', c.version], undefined, data.sha256);
-        await refresh(c);
+        const result = await backend(c, ['decide', '--reject', c.id, '--version', c.version, '--return-cards'], {reuse:reusableVersions(c)}, data.sha256);
+        if (result.cards_error) vscode.window.showErrorMessage('拒绝已保存，但刷新卡片失败：' + result.cards_error);
+        await refresh(c, false, false, result.cards_packet);
         vscode.window.showInformationMessage(`${c.id} 候选已拒绝，原文保留；不代表科学问题已解决，未提交 Git 或推送。`);
     }
     function scheduleBackup(c, trigger = '接收') {
@@ -631,10 +673,11 @@ function createInlineReview(vscode, context, execute = run) {
             if (!edit || !OPEN.has(edit.status) || edit.versions.at(-1) !== item.version) throw new Error('选中项已变化：' + item.id + '；未接收任何项。');
             cleanBuffers(c, edit.file);
         }
-        const result = await backend(c, ['decide-batch'], {items: items.map(({id, version, option}) => ({id, version, option}))}, state.sha256);
+        const result = await backend(c, ['decide-batch', '--return-cards'], {items: items.map(({id, version, option}) => ({id, version, option})), reuse:reusableVersions(c)}, state.sha256);
         vscode.window.showInformationMessage('已接收并保存 ' + result.accepted.join(', ') + '；后台备份已排队。');
         scheduleBackup(c);
-        await refresh(c);
+        if (result.cards_error) vscode.window.showErrorMessage('接收已保存，但刷新卡片失败：' + result.cards_error);
+        await refresh(c, false, false, result.cards_packet);
         const navigation = items.map(i => pdfMetadata.get(i.repo + '|' + i.id)).find(Boolean);
         if (navigation && config().get('reviewPDF.autoUpdateAfterAccept', true)) scheduleAcceptedPDF(c, navigation);
         return result;
@@ -717,7 +760,7 @@ function createInlineReview(vscode, context, execute = run) {
         return saved?.version === c.version ? saved.option : 'A';
     }
     const workbench = require('./review_workbench').createWorkbench(vscode, context, {
-        style, read: c => readCurrent(c, false), selection: selectedOption, activeChanged: selectReviewItem,
+        style, read: c => readCurrent(c, false), readNext: c => currentFromRecords(c, false), selection: selectedOption, activeChanged: selectReviewItem,
         trace: value => diagnostics?.appendLine(JSON.stringify(value)),
         directory: () => Object.entries(latestReviewState?.edits || {}).map(([id, edit]) => ({id, file: edit.file, kind: edit.kind, status: edit.status,
             version: edit.versions.at(-1), source_match: edit.source_match, options: records.get(id)?.data?.options?.map(o => o.label), manual_options: records.get(id)?.data?.options?.filter(o => o.manually_edited).map(o => o.label), option: selectedOption({...activeScope, id, version: edit.versions.at(-1)}), location: locationTitle(edit), summary: displayText(records.get(id)?.data?.options?.[0]?.after || '').replace(/\s+/g, ' ').slice(0, 140), questions: (edit.questions || []).map(q => q.id), requests: (edit.requests || []).filter(n => n.status === 'open').length})),
@@ -753,7 +796,7 @@ function createInlineReview(vscode, context, execute = run) {
                 throw new Error('编辑区与磁盘尚未同步；请先核对。');
             await backend(c, ['save-block-source', '--id', c.id, '--version', c.version],
                 {block_id: displayed.id, source_revision: displayed.source_revision, text}, data.sha256);
-            await refresh(c);
+            changedFiles.add(path.join(c.repo, data.edit.file));
         }),
         manualRebase: (c, displayed, selection) => exclusive(async () => {
             const data = await readCurrent(c, false);

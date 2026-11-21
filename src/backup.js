@@ -7,6 +7,20 @@ const {environment} = require('./core');
 const EXTENSIONS = new Set(['.tex','.bib','.bst','.sty','.cls','.clo','.bbx','.cbx','.cfg','.def','.fd',
     '.pdf','.png','.jpg','.jpeg','.eps','.svg','.drawio','.otf','.ttf','.tfm','.map','.enc','.csv','.dat']);
 const repositoryJobs = new Map(), automaticJobs = new Map(), automaticStates = new Map(), automaticListeners = new Set();
+const reviewWriters = new Map();
+function reviewWriter(root) {
+    root = fs.realpathSync(root);
+    let state = reviewWriters.get(root);
+    if (!state) {state = {active:0, generation:0, waiters:[]}; reviewWriters.set(root, state);}
+    state.active++; state.generation++;
+    return () => {
+        if (!--state.active) for (const resolve of state.waiters.splice(0)) resolve();
+        if (!state.active && !automaticJobs.has(root)) reviewWriters.delete(root);
+    };
+}
+async function reviewIdle(state) {
+    while (state.active) await new Promise(resolve => state.waiters.push(resolve));
+}
 function publishAutomatic(root, value, report) {
     automaticStates.set(root, value);
     report(value);
@@ -89,7 +103,12 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
         const invoke = () => execute(options.python || 'python',
             ['-X','utf8',path.join(__dirname,'auto_backup.py'),'--project',root,'--git',options.git || 'git',operation],
             root, input === undefined ? undefined : JSON.stringify(input));
-        return JSON.parse(await (operation === 'saved-status' || independent ? invoke() : metadata(invoke)));
+        const recover = operation === 'saved-local' ? async () => {
+            const state = JSON.parse(await execute(options.python || 'python',
+                ['-X','utf8',path.join(__dirname,'auto_backup.py'),'--project',root,'--git',options.git || 'git','saved-status'],root));
+            return state.commit ? JSON.stringify({commit:state.commit,parent:state.job.parent,token:state.job.token}) : undefined;
+        } : undefined;
+        return JSON.parse(await (operation === 'saved-status' || independent ? invoke() : metadata(invoke, operation === 'saved-local' || operation === 'saved-update', recover)));
     };
     const notify = value => {value = {...value, elapsed_ms:performance.now()-started}; report(value);};
     let local;
@@ -130,12 +149,12 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
             }
             if (!files.length) {
                 const value = {status:'idle',message:'没有可备份的已跟踪论文文件'};
-                await helper('saved-event',{action:'idle',...value}); notify(value); return {skipped:true};
+                const recorded = await helper('saved-event',{action:'idle',...value}); notify(recorded.saved_status || value); return {skipped:true};
             }
-            local = await helper('saved-local', {parent:head, files, new_files:newFiles, trigger});
+            local = await helper('saved-local', {parent:head, files, new_files:newFiles, trigger, owner});
             if (local.unchanged) {
                 const value = {status:'idle',message:'已保存源码无变化'};
-                await helper('saved-event',{action:'idle',...value}); notify(value); return {skipped:true};
+                const recorded = await helper('saved-event',{action:'idle',...value}); notify(recorded.saved_status || value); return {skipped:true};
             }
         }
         notify({status:'local',commit:local.commit,message:'本地备份已提交，远端待上传'});
@@ -147,12 +166,12 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
         if ((await git(['rev-parse','HEAD'])).trim() !== local.commit) throw new Error('本地 HEAD 已变化，不上传未归属提交');
         const pushed = actualRemote === local.commit ? local.commit : await pushPrivate(plan,local.commit);
         if (pushed !== local.commit) throw new Error('推送后检查点不一致，未标记完成');
-        await helper('saved-update',{token:local.token,commit:pushed,done:true});
+        const completed = await helper('saved-update',{token:local.token,commit:pushed,done:true});
         if (resuming && !afterResume) {
             notify({status:'queued',commit:pushed,message:'已恢复上次备份，正在检查后续保存'});
             return automaticBackup(root,owner,options,report,execute,trigger,true,metadata);
         }
-        notify({status:'done',commit:pushed,message:'已备份 ' + pushed.slice(0,8)});
+        notify({status:'done',commit:pushed,message:completed.saved_status?.status === 'done' ? completed.saved_status.message : '已备份 ' + pushed.slice(0,8)});
         return {commit:pushed};
     } catch (error) {
         const value = {status:'failed', ...(local?.commit ? {commit:local.commit} : {}),
@@ -170,17 +189,31 @@ function enqueueAutomatic(root, owner, options, report = () => {}, execute = run
         previous.again = true; previous.trigger = trigger; previous.owner = owner || previous.owner; return previous.promise;
     }
     const entry = {again:false,trigger,owner,records:Promise.resolve()}; automaticJobs.set(root,entry);
+    let writer = reviewWriters.get(root);
+    if (!writer) {writer = {active:0,generation:0,waiters:[]}; reviewWriters.set(root,writer);}
     const record = input => execute(options.python || 'python', ['-X','utf8',path.join(__dirname,'auto_backup.py'),
         '--project',root,'--git',options.git || 'git','saved-event'],root,JSON.stringify(input));
-    const metadata = action => {
-        const result = entry.records.then(action);
+    const metadata = (action, retryLock = false, recover) => {
+        const result = entry.records.then(async () => {
+            while (true) {
+                await reviewIdle(writer);
+                const generation = writer.generation;
+                try {return await action();}
+                catch (error) {
+                    if (!retryLock || !/另一个审核写入或缓存清理正在进行/.test(error.message) ||
+                        !writer.active && writer.generation === generation) throw error;
+                    await reviewIdle(writer);
+                    if (recover) {const result = await recover(); if (result !== undefined) return result;}
+                }
+            }
+        });
         entry.records = result.then(() => {});
         entry.records.catch(() => {}); // The owning task observes the same rejection before its next run.
         return result;
     };
     entry.queueEvent = () => {
         const id = crypto.randomUUID(); entry.eventId = id;
-        metadata(() => record({action:'queued',id}));
+        metadata(() => record({action:'queued',id}), true);
     };
     entry.queueEvent();
     const notify = value => publishAutomatic(root, value.status === 'done' && entry.again
@@ -191,7 +224,7 @@ function enqueueAutomatic(root, owner, options, report = () => {}, execute = run
             entry.again = false;
             const id = entry.eventId;
             await entry.records;
-            await metadata(() => record({action:'start',id}));
+            await metadata(() => record({action:'start',id}), true);
             await automaticBackup(root,entry.owner,options,notify,execute,entry.trigger || '保存',false,metadata);
         } while (entry.again);
     }).catch(error => {
@@ -202,6 +235,7 @@ function enqueueAutomatic(root, owner, options, report = () => {}, execute = run
             if (!current.message.includes(error.message)) notify({status:'failed',message:current.message + '\n备份状态落盘失败：' + error.message});
         }
         automaticJobs.delete(root);
+        if (!writer.active) reviewWriters.delete(root);
         // Only a real event arriving during this run schedules another check.
         if (entry.again) enqueueAutomatic(root,entry.owner,options,report,execute,entry.trigger);
     });
@@ -429,8 +463,6 @@ function activateAutomatic(vscode, context, enqueue = enqueueAutomatic, timers =
         return {git:cfg.get('gitPath','git'),gh:cfg.get('ghPath','gh'),python:cfg.get('pythonPath','python')};
     };
     async function ownerFor(root) {
-        const ledger = path.join(root,'.codex-review','automatic-backup.json');
-        if (!fs.existsSync(ledger) || !JSON.parse(fs.readFileSync(ledger,'utf8')).job) return null;
         if (fs.existsSync(path.join(root,'.codex-review','state.json'))) return '.codex-review/state.json';
         const files = await vscode.workspace.findFiles(new vscode.RelativePattern(root,'**/*.tex'),'**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**');
         const owners = files.filter(file => /^% CODEX-REVIEW-DATA /m.test(fs.readFileSync(file.fsPath,'utf8')));
@@ -554,7 +586,7 @@ function activate(context) {
         finally {busy = false;}
     }));
 }
-module.exports = {automaticBackup, enqueueAutomatic, automaticStatus, serializeGit, activateAutomatic,
+module.exports = {automaticBackup, enqueueAutomatic, automaticStatus, serializeGit, activateAutomatic, reviewWriter,
     onAutomatic(listener) {automaticListeners.add(listener); return {dispose() {automaticListeners.delete(listener);}};},
     restoreAutomaticStatus(root, value) {if (value && !automaticJobs.has(root) && !automaticStates.has(root)) automaticStates.set(root,value);}, activate,inspectBackup,backupProject,finishReview,commitMessage,run};
 if (require.main === module) {
