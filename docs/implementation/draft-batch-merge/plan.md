@@ -42,15 +42,29 @@ F1最小回归：关闭页A→B空→C空；另一项目页活跃；快连续B/C
 
 ## 实施与验收顺序
 
-- [ ] D1 Terra：F1在权威状态边界推进单键窗口，补无页/空批/顺序/跨项目回归。
-- [ ] D2 Terra：F2三组件成功消费及精确快照归属，保留未保存/失败/并发新稿与旧基准。
-- [ ] D3 Terra：明确批量前置检查归属，最小合并重复进程或读取，保持完整事务与动态依据；补必要正确性回归和同形前后阶段计时。
-- [ ] D4 Terra：最终受影响分组、必要消费者/小验收，审本次diff新增判断/抽象/依赖均有实际用途；冻结交完整包及测试/UI租约。不要提前替总控做相同完整D5混合验收。
+- [x] D1 Terra：F1在权威状态边界推进单键窗口，补无页/空批/顺序/跨项目回归。
+- [x] D2 Terra：F2三组件成功消费及精确快照归属，保留未保存/失败/并发新稿与旧基准。D5新发现的完全消费后同页再保存问题仍须R1返修。
+- [x] D3 Terra：明确批量前置检查归属，最小合并重复进程或读取，保持完整事务与动态依据；补必要正确性回归和同形前后阶段计时。
+- [x] D4 Terra：最终受影响分组、必要消费者/小验收，审本次diff新增判断/抽象/依赖均有实际用途；冻结交完整包及测试/UI租约。不要提前替总控做相同完整D5混合验收。
 - [ ] D5 总控：接包后一次新30项跨入口混合终验。真实三稿恢复并逐组件保存、无页连续空批及项目切换窗口、重启与旧回调衔接，再做部分混合方案批量接收/下一项/延期批注与counter/范围外暂存、后台及草稿消费者完整。仅补小验收未覆盖部分，失败回原Terra，明确通过才交回租约。
 - [ ] D6 Terra：实际版本/tag唯一核对，必要版本/MCP和发行工具检查，一次打包、精确源码提交/普通push/fetch、附注tag双包摘要、正式Release/API附件核对和同一VSIX安装；维护execution/plan/index收尾普通推送，完整交包供总控核元数据。禁止包后冒烟/自动reload/真实论文操作。
 
 每个内聚验证批通过后审diff，只stage本任务源码/测试/文档（本计划/index获准纳入），普通commit/push origin/master/fetch核相等，不夹无关暂存、运行产物或秘密。远端推进、保护或凭据失败按原规则停止相关交付报告，不reset/rebase/merge/force、换remote或分支。字段/文件较多按内聚接口分批，不以最小修改留下缺失消费者。
 
+## D5首轮结论及R1返修
+
+总控在`8e0d84ac94a0b86bf2e757ec3682a422e27beddc`审核实际diff和D4完整日志，未接管产品实现。复用editor161项、最终受影响64项及native5项的有效覆盖。新正常Development三根工作区证据在`D:/latex-writing-checks/draft-batch-merge-20261121/controller-d5-final`，全部日志、失败和外置脚本保留；早期驱动失败在同父根`controller-d5`，不复用其已修改样例。
+
+已通过的组合事实：final的phase1创建30项及三个项目暂存，正常进程退出；phase2实际重启恢复三稿并只保存批注，其余候选/原文和原版本/选区/基准保留，后端批注恰一次。phase2b在已知检查点续接，真实候选保存只消费候选，原文仍旧基准；原文保存后该项自有记录移除，批注未复活。随后真实按钮7A/8B/9C批量至1可操作724ms、1B单项至2可操作653ms，四项正式源/决定durable，无transaction，30延期项和counter完整。50ms观察粒度，已初始化/首次PDF后暖态，本地bare Git及GitHub身份fixture；不声称冷启动或收益比例。最终仍未因驱动失败而宣布整链通过。
+
+F1也已补齐：phase2b的B批创建成功后外置返回值误读停止，phase2c先正常权威refresh观察已创建B（无页），再开other页并创建/refresh空C；窗口正确C/B、A文字及嵌套均消失，other记录逐字不变且页面归属other。phase3正常再次启动退出0、host.passed=true，真实Memento与上述快照一致，仅剩project/6与other/1两条草稿及单一聚合键；不同session_id证明整进程重启。源、初始Git、真实TinyTeX PDF及clean-export中均未检出未提交private哨兵，但整体消费者脚本未通过：失败宿主退出前没有进入既定后台drain，automatic-backup仍queued、四项接收尚未写入Git。不得把CLI0或私有哨兵排除当后台Git完成；返修后仍须完成该缺口。
+
+**R1阻断、真实产品问题**：phase2c在全新未改的10项上，新增批注FIRST→暂存关闭→重开恢复→保存，记录消失；同页再新增合法SECOND并保存，后端已有FIRST/SECOND各一次、无transaction，但页面显示`Cannot read properties of undefined (reading 'state')`，SECOND仍在输入框。`second-note-observed.json`保留实际current/输入/页面全文，phase2c-milestones的last_note_consumed保留消费后真实Memento；state.json保留两条实际要求。第二次不能作为未提交稿让作者重存。当前diff的consumeRestoredDraft在删除最后record后将token.snapshot更新为undefined却保留restoredDraft；下次current与snapshot同为undefined会继续读取record.state，符合此次真实错误。由原Terra修复完全消费后的关联生命周期，保留新快照/新页/迟到回调保护，不以后台文字去重解决。
+
+外置失败也保留：两根setup首败是Windows换行导致prepare_block安全边界失败，按确定的零proposal点续接、显式newline=''后通过；原controller-d5先因strict repo只认主项目而空批页定位超时，后修真实目标范围；其phase2实际保存候选后误查data.options超时。final phase2也在CDP反复attach等待中失去返回，原60000ms预算未改，在实核自有PID/超时后取消Node，实际4294967295、host false，不计通过；稳定连接与同一60000ms总期限的驱动phase2b续接后完成组件及混合样本。B创建后ops误读返回patch的session导致exit1，未重放begin，phase2c从真实已创建B继续。consumers/consumers2分别因误要求未接受的已保存注释进入Git、以及后台队列未drain退出1；原export成功证据复用，不覆盖旧日志或重放未知写。
+
+D5仍失败、D6未授权启动。R1小验收需覆盖最后record消费后同页独立新输入（包括合法同文新批注）真正完成、失败不消费及旧回调不清新暂存，并按共享helper影响补原受影响套件。冻结返修包后，总控仅用新隔离样例补该真实缺口和受影响的三组件消费、后台Git/PDF/export；F1、混合ABC及未受影响有效证据复用，不机械再跑30项整套。真实论文、旧样例、所有原失败、未保存输入及范围外暂存保护不变；不删文件、不发行、不安装、不重载。源码基线及租约以真实返修交权消息为准。
+
 ## 当前归属
 
-完整计划已建立，原Terra连续D1–D4，总控只维护计划/index。实际开工写execution，不发仅确认状态消息；按最新AGENTS只在完整交包、必要交权或必须总控决定的真实阻断/风险时消息，普通过程写记录。派发成功且无独立待办后总控角色空闲，由完整交包接续；D5未通过前不得D6。预计版号不是已发布事实。
+现任总控为 `local/01a1fe7c-cc49-70d0-ac4c-af5e77c7b6ba`，旧总控自然达到caveman门槛后完成交班；新总控实际resolved/observed为gpt-6.1-sol/high/default、match/continue，旧turn结束并已归档。D1–D4冻结交包为 `8e0d84ac94a0b86bf2e757ec3682a422e27beddc`。D5首轮发现上述R1，已通过真实消息向唯一原Terra `local/01a1fd60-2da5-74e0-8e68-e266cf679881`交完整返修包、保护和下一动作，并交回产品/测试/UI租约；发送成功不冒称实际开工。总控现场进程已全部收取结束，CIM精确检查无controller-d5在途过程；总控仅保留plan/index写权并角色空闲，等冻结返修交包接续。D5未明确通过前不得D6。预计版号不是已发布事实。

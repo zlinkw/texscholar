@@ -830,6 +830,33 @@ test('saving the only restored note removes a record containing just an unchange
     await open('q');const stash=messages.findLast(m=>m.type==='content').stashes[0];await receive({type:'restoreStash',instance:'q',id:'1',version:'v1',stash:stash.id});
     await receive({type:'note',instance:'q',id:'1',version:'v1',side:'original',text:'new note'});
     assert.deepEqual(notes,['new note']);assert.equal(values.reviewDrafts[stash.id],undefined);assert.deepEqual(messages.findLast(m=>m.type==='stashes').stashes,[]);
+    for (const text of ['another note','new note']) {
+        await receive({type:'dirty',instance:'q',id:'1',version:'v1',dirty:false,noteDirty:true,state:{c,drafts:{},note:text}});
+        const before=messages.length;await receive({type:'note',instance:'q',id:'1',version:'v1',side:'original',text});
+        assert(messages.slice(before).some(m=>m.type==='noteSaved'));assert(!messages.slice(before).some(m=>m.error));
+    }
+    assert.deepEqual(notes,['new note','another note','new note']);
+});
+
+test('saving a last candidate or source draft allows a later independent note', async () => {
+    for (const component of ['candidate','source']) {
+        let receive,dispose;const values={},messages=[],notes=[];
+        const c={repo:'/last-'+component,owner:'state',id:'1',version:'v1'};
+        let data={id:'1',version:'v1',original:'Original',source_match:true,block:{id:'b',text:'Original\n'},edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate'}]};
+        const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+        const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},dispose(){dispose();},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+        const services={session:()=> 's',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],saved(){},note:async(_c,_selected,text)=>notes.push(text),saveSource:async()=>{},save:async()=>{data={...data,version:'v2',edit:{...data.edit,versions:['v1','v2']},options:[{label:'A',after:'new candidate'}]};return structuredClone(data);}};
+        const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services),records=new Map([['1',{c,data}]]),open=async instance=>{view.setRecords(records);await view.show(c);await receive({type:'ready',instance});};
+        await open('p');const state={c,drafts:component==='candidate'?{A:'new candidate'}:{},blockDraft:component==='source'?'new source':'Original\n',note:''};
+        await receive({type:'stashClose',instance:'p',id:'1',version:'v1',state});await open('q');const stash=messages.findLast(m=>m.type==='content').stashes[0];
+        await receive({type:'restoreStash',instance:'q',id:'1',version:'v1',stash:stash.id});
+        if(component==='candidate') await receive({type:'save',instance:'q',id:'1',version:'v1',option:'A',value:'new candidate'});
+        else await receive({type:'saveSource',instance:'q',id:'1',version:'v1',value:'new source'});
+        assert.equal(values.reviewDrafts[stash.id],undefined,component);
+        const version=view.active.version;await receive({type:'dirty',instance:'q',id:'1',version,dirty:false,noteDirty:true,state:{c:{...c,version},drafts:{},note:'later'}});
+        const before=messages.length;await receive({type:'note',instance:'q',id:'1',version,side:'original',text:'later'});
+        assert.deepEqual(notes,['later'],component);assert(messages.slice(before).some(m=>m.type==='noteSaved'),component);assert(!messages.slice(before).some(m=>m.error),component);
+    }
 });
 
 test('typing a newer candidate while save-and-accept runs keeps it and stops acceptance', async () => {

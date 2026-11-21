@@ -170,7 +170,7 @@ function createWorkbench(vscode, context, services) {
         if (!token) return Promise.resolve();
         const task = draftWork.then(async () => {
             const saved = context.workspaceState.get('reviewDrafts', {}), current = saved[token.id];
-            if (JSON.stringify(current) !== token.snapshot) return;
+            if (!current || JSON.stringify(current) !== token.snapshot) return;
             const record = structuredClone(current), state = record.state;
             if (component === 'candidate') delete state.drafts[option];
             else if (component === 'source') delete state.blockDraft;
@@ -183,9 +183,12 @@ function createWorkbench(vscode, context, services) {
             else next[token.id] = record;
             try {await context.workspaceState.update('reviewDrafts', next);}
             catch (error) {throw new Error('内容已保存，但本机暂存更新失败：' + error.message + '；请勿重复保存。');}
-            if (restoredDraft === token) token.snapshot = JSON.stringify(next[token.id]);
-            if (restoredDraft === token && active && active.repo === current.c.repo && active.owner === current.c.owner && active.id === current.c.id)
-                post({type:'stashes', stashes:storedDrafts(active)});
+            if (restoredDraft === token) {
+                if (next[token.id]) token.snapshot = JSON.stringify(next[token.id]);
+                else restoredDraft = undefined;
+                if (active && active.repo === current.c.repo && active.owner === current.c.owner && active.id === current.c.id)
+                    post({type:'stashes', stashes:storedDrafts(active)});
+            }
         });
         draftWork = task.catch(() => {});
         return task;

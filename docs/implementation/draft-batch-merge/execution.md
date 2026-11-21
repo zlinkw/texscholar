@@ -17,3 +17,9 @@ D4：最终editor组 `editor-a896cda2926e459b8df085cf8a8cfec2` 161项exit0，外
 未测真实cleanup备份后段、独立PDF/translation全组、真冷启动/复杂真实论文/实网论文上传、Mac/强杀/真实五分钟等待；新版三稿跨进程与Git/PDF/export完整混合留D5。真实论文、范围外暂存、已安装扩展和全局设置未操作；夹具日志保留。D5明确通过前不发行。
 
 最终diff复核补充：保存某候选后继续把未保存原文块计入dirty，防止误接收或切页丢稿；在完整editor组后的此一处运行修改及对应测试用 `d4-dirty-target.log` 对受影响两个文件补跑64项exit0，其他editor组有效覆盖复用。`perf-after`记录使用该原文dirty补丁之前的候选，批量预检/决策路径与最终版本相同；不声称最终版本重新完成端到端测速。
+
+R1（第一次总控返修）：D5未通过。`controller-d5-final` 正常Development页面已保存最后暂存批注后再次新增批注，后端两条各一次但UI报 `Cannot read properties of undefined (reading 'state')`，输入未清；phase2c observer1、host=false、CLI0，不能算通过。原phase1/phase2真正进程重启三稿恢复、逐项消费，phase2b三项批量724ms及单项653ms、phase2c无页B/C与另一项目隔离、phase3正常重启Memento均是独立已完成里程碑；phase2b/2c在失败路径未drain后台，Git仍queued，不能称消费者链通过。总控外置strict repo/data.options、Windows CRLF、CDP重复attach、创建B后误读patch及两次消费者失败均保留在计划及controller-d5各原日志；原超时与取消状态不变。
+
+根因是最后记录被消费后恢复关联仍持有undefined快照，下一次独立保存误把缺失记录视作匹配。现仅当目标记录存在且快照一致才消费；最后记录成功移除时，仅若仍属于该token才结束恢复关联并更新UI。候选/原文/批注共用该修复，不改feedback合法同文新要求、不做去重；旧回调及更新过的新快照仍不能被清除。新增测试首先在旧实现复现：`r1-note-repro.log` 1项exit1，后修复。最终 `r1-editor-first.log` 工作台和inline共65项exit0，cwd `D:/GitRepo/texscholar`、`LOCAL_LATEX_TEST_ROOT=D:/latex-writing-checks/draft-batch-merge-20261121`，argv `C:/Program Files/nodejs/node.exe --test src/review_workbench.test.js src/inline_review.test.js`；覆盖最后批注后同页新内容及合法同文再保存、最后候选/原文后独立新批注、失败不消费、三组件旧基准与旧回调/新暂存。原完整editor161与native5的未受影响覆盖复用，不重跑全组。
+
+新隔离 `r1-note-ui` 真实Webview经后端保存：暂存并恢复批注后保存，再依次新增不同文案和与首次完全相同文案，三次成功后输入框清空，状态中原文案恰两条、不同文案恰一条，暂存记录不复活；observer/CLI均exit0、ui-done/host-result均passed。实际使用extensionTests宿主、隔离项目与真实后端；不将其Memento当正常跨进程证据。样本准备由 `r1-note-ui-setup.py` 创建全新副本，setup/prepare各exit0；host/observer完整argv/cwd/stdout/stderr/退出在 `r1-note-ui/logs`。未提前执行总控剩余真实后台Git/PDF/export混合补验；真实论文、范围外暂存、全局设置和安装未动，无删除。
