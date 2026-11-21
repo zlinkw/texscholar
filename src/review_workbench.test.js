@@ -636,3 +636,22 @@ test('history remains read-only and adopts only into the current draft', async (
     await receive({type:'adoptHistory',instance:'page',id:'1',version:'v1',option:'A',target:'A'});
     assert(messages.some(m=>m.error && m.message.includes('当前项已更新'))); assert.deepEqual(writes,[]);
 });
+
+test('problem review mark is scoped and becomes stale after associated changes', async () => {
+    let receive, snapshot='one', session='s1', present=true; const qkey=JSON.stringify(['R1-Q1','r','Exact']); const messages=[],values={};
+    const workspaceState={get:(k,f)=>values[k] ?? f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+    const c={repo:'/questions',owner:'state',id:'1',version:'v1'}, c2={...c,id:'2'};
+    const data=id=>({id,version:'v1',original:'Old',source_match:true,edit:{file:'x.tex',kind:'manuscript',status:'pending',versions:['v1'],requests:[]},options:[{label:'A',after:'New',reason:'A'}]});
+    const records=new Map([['1',{c,data:data('1')}],['2',{c:c2,data:data('2')}]]);
+    const row=()=>({key:qkey,question:{id:'R1-Q1',file:'r',quote:'Exact'},snapshot,entries:[{id:'2',kind:'manuscript',file:'x.tex',status:'pending',version:'v1',requests:[]}]});
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={session:()=>session,questions:()=>present ? [row()] : [],read:async t=>structuredClone(records.get(t.id).data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[...records].map(([id,r])=>({id,...r.data.edit}))};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services);view.setRecords(records);await view.show(c);await receive({type:'ready',instance:'page'});
+    await receive({type:'checkQuestion',instance:'page',id:'1',version:'v1',questionKey:qkey,snapshot:'one'});
+    assert.equal(messages.filter(m=>m.type==='questionRows').at(-1).questions[0].checked,true);
+    snapshot='two';view.sync(records,c);assert.equal(messages.filter(m=>m.type==='questionRows').at(-1).questions[0].recheck,true);
+    await receive({type:'checkQuestion',instance:'page',id:'1',version:'v1',questionKey:qkey,snapshot:'one'});
+    assert(messages.some(m=>m.error && m.message.includes('关联或批注已变化')));
+    await receive({type:'questionEntry',instance:'page',id:'1',version:'v1',questionKey:qkey,target:'2',targetVersion:'v1'});
+    assert.equal(view.active.id,'2'); present=false; view.sync(records,c); assert.equal(messages.filter(m=>m.type==='questionRows').at(-1).questions[0].recheck,true); present=true; session='s2';view.sync(records,c);assert.equal(messages.filter(m=>m.type==='questionRows').at(-1).questions[0].checked,false);
+});

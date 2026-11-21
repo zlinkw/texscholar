@@ -672,3 +672,17 @@ test('hidden full-line plans leave no blank placeholders; complete deletion resu
         assert.equal(html.replace(/<[^>]+>/g, '').replaceAll('\u200b', ''), text, 'display wrapping preserves every original/proposed word');
     }
 });
+
+test('problem table uses exact verified identity and reflects version, association and notes', () => {
+    const {questionRows}=require('./inline_review');
+    const q={id:'R1-Q1',file:'review.txt',quote:'Exact question'}, q2={...q,quote:'Different question'};
+    const state={edits:{'1':{kind:'manuscript',file:'m.tex',status:'pending',versions:['v1'],questions:[q],requests:[{id:'n',status:'open',text:'first'}]},
+        a:{kind:'response',file:'r.tex',status:'rework',versions:['v2'],questions:[q],requests:[]},
+        '2':{kind:'manuscript',file:'m.tex',status:'accepted',versions:[],questions:[q2],requests:[]}},cards:{'1':{source_match:false},a:{source_match:true}}};
+    const rows=questionRows(state), first=rows.find(r=>r.question.quote===q.quote);
+    assert.equal(rows.length,2); assert.equal(first.entries.length,2); assert.equal(first.entries.find(e=>e.id==='1').conflict,true);
+    assert.deepEqual(new Set(first.entries.map(e=>e.kind)),new Set(['manuscript','response']));
+    const before=first.snapshot; state.edits['1'].requests[0].text='changed'; assert.notEqual(questionRows(state).find(r=>r.key===first.key).snapshot,before);
+    state.edits['1'].versions.push('v3'); assert.notEqual(questionRows(state).find(r=>r.key===first.key).snapshot,before);
+    state.edits.a.questions=[]; assert.equal(questionRows(state).find(r=>r.key===first.key).entries.length,1);
+});

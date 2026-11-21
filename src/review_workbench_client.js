@@ -7,7 +7,7 @@ let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSele
 let navigationFilter = {query: '', kind: '', notes: false};
 let changeCursor;
 let directoryCursor, localFeedback;
-let stashes = [], historyData;
+let stashes = [], historyData, questionRows = [];
 const batchSelection = new Map();
 const feedbackTargets = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap(), differences = new WeakMap();
@@ -24,7 +24,7 @@ $('currentBlock').addEventListener('keyup', () => {selectedBlockRevision = data?
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'start', 'checkUpdates', 'sourcePDF']);
 const sideBusy = new Set();
 const actionNames = {save: '保存候选', saveSource: '保存当前原文', syncBlock: '同步候选', repairBlock: '修复审核块', manualRebase: '人工更新候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
-    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', readHistory:'读取历史', adoptHistory:'采用历史草稿', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
+    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', readHistory:'读取历史', adoptHistory:'采用历史草稿', checkQuestion:'核对问题', questionEntry:'查看关联项', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', checkUpdates: '检查插件更新', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', sourcePDF: '编译正式 PDF', related: '定位关联改动'};
 function fitToolbar() {
     const header = document.querySelector('header'), home = $('toolbarExtras');
@@ -332,6 +332,29 @@ function renderHistory() {
     const changes = math.wordChanges(historyData.original, option.after);
     renderText($('historyOriginal'), historyData.original, changes, 'original');
     renderText($('historyCandidate'), option.after, changes, 'candidate');
+}
+function renderQuestionTable(rows) {
+    questionRows = rows;
+    const root = $('questionTableRows'); root.replaceChildren();
+    if (!rows.length) {root.textContent='本轮尚无明确关联的问题；未关联不等于没有修改。'; return;}
+    for (const row of rows) {
+        const section=document.createElement('section'), heading=document.createElement('h4'), quote=document.createElement('pre');
+        heading.textContent=row.question.id + ' · ' + row.question.file + (row.checked ? ' · 本轮已核对' : row.recheck ? ' · 关联或内容变化，需再核对' : ' · 尚未核对');
+        quote.className='review-text'; quote.textContent=row.question.quote; section.append(heading,quote);
+        const columns=document.createElement('div'); columns.className='appearanceFields';
+        for (const [kind,label] of [['manuscript','正文'],['response','回复信']]) {
+            const entries=row.entries.filter(entry=>entry.kind===kind), col=document.createElement('div'), title=document.createElement('strong');
+            const pending=entries.filter(entry=>['pending','rework'].includes(entry.status)).length;
+            const conflicts=entries.filter(entry=>entry.conflict).length;
+            const review=entries.reduce((n,entry)=>n+(entry.freshness==='needs-recheck'?1:0)+entry.requests.filter(r=>r.status==='addressed-pending-review').length,0);
+            title.textContent=`${label} ${entries.length} 项 · 待审 ${pending} · 冲突 ${conflicts} · 待复核 ${review}`; col.appendChild(title);
+            for (const entry of entries) {const line=document.createElement('div'), button=document.createElement('button'); button.className='secondary'; button.dataset.action='questionEntry'; button.dataset.questionKey=row.key; button.dataset.target=entry.id;
+                button.textContent=entry.id + ' · ' + entry.file + ' · ' + ({pending:'待审',rework:'返修',accepted:'已接收',rejected:'已拒绝'}[entry.status] || entry.status) + (entry.conflict ? ' · 冲突' : '') + (entry.version ? '' : ' · 已精简'); line.appendChild(button); col.appendChild(line);}
+            columns.appendChild(col);
+        }
+        const check=document.createElement('button'); check.className='secondary'; check.dataset.action='checkQuestion'; check.dataset.questionKey=row.key; check.textContent='本轮已核对';
+        section.append(columns,check); root.appendChild(section);
+    }
 }
 function markDirectoryCursor() {
     for (const node of $('directoryResults').querySelectorAll('button')) {
@@ -727,6 +750,7 @@ document.addEventListener('click', event => {
     if (type === 'clearSelection') {batchSelection.clear(); filterDirectory(); return;}
     if (type === 'acceptBatch') {send(type,{items:[...batchSelection.values()]}); return;}
     if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
+    if (type === 'questionTable') {$('questionTable').open=true; $('questionTable').scrollIntoView({block:'nearest'}); return;}
     if (type === 'history') {
         const versions = data.edit.versions.slice(0,-1);
         $('historyVersion').replaceChildren();
@@ -773,6 +797,11 @@ document.addEventListener('click', event => {
     if (type === 'restoreStash' || type === 'discardStash') {send(type, {stash:$('stashChoice').value}); return;}
     if (type === 'readHistory') {if ($('historyVersion').value) {$('historyContent').hidden=true; $('historyStatus').textContent='正在读取历史版本…'; send(type, {historyVersion:$('historyVersion').value});} return;}
     if (type === 'adoptHistory') {send(type, {option:$('historyOption').value,target:$('historyTarget').value}); return;}
+    if (type === 'checkQuestion' || type === 'questionEntry') {
+        const row=questionRows.find(item=>item.key===button.dataset.questionKey); if (!row) return;
+        const entry=row.entries.find(item=>item.id===button.dataset.target);
+        send(type,{questionKey:row.key,snapshot:row.snapshot,target:entry?.id,targetVersion:entry?.version}); return;
+    }
     if (type === 'note' || type === 'noteHandoff') {
         const handoff = type === 'noteHandoff';
         if (editingNote) {send('editNote', {request: editingNote.id, text: $('note').value, previousText: editingNote.previousText, handoff}); return;}
@@ -785,6 +814,7 @@ document.addEventListener('click', event => {
 });
 window.addEventListener('message', ({data: message}) => {
     if (message.type === 'relatedReturn') {showRelatedReturn(message.id); return;}
+    if (message.type === 'questionRows') {renderQuestionTable(message.questions); return;}
     if (message.type === 'history') {
         historyData=message.history; $('historyOption').replaceChildren(); $('historyTarget').replaceChildren();
         for (const o of historyData.options) {const option=document.createElement('option'); option.value=o.label; option.textContent=o.label; $('historyOption').appendChild(option);}
@@ -866,6 +896,7 @@ window.addEventListener('message', ({data: message}) => {
         const refresh = !saved && current && current.repo === message.c.repo && current.owner === message.c.owner && current.id === message.c.id;
         const oldOptions = options;
         current = message.c; data = message.data; options = message.options;
+        renderQuestionTable(message.questions || []);
         stashes = message.stashes || [];
         const priorStash = $('stashChoice').value;
         $('stashChoice').replaceChildren();

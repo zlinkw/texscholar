@@ -10,6 +10,23 @@ const OPEN = new Set(['pending', 'rework']);
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**';
 const TRANSLATORS = {google: 'Google', googleapi: 'Google（googleapis）', bing: 'Bing', deepl: 'DeepL 网页版', transmart: '腾讯 TranSmart'};
 
+function questionRows(state) {
+    const grouped = new Map();
+    for (const [id, edit] of Object.entries(state.edits)) for (const question of edit.questions || []) {
+        const key = JSON.stringify([question.id, question.file, question.quote]);
+        if (!grouped.has(key)) grouped.set(key, {key, question, entries:[]});
+        const source = state.cards[id];
+        grouped.get(key).entries.push({id, kind:edit.kind, file:edit.file, status:edit.status, version:edit.versions.at(-1),
+            conflict:source ? source.source_match === false : undefined, freshness:edit.freshness,
+            requests:edit.requests || [], questions:edit.questions || []});
+    }
+    return [...grouped.values()].map(row => {
+        row.entries.sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric:true}));
+        row.snapshot = JSON.stringify(row.entries);
+        return row;
+    });
+}
+
 function run(command, args, cwd, input, extraEnv) {
     return new Promise((resolve, reject) => {
         const env = require('./tools').environment(extraEnv);
@@ -138,7 +155,7 @@ function createInlineReview(vscode, context, execute = run) {
     let pdfRequestWrites = Promise.resolve();
     const acceptedPDFPreparations = new Set();
     const previewChoices = new Map(), workbenchPDFStatus = new Map(), pdfIntents = new Map();
-    let latestReviewState;
+    let latestReviewState, latestReviewScope;
     const titleTranslations = new Map();
     let titleRun;
     const locationTitle = edit => edit.location_zh || titleTranslations.get(edit.location) || edit.location;
@@ -493,7 +510,7 @@ function createInlineReview(vscode, context, execute = run) {
             data.changes = previous.changes;
             delete data.diff_reused;
         }
-        latestReviewState = state;
+        latestReviewState = state; latestReviewScope = {repo:c.repo, owner:c.owner};
         require('./backup').restoreAutomaticStatus(c.repo, state.auto_backup);
         workbench.backupStatus?.(require('./backup').automaticStatus(c.repo));
         reviewFiles.clear(); deferredFiles.clear();
@@ -761,7 +778,9 @@ function createInlineReview(vscode, context, execute = run) {
     }
     const workbench = require('./review_workbench').createWorkbench(vscode, context, {
         style, read: c => readCurrent(c, false), readNext: c => currentFromRecords(c, false), selection: selectedOption, activeChanged: selectReviewItem,
-        session: () => latestReviewState?.session,
+        session: c => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? latestReviewState?.session : undefined,
+        questions: c => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? questionRows(latestReviewState) : [],
+        openQuestionEntry: async (c, id, version) => openRelatedItem({...c,id,version}),
         history: async (c, version) => {
             const data = await backend(c, ['inspect', '--id', c.id, '--version', version]);
             if (!OPEN.has(data.edit.status) || data.edit.versions.at(-1) !== c.version || data.version !== version)
@@ -1186,6 +1205,16 @@ function createInlineReview(vscode, context, execute = run) {
         await refresh(activeScope, true);
         vscode.window.showInformationMessage('迁移恢复完成；候选和批注保持待审。');
     }), true);
+    async function openRelatedItem(target) {
+        if (!target.version) throw new Error('该已完结记录已精简；请到 Git 查看已备份成果。');
+        const data = await backend(target, ['inspect', '--id', target.id, '--version', target.version, '--source']);
+        if (!data.source_match) throw new Error('该位置后来发生变化，无法精确定位；请查看文件或 Git，不猜测跳转。');
+        const editor = await vscode.window.showTextDocument(uri(target, data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
+        if (editor.document.getText() !== data.source.text) throw new Error('编辑区内容与定位快照不同，请先保存并重新核对位置。');
+        const at = range(editor.document, data);
+        editor.selection = new vscode.Selection(at.start, at.end);
+        editor.revealRange(at, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    }
     command('localLatex.inlineRelatedChanges', async arg => {
         const c = contextFor(arg), state = await backend(c, ['cards']);
         const item = state.edits[c.id];
@@ -1203,14 +1232,7 @@ function createInlineReview(vscode, context, execute = run) {
         if (!picked) return;
         const target = {...c, id: picked.id, version: picked.edit.versions.at(-1)};
         if (OPEN.has(picked.edit.status)) return open(target);
-        if (!target.version) throw new Error('该已完结记录已精简；请到 Git 查看已备份成果。');
-        const data = await backend(target, ['inspect', '--id', target.id, '--version', target.version, '--source']);
-        if (!data.source_match) throw new Error('该位置后来发生变化，无法精确定位；请查看文件或 Git，不猜测跳转。');
-        const editor = await vscode.window.showTextDocument(uri(target, data.edit.file), {viewColumn: vscode.ViewColumn.One, preview: false});
-        if (editor.document.getText() !== data.source.text) throw new Error('编辑区内容与定位快照不同，请先保存并重新核对位置。');
-        const at = range(editor.document, data);
-        editor.selection = new vscode.Selection(at.start, at.end);
-        editor.revealRange(at, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        return openRelatedItem(target);
     }, true);
     command('localLatex.inlinePreview', preview, true);
     command('localLatex.inlineLocatePDF', async arg => {
@@ -1303,4 +1325,4 @@ function createInlineReview(vscode, context, execute = run) {
         workbench, whenPDFIdle: async () => {await Promise.all([...acceptedPDFPreparations]); await pdfRun;}, ready: startup};
 }
 function activate(context) { return createInlineReview(require('vscode'), context); }
-module.exports = {activate, createInlineReview, markedWords, displayText, summary, deletionPreview};
+module.exports = {activate, createInlineReview, markedWords, displayText, summary, deletionPreview, questionRows};

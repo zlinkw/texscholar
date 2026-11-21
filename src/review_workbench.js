@@ -48,8 +48,8 @@ dialog{background:var(--vscode-editor-background);color:var(--vscode-editor-fore
 <dialog id="appearanceDialog" aria-labelledby="appearanceTitle"><form method="dialog"><div class="dialogHeading"><strong id="appearanceTitle">审核页外观</strong><button aria-label="关闭外观设置" class="secondary">关闭</button></div></form><div class="appearanceFields"><label>阅读字体<input id="style-fontFamily" data-style="fontFamily" placeholder="留空跟随 VS Code；如 Microsoft YaHei, sans-serif"></label><label>阅读字号<input type="number" id="style-candidateFontSize" data-style="candidateFontSize" min="10" max="32" step="1"></label><label>文字行高<input type="number" id="style-candidateLineHeight" data-style="candidateLineHeight" min="1" max="2.5" step="0.1"></label><label>按钮字号<input type="number" id="style-controlFontSize" data-style="controlFontSize" min="10" max="24" step="1"></label><label>中文字号<input type="number" id="style-translationFontSize" data-style="translationFontSize" min="10" max="32" step="1"></label><label>内容间距<select id="style-cardLayout" data-style="cardLayout"><option value="compact">紧凑</option><option value="comfortable">宽松</option></select></label></div><small>更改后即时生效并保存。仅影响审核页，不修改论文、PDF 字号或全局 SKILL。源码编辑保持等宽字体。</small><div><button data-action="resetAppearance" class="secondary">恢复默认外观</button><span id="appearanceStatus" role="status"></span></div></dialog>
 
 <dialog id="directoryDialog" aria-labelledby="directoryTitle"><form method="dialog"><div class="dialogHeading"><strong id="directoryTitle">跳转审核项</strong><button class="secondary">关闭</button></div></form><div class="directoryFilters"><input id="directoryQuery" aria-describedby="directoryHint" aria-label="搜索审核项" placeholder="编号、位置、文件、R1-Q3…"><select id="directoryKind" aria-label="筛选文档"><option value="">全部文档</option><option value="manuscript">正文</option><option value="response">回复信</option></select><select id="directoryQueue" aria-label="审核队列"><option value="active">活跃</option><option value="deferred">暂缓</option><option value="all">全部</option></select><label><input id="directoryNotes" type="checkbox">有待处理批注</label></div><button data-action="clearFilter" class="secondary">清除筛选</button><small>上一项、下一项及接收后跳转遵循此筛选。</small><small id="titleStatus" role="status"></small><small id="directoryHint" role="status" aria-live="polite"></small><div><button data-action="selectAll" class="secondary">当前范围全选</button><button data-action="clearSelection" class="secondary">取消全选</button><span id="selectedCount" role="status">已选 0 项</span><button data-action="acceptBatch" data-write>接收所选方案</button></div><div id="directoryResults"></div></dialog>
-<div id="layout"><main><div id="empty" hidden>当前没有可显示的审核项；可通过顶部编号目录清除筛选、选择其他项目，或用“Git 备份已接收修改”备份成果。</div><div id="review"><div class="reviewHeading"><h3 id="title"></h3><div class="optionActions"><button data-action="history" class="secondary">历史</button><button id="postpone" data-action="postpone" class="secondary">先放一边</button><button id="restorePostponed" data-action="restorePostponed" class="secondary" hidden>恢复到活跃队列</button><button data-action="previousChange" class="secondary" title="定位当前可见内容中的上一处实际差异">上处差异</button><button data-action="nextChange" class="secondary" title="定位当前可见内容中的下一处实际差异">下处差异</button><label class="comparisonControl">对照 <select id="comparisonChoice" aria-label="审核页对照方式"><option value="original">原文对照</option></select></label></div></div><small id="rankingNotice" hidden></small><p id="comparisonNotice" class="scopeSummary" hidden></p>
-<details id="historyDialog"><summary>历史候选对照</summary><label>版本 <select id="historyVersion"></select></label><button data-action="readHistory" class="secondary">查看</button><p id="historyStatus"></p><div id="historyContent" hidden><label>历史方案 <select id="historyOption"></select></label><div class="appearanceFields"><label>当时原文<div id="historyOriginal" class="review-text"></div></label><label>历史候选<div id="historyCandidate" class="review-text"></div></label></div><h4>当时批注</h4><pre id="historyNotes" class="review-text"></pre><label>放入当前方案 <select id="historyTarget"></select></label><button data-action="adoptHistory">采用为当前草稿</button><small>只建立当前草稿，不接收旧版本，也不沿用旧选区。</small></div></details><details id="stashedDrafts" hidden><summary>本机暂存草稿</summary><label>选择暂存 <select id="stashChoice"></select></label><p id="stashStatus"></p><div class="appearanceFields"><label>暂存时原文<pre id="stashOriginal" class="review-text"></pre></label><label>当前原文<pre id="stashCurrent" class="review-text"></pre></label></div><label>暂存内容<pre id="stashContents" class="review-text"></pre></label><button data-action="restoreStash" class="secondary">恢复草稿</button><button data-action="discardStash" class="secondary">放弃暂存</button></details><p id="locationConflict" role="alert" hidden></p><button data-action="relocate" class="secondary">用源文件当前选区修复位置</button><button id="repairBlock" data-action="repairBlock" class="secondary" hidden>修复或重新关联审核块</button><button id="syncBlock" data-action="syncBlock" class="secondary" hidden>重试自动同步</button><p id="intent" class="intent" hidden></p><details id="previousFeedback" open hidden><summary>上轮返修批注（只读对照）</summary><small>用来核对本版是否落实要求；不会自动成为本版待处理批注。</small><div id="previousNotes"></div></details><section><h4>原文</h4><details id="oldBaseline" hidden><summary>草稿原有基准</summary><pre id="oldBaselineText"></pre></details><div id="original" class="review-text" data-side="original"></div><div id="originalZh" class="zh"></div><div id="currentBlockPanel" hidden><label for="currentBlock">最新正文块（选择范围以人工更新候选）</label><textarea id="currentBlock" readonly spellcheck="false"></textarea><button data-action="manualRebase" class="secondary">用选区人工更新候选</button></div><p id="draftStale" role="alert" hidden></p><button id="resetSourceDraft" data-action="resetSourceDraft" class="secondary" hidden>放弃原文草稿并载入最新</button><details id="blockEditor" hidden><summary>编辑当前原文块</summary><small>保存将修改正式正文，不代表接收候选；之后需核对受影响批注。</small><textarea id="blockSource" spellcheck="false"></textarea><button data-action="saveSource">保存当前原文</button></details></section>
+<div id="layout"><main><div id="empty" hidden>当前没有可显示的审核项；可通过顶部编号目录清除筛选、选择其他项目，或用“Git 备份已接收修改”备份成果。</div><div id="review"><div class="reviewHeading"><h3 id="title"></h3><div class="optionActions"><button data-action="questionTable" class="secondary">按问题看</button><button data-action="history" class="secondary">历史</button><button id="postpone" data-action="postpone" class="secondary">先放一边</button><button id="restorePostponed" data-action="restorePostponed" class="secondary" hidden>恢复到活跃队列</button><button data-action="previousChange" class="secondary" title="定位当前可见内容中的上一处实际差异">上处差异</button><button data-action="nextChange" class="secondary" title="定位当前可见内容中的下一处实际差异">下处差异</button><label class="comparisonControl">对照 <select id="comparisonChoice" aria-label="审核页对照方式"><option value="original">原文对照</option></select></label></div></div><small id="rankingNotice" hidden></small><p id="comparisonNotice" class="scopeSummary" hidden></p>
+<details id="questionTable"><summary>按审稿问题核对</summary><small>仅显示本轮已明确关联的问题；未关联不代表没有修改，接收也不代表科学问题解决。历史精简后的内容请查 Git。</small><div id="questionTableRows"></div></details><details id="historyDialog"><summary>历史候选对照</summary><label>版本 <select id="historyVersion"></select></label><button data-action="readHistory" class="secondary">查看</button><p id="historyStatus"></p><div id="historyContent" hidden><label>历史方案 <select id="historyOption"></select></label><div class="appearanceFields"><label>当时原文<div id="historyOriginal" class="review-text"></div></label><label>历史候选<div id="historyCandidate" class="review-text"></div></label></div><h4>当时批注</h4><pre id="historyNotes" class="review-text"></pre><label>放入当前方案 <select id="historyTarget"></select></label><button data-action="adoptHistory">采用为当前草稿</button><small>只建立当前草稿，不接收旧版本，也不沿用旧选区。</small></div></details><details id="stashedDrafts" hidden><summary>本机暂存草稿</summary><label>选择暂存 <select id="stashChoice"></select></label><p id="stashStatus"></p><div class="appearanceFields"><label>暂存时原文<pre id="stashOriginal" class="review-text"></pre></label><label>当前原文<pre id="stashCurrent" class="review-text"></pre></label></div><label>暂存内容<pre id="stashContents" class="review-text"></pre></label><button data-action="restoreStash" class="secondary">恢复草稿</button><button data-action="discardStash" class="secondary">放弃暂存</button></details><p id="locationConflict" role="alert" hidden></p><button data-action="relocate" class="secondary">用源文件当前选区修复位置</button><button id="repairBlock" data-action="repairBlock" class="secondary" hidden>修复或重新关联审核块</button><button id="syncBlock" data-action="syncBlock" class="secondary" hidden>重试自动同步</button><p id="intent" class="intent" hidden></p><details id="previousFeedback" open hidden><summary>上轮返修批注（只读对照）</summary><small>用来核对本版是否落实要求；不会自动成为本版待处理批注。</small><div id="previousNotes"></div></details><section><h4>原文</h4><details id="oldBaseline" hidden><summary>草稿原有基准</summary><pre id="oldBaselineText"></pre></details><div id="original" class="review-text" data-side="original"></div><div id="originalZh" class="zh"></div><div id="currentBlockPanel" hidden><label for="currentBlock">最新正文块（选择范围以人工更新候选）</label><textarea id="currentBlock" readonly spellcheck="false"></textarea><button data-action="manualRebase" class="secondary">用选区人工更新候选</button></div><p id="draftStale" role="alert" hidden></p><button id="resetSourceDraft" data-action="resetSourceDraft" class="secondary" hidden>放弃原文草稿并载入最新</button><details id="blockEditor" hidden><summary>编辑当前原文块</summary><small>保存将修改正式正文，不代表接收候选；之后需核对受影响批注。</small><textarea id="blockSource" spellcheck="false"></textarea><button data-action="saveSource">保存当前原文</button></details></section>
 <div id="translateStatus"></div>
 <section id="options"></section><div id="composerDock"></div><p id="fewer"></p><section><h4>关联原始审稿问题</h4><div id="questions"></div></section>
 <section><h4>返修批注</h4><button data-action="newNote" title="新增返修批注（Alt+N）" class="secondary">新增返修批注</button><button data-action="reject" data-write class="secondary">拒绝本项全部候选</button><div id="noteComposer" hidden><p id="noteMode">新增返修批注</p><div id="noteScopeControls"><label>范围 <select id="scopeChoice"><option value="group">本项全部方案（默认）</option><option value="original">完整原文</option></select></label><button data-action="whole" class="secondary">取消选区／整项批注</button></div><p id="scope">未划词时可以直接填写整项要求。</p><button id="useSelection" data-action="useSelection" class="secondary" hidden>改用新选区</button><textarea id="note" placeholder="填写返修要求"></textarea><button title="保存当前批注（Ctrl/Cmd+Enter）" id="saveNote" data-action="note" data-write>保存返修批注</button><button data-action="noteHandoff" data-write title="先保存，再把本项待处理批注加入 Codex 输入区；不自动发送">保存并加入 Codex</button><button data-action="cancelNote" class="secondary">取消</button></div><div id="notes"></div></section></div><small id="operationStatus" role="status" aria-live="polite"></small><p id="status" role="status" aria-live="polite"></p><button id="retryHandoff" data-action="retryHandoff" data-write hidden>重试本项交接</button></main></div>
@@ -96,14 +96,14 @@ function createWorkbench(vscode, context, services) {
     context.subscriptions.push(configuration.subscribe(value => post({type: 'configuration', ...value})));
     const key = c => JSON.stringify([c.repo, c.owner, c.id, c.version]);
     const options = data => data.options || [{label: 'A', after: data.candidate, reason: '已有单方案', changes: data.changes}];
-    const queueKey = c => JSON.stringify([c.repo, c.owner, services.session()]);
+    const queueKey = c => JSON.stringify([c.repo, c.owner, services.session(c)]);
     const postponed = c => context.workspaceState.get('reviewPostponed', {})[queueKey(c)] || [];
     const directory = () => {
         const set = new Set(active && services.session && context.workspaceState ? postponed(active) : []);
         return services.directory().filter(item => lastRecords.has(item.id)).map(item => ({...item, postponed: set.has(item.id)}));
     };
     async function setPostponed(c, value) {
-        const session = services.session();
+        const session = services.session(c);
         if (!session || !context.workspaceState) throw new Error('当前审核批次无法保存暂缓队列。');
         const k = queueKey(c), stored = {...context.workspaceState.get('reviewPostponed', {})};
         const ids = new Set(stored[k] || []);
@@ -114,7 +114,7 @@ function createWorkbench(vscode, context, services) {
     const draftKey = (c, session) => JSON.stringify([c.repo, c.owner, session, c.id]);
     function storedDrafts(c) {
         if (!context.workspaceState || !services.session) return [];
-        const session = services.session();
+        const session = services.session(c);
         return Object.entries(context.workspaceState.get('reviewDrafts', {})).filter(([, d]) =>
             d.c.repo === c.repo && d.c.owner === c.owner && d.c.id === c.id).map(([id, d]) => {
             const selected = d.state.selected;
@@ -130,11 +130,25 @@ function createWorkbench(vscode, context, services) {
             return {id, session: d.session, version:d.c.version, original:d.original, block:d.block, state:d.state, exact};
         });
     }
+    function questionTable(c) {
+        if (!services.questions || !services.session || !context.workspaceState) return [];
+        const session = services.session(c);
+        if (!session) return [];
+        const scope = JSON.stringify([c.repo, c.owner, session]);
+        const checked = context.workspaceState.get('reviewQuestionChecks', {})[scope] || {};
+        const rows = services.questions(c);
+        for (const key of Object.keys(checked)) if (!rows.some(row => row.key === key)) {
+            const [id,file,quote] = JSON.parse(key);
+            rows.push({key, question:{id,file,quote}, entries:[], snapshot:'[]'});
+        }
+        return rows.map(row => ({...row, checked: checked[row.key] === row.snapshot,
+            recheck: checked[row.key] !== undefined && checked[row.key] !== row.snapshot}));
+    }
     function packet() {
         const {file, kind, block_id, location: originalLocation, display_location, versions, requests, questions, previous_feedback} = loaded.edit;
         const location = display_location || originalLocation;
         return {type: 'content', c: active, data: {original: loaded.original, source_match: loaded.source_match, conflict: loaded.conflict, block: loaded.block, edit: {file, kind, block_id, location, versions, requests, questions, previous_feedback}, intent: loaded.intent, fewer_options_reason: loaded.fewer_options_reason},
-            options: options(loaded), directory: directory(), navigationFilter, style: services.style(), stashes: storedDrafts(active),
+            options: options(loaded), directory: directory(), navigationFilter, style: services.style(), stashes: storedDrafts(active), questions: questionTable(active),
             sourceSelection, resume: uiState, reading, busy: handling, relatedReturn: relatedReturn?.c.id,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }
@@ -283,6 +297,7 @@ function createWorkbench(vscode, context, services) {
         lastRecords = records;
         const next = records.get(active.id);
         post({type: 'directory', directory: directory()});
+        post({type: 'questionRows', questions:questionTable(active)});
         post({type: 'pdfStatus', message: services.pdfStatus(active)});
         if (handling) {
             pending = next; hasPending = true;
@@ -452,14 +467,34 @@ function createWorkbench(vscode, context, services) {
             if (message.type === 'finish') {await services.finish(); return post({type: 'result', message: '结束审核操作已返回，请核对备份结果。'});}
             if (client !== undefined && message.instance !== client || message.repo !== undefined && message.repo !== active.repo || message.owner !== undefined && message.owner !== active.owner || message.version !== active.version || message.id !== active.id) throw new Error('当前项已更新，旧操作已停止；请核对新版。');
             const c = {...active};
+            if (message.type === 'checkQuestion') {
+                const row = questionTable(c).find(item => item.key === message.questionKey);
+                if (!row || row.snapshot !== message.snapshot) throw new Error('关联或批注已变化，请重新核对问题。');
+                const session = services.session(c), scope = JSON.stringify([c.repo,c.owner,session]);
+                const saved = {...context.workspaceState.get('reviewQuestionChecks', {})};
+                saved[scope] = {...saved[scope], [row.key]:row.snapshot};
+                await context.workspaceState.update('reviewQuestionChecks', saved);
+                if (valid(c) && panel === operationPanel && services.session(c) === session) post({type:'questionRows', questions:questionTable(c)});
+                return;
+            }
+            if (message.type === 'questionEntry') {
+                const row = questionTable(c).find(item => item.key === message.questionKey);
+                const entry = row?.entries.find(item => item.id === message.target && item.version === message.targetVersion);
+                if (!entry) throw new Error('关联条目已变化，请重新查看问题。');
+                const record = lastRecords.get(entry.id);
+                if (record && record.c.version === entry.version) await show(record.c);
+                else await services.openQuestionEntry(c, entry.id, entry.version);
+                return;
+            }
             if (message.type === 'readHistory') {
                 history = undefined;
                 if (typeof message.historyVersion !== 'string' || !loaded.edit.versions.slice(0,-1).includes(message.historyVersion)) throw new Error('历史版本不可用或不属于本项。');
-                const session = services.session();
+                const session = services.session(c);
+                if (!session) throw new Error('当前审核批次已变化，请重新打开。');
                 let value;
                 try {value = await services.history(c, message.historyVersion);}
                 catch (error) {throw new Error('无法读取历史版本（对象可能已精简）：' + error.message);}
-                if (!valid(c) || panel !== operationPanel || services.session() !== session) return;
+                if (!valid(c) || panel !== operationPanel || services.session(c) !== session) return;
                 const snapshot = value.edit.previous_feedback;
                 history = {c, session, version:message.historyVersion, original:value.original, options:value.options,
                     notes:snapshot?.version === message.historyVersion ? snapshot.requests : undefined};
@@ -467,32 +502,32 @@ function createWorkbench(vscode, context, services) {
                 return;
             }
             if (message.type === 'adoptHistory') {
-                if (!history || key(history.c) !== key(c) || services.session() !== history.session) throw new Error('历史对照已过期，请重新读取。');
+                if (!history || key(history.c) !== key(c) || services.session(c) !== history.session) throw new Error('历史对照已过期，请重新读取。');
                 const old = history.options.find(o => o.label === message.option), target = options(loaded).find(o => o.label === message.target);
                 if (!old || !target) throw new Error('历史或当前方案不存在。');
                 const draft = uiState?.drafts?.[target.label];
                 if (draft !== undefined && draft !== target.after.replace(/\r\n/g, '\n')) {
                     const answer = await vscode.window.showWarningMessage('当前方案已有未保存草稿，采用历史文案会替换该草稿。', {modal:true}, '替换草稿');
                     if (answer !== '替换草稿') return;
-                    if (!valid(c) || panel !== operationPanel || services.session() !== history.session) return;
+                    if (!valid(c) || panel !== operationPanel || services.session(c) !== history.session) return;
                 }
                 post({type:'historyAdopted', option:target.label, text:old.after});
                 return;
             }
             if (message.type === 'stashClose') {
-                const session = services.session?.(), state = message.state;
+                const session = services.session?.(c), state = message.state;
                 if (!session || !context.workspaceState || !state || !state.c || key(state.c) !== key(c)) throw new Error('当前草稿身份不完整，未关闭。');
                 const k = draftKey(c, session), existing = context.workspaceState.get('reviewDrafts', {})[k];
                 if (existing) {
                     const answer = await vscode.window.showWarningMessage('本项已有暂存草稿；替换后原暂存内容将不可恢复。', {modal:true}, '替换暂存');
                     if (answer !== '替换暂存') return;
-                    if (!valid(c) || panel !== operationPanel || services.session() !== session) return;
+                    if (!valid(c) || panel !== operationPanel || services.session(c) !== session) return;
                 }
                 const saved = {...context.workspaceState.get('reviewDrafts', {})};
                 if (JSON.stringify(existing) !== JSON.stringify(saved[k])) throw new Error('暂存草稿已变化，未覆盖。');
                 saved[k] = {c, session, original:loaded.original, block:loaded.block, options:options(loaded).map(o => [o.label,o.after]), state};
                 await context.workspaceState.update('reviewDrafts', saved);
-                if (valid(c) && panel === operationPanel && services.session() === session) operationPanel.dispose();
+                if (valid(c) && panel === operationPanel && services.session(c) === session) operationPanel.dispose();
                 return;
             }
             if (message.type === 'restoreStash' || message.type === 'discardStash') {
