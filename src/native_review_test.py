@@ -536,6 +536,32 @@ class NativeReview(unittest.TestCase):
         self.assertFalse(r.inspect(item['id'])['source_match'])
         self.assertIn('Author rewritten text.', r.read('main.tex'))
 
+    def test_saved_block_prefix_reconciles_without_losing_author_text(self):
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, block = r.prepare_block({'file':'main.tex', 'kind':'paragraph', 'start':start, 'end':end,
+                                          'source_revision':r.source_digest(text)}); r.persist(updated, digest(r.raw))
+        r = review(); updated, item = r.propose({'file':'main.tex', 'kind':'manuscript', 'block_id':block['block_id'],
+            'before':'The model is strong and fast.', 'after':'The model is reliable and fast.'}); r.persist(updated, digest(r.raw))
+        r = review(); card = r.inspect(item['id']); old = card['version']
+        updated, _ = r.save_block_source(item['id'], old, {'block_id':block['block_id'],
+            'source_revision':card['block']['source_revision'], 'text':'Author ' + card['block']['text']})
+        r.persist(updated, digest(r.raw)); r = review(); revision = r.source_digest(r.read('main.tex'))
+        updated, result = r.sync_saved({'main.tex':revision})
+        self.assertEqual(result['conflicts'], []); self.assertEqual(len(result['items']), 1)
+        r.persist(updated, digest(r.raw)); r = review(); card = r.inspect(item['id'], source=True)
+        self.assertTrue(card['source_match']); self.assertEqual(card['original'], 'Author The model is strong and fast.')
+        self.assertEqual(card['options'][0]['after'], 'Author The model is reliable and fast.')
+        self.assertEqual(r.state['edits'][item['id']]['versions'][0], old)
+        updated, _ = r.decide([item['id']], [], {item['id']:card['version']}, 'A'); r.persist(updated, digest(r.raw))
+        self.assertIn('Author The model is reliable and fast.', review().read('main.tex'))
+        from review_blocks import reconcile
+        with self.assertRaisesRegex(ValueError, '重叠'):
+            reconcile('The model.\n', 'Author The model.\n', 0, 10, [{'after':'A model.'}])
+        with self.assertRaisesRegex(ValueError, '边界'):
+            reconcile('prefix|Target.\n', 'prefix|XYZTarget.\n', 7, 14, [{'after':'Method.'}])
+
     def test_block_sync_preserves_nonoverlapping_edits_and_versions(self):
         sidecar = self.root / '.codex-review' / 'state.json'
         self.install_sidecar(dict(self.review().state, schema=3))

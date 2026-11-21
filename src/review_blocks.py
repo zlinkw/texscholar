@@ -167,7 +167,10 @@ def reconcile(before, current, start, end, options):
             if b <= pos:
                 shift += len(value) - (b-a)
         return pos + shift
-    new_start, new_end = mapped(start), mapped(end)
+    # A prefix inside the fixed block belongs to an anchor at the block start.
+    # Interior anchor boundaries remain ambiguous and are rejected by mapped.
+    new_start = 0 if start == 0 and author[0][0:2] == (0, 0) else mapped(start)
+    new_end = mapped(end)
     new_before = current[new_start:new_end]
     result = []
     for option in options:
