@@ -53,10 +53,10 @@
 - [x] Q2 Terra：C3及单一有限草稿，精确三类恢复、已陈旧/跨项目、当前及上一批滚动；无文件删除。
 - [x] Q3 Terra：C4指令一致和E1子集交接，原入口保留、旧身份安全停止。
 - [x] Q4 Terra：E2返修兑现映射，MCP/存储/页面/指南必要调用方与回归。
-- [ ] Q5 Terra：E3差异和unsupported已实现，R1待补具体变化的真实依据定位提交与查看路径，不自动科学判断。
+- [x] Q5 Terra：E3差异和unsupported已实现，R1已补真实依据定位提交/校验/查看及失效，不自动科学判断。
 - [x] Q6 Terra：E4批量复用，新鲜定位与整批事务保留，已补同条件有界阶段计时但未证明端到端更快。
 - [x] Q7 Terra：初次完整冻结包已交，R1后仅补真实受影响覆盖与新界面小验收，再冻结交包。
-- [ ] Q8 总控：接包后独占一次全新混合30项样例，跨入口核所选批注交接→预设返修映射/事实提示→作者手改/有限草稿/重开→定位核对/暂缓导航→部分多选准确接收及下一项可操作；延期批注、counter、范围外暂存和后台消费者完整。只补小验收未覆盖的衔接，失败回原Terra，明确通过才交回租约。
+- [x] Q8 总控：R1后在新30项样例完成跨入口混合验收，已有失败原样保留、仅补未完成链；实际组合结论见下节。
 - [ ] Q9 Terra：核实际版本/tag，必要版本/发行工具检查，一次打包、同包正式Release和真实安装，普通源码提交/tag/远端核验、文档收尾和完整交包；不包后冒烟、不自动reload。总控核最终元数据结案。
 
 每块必要验证通过后审diff，精确stage仅本任务文件（本计划/index可纳入），普通commit/push origin/master/fetch核HEAD一致；不夹带夹具、运行产物、秘密或无关暂存。远端推进/保护/凭据失败停止相关Git交付报告，不reset/rebase/merge/force或换分支。较大功能按内聚文件/接口划批，不为单批省步骤留下半成品。
@@ -71,4 +71,20 @@
 
 初次Q8失败/中断保留：mixed1 prepare误带不存在的response.tex进入fixture Git add，exit1；mixed2缺fixture注册清单，MCP正确拒绝未注册项目，observer1/hostfalse/CLI0；mixed3完成上述两项页面衔接后，oldAccept1外置RPC尚未回执（原因未确认，不计通过），当时state1=rework且无transaction。总控在已确认E3功能缺口后主动停止本轮，写明canceled记录，精确停止本轮observer进程，observer4294967295、hostfalse、CLI0、聚合1，未冒充通过。所有目录、日志和实际状态保留，未重放未知接受、未改产品；后续用新样例补Q8。
 
-总控现将产品、测试、UI租约交回原Terra，仅R1最小完整返修、自验并重新冻结交包；Q8未通过，Q9禁止。总控唯一dirty为本计划/索引，允许精确纳入下一验证提交。消息遵循最新AGENTS，派发默认无回执，局部进度记execution；没有独立待办后总控角色空闲，完整返修包或真实阻断接续。
+以上为初次Q8返修决定，原Terra已完成R1并重新冻结交包，见execution；失败/中断不改写为通过。
+
+## Q8最终结论与交付状态
+
+总控在R1冻结`a1fab31e80f19de9b94aa01170e5926070b1b828`==origin/master上明确通过Q8。主样例`D:/latex-writing-checks/review-quality-20261121/controller-q8/mixed5`为全新30项，仅接受1A/2B/3C，其他27项、延期30及counter保留，无transaction。正常Development宿主/独立profile、CDP触发实际渲染按钮、真实VSCode源编辑保存、本地bare Git及TinyTeX；GitHub私有元数据和addFileToThread接收命令为fixture，不发送AI或上传真实论文。
+
+原phase1实际完成且逐点落盘`phase1-milestones.json`：选1/2/3完整交接排除4，真实Server.call预设返修展示部分映射/遗漏未说明；read_context取得依据精确quote/revision并再次返修绑定数值变化，页面显示依据定位已核对与科学未验证；修改依据后同页自动失效为unsupported；问题4纯前文平移保留核对、实际整块移到8后需重核；真实暂缓按钮配合受控Memento完成点，更晚显式打开4胜出，恢复暂缓正常。随后作者保存6前缀、同步产生新版并保留旧候选/原文草稿，暂存后立即用旧目录身份重开被版本保护拒绝；observer1、hostfalse、CLI0保留，未计整轮通过，也未接受。
+
+没有重复已取得的交接、返修、移动或接收。续接phase1b用刷新后的新目录打开6，实际页面显示已知陈旧暂存且恢复禁用，再对5暂存候选/原文/批注三稿；整个VSCode退出后phase2新进程恢复三框，仅作为草稿，作者在fixture明确重置未提交输入后实际目录多选1A/2B/3C，一次事务准确落盘、4可操作，端到端790ms。phase1b与phase2各observer/CLI均0，done/host均true；不同真实session_id证明整进程重启。`continuation-result.json`、`logs/*.process.json`保存完整argv/cwd/真实退出码；组合证据不覆盖原phase1失败。
+
+`consumer-check.json`及各Git/export进程日志通过：两个草稿条目（5/6）集中在唯一reviewDrafts键，无按版本文件；Q2覆盖替换/批次滚动的数量字节测试继续有效。正式源码、已推送HEAD、7页实际PDF和clean export均无五个暂存哨兵，Author Item06、1的42及方案2B/3C正文对应保留；范围外outside.txt仍暂存且未入提交，Git不含审核运行数据，HEAD==origin/master、saved_done精确包含1/2/3。最终PDF真实成功，后台未入接受等待；此前过期任务原因保留在host事件。所有检查进程及自有Code已结束，无删除或真实论文操作。
+
+R1后另外的mixed4准备通过但MCP依据绑定失败：外置直接Server.call将Python tuple原样传入，没有经过JSON数组转换，和已交协议不符；observer1/hostfalse/CLI0，修外置序列化后新mixed5通过依据链，未改产品求绿。mixed3无回执原因仍未知，R1-rpc2已另用新样例确认旧命令零写返回；没有重放原未知命令。所有原mixed1–5/前轮driver失败、不利性能及R1最初变量遮蔽/CRLF失败完整保留。
+
+有效覆盖组合为原完整editor153与新增58、原backend136成功项加legacy补跑及后续事实/同步定向、R1真实MCP39及实际页面，具体输入适用与真实退出见execution；不冒称原backend失败组通过或本轮全仓重跑。批量差异diff_scope减少已证，原端到端847/1017ms对照仍不证明整体更快；本轮790ms仅暖态混合单样本，早期1261/1117等均保留。不承诺每次1秒、冷启动或未经实际对照的AI生成质量收益。未执行真实cleanup备份后段、独立PDF/translation全组、真冷启动/复杂真实论文/实网论文上传、Mac、强杀及真实五分钟等待。
+
+Q1–Q8完成。总控将产品、测试、UI全部租约交回原Terra连续Q9，用户发布安装授权有效。仅本计划/index是总控dirty，允许精确纳入Q9验证提交；execution及收尾由Terra维护。预计0.9.55仍需实核版本/tag，必要版本/发行检查、一次打包、同包正式Release与真实安装后完整交包，总控核元数据结案。不包后冒烟、不自动reload真实VSCode/MCP、真实论文继续只读，无新增删除权限。派发默认无回执，局部事实记execution，整体未交付前不宣称任务完成。
