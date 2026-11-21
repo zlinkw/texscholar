@@ -563,3 +563,29 @@ test('filtered navigation and own saves preserve exact note bindings without acc
     assert.deepEqual(filterItems(services.directory(), {query: '', kind: '', notes: true}), []);
     assert.equal(records.get('1').data.original, 'Same original.');
 });
+
+test('postponed queue persists per project and session without changing review state', async () => {
+    let receive, session='round-one'; const values={}, messages=[];
+    const workspaceState={get:(k, fallback)=>values[k] ?? fallback, update:async(k,v)=>{values[k]=structuredClone(v);}};
+    const c={repo:'/fixture',owner:'state',id:'1',version:'v1'}, c2={...c,id:'2'};
+    const data=id=>({id,version:'v1',original:'Old',source_match:true,edit:{file:'x.tex',kind:'manuscript',status:'pending',versions:['v1'],requests:[]},options:[{label:'A',after:'New',reason:'A'}]});
+    const d1=data('1'), d2=data('2'), records=new Map([['1',{c,data:d1}],['2',{c:c2,data:d2}]]);
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={session:()=>session,read:async x=>structuredClone(records.get(x.id).data),readNext:async x=>structuredClone(records.get(x.id).data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[d1,d2].map(d=>({id:d.id,...d.edit,version:'v1'}))};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services); view.setRecords(records); await view.show(c); await receive({type:'ready',instance:'page'});
+    await receive({type:'postpone',instance:'page',id:'1',version:'v1'});
+    assert.equal(view.active.id,'2'); assert.equal(d1.edit.status,'pending');
+    assert.deepEqual(values.reviewPostponed[JSON.stringify(['/fixture','state','round-one'])],['1']);
+    await receive({type:'filter',filter:{query:'',kind:'',notes:false,queue:'deferred'}});
+    await receive({type:'switch',instance:'page',id:'2',version:'v1',target:'1'});
+    assert.equal(view.active.id,'1');
+    await receive({type:'restorePostponed',instance:'page',id:'1',version:'v1'});
+    assert.deepEqual(values.reviewPostponed[JSON.stringify(['/fixture','state','round-one'])],[]);
+    await receive({type:'postpone',instance:'page',id:'1',version:'v1'});
+    const reopened=createWorkbench(vscode,{subscriptions:[],workspaceState},services); reopened.setRecords(records);
+    await reopened.show(c2); await receive({type:'ready',instance:'reopened'});
+    assert.equal(messages.filter(m=>m.type==='content').at(-1).directory.find(i=>i.id==='1').postponed,true);
+    session='round-two'; view.sync(records,c);
+    assert.equal(messages.filter(m=>m.type==='directory').at(-1).directory.find(i=>i.id==='1').postponed,false);
+    assert.equal(filterItems([{id:'1',postponed:true},{id:'2'}],{query:'',kind:'',notes:false}).length,1);
+});

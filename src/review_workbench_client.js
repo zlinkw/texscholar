@@ -23,7 +23,7 @@ $('currentBlock').addEventListener('keyup', () => {selectedBlockRevision = data?
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'start', 'checkUpdates', 'sourcePDF']);
 const sideBusy = new Set();
 const actionNames = {save: '保存候选', saveSource: '保存当前原文', syncBlock: '同步候选', repairBlock: '修复审核块', manualRebase: '人工更新候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
-    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
+    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', checkUpdates: '检查插件更新', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', sourcePDF: '编译正式 PDF', related: '定位关联改动'};
 function fitToolbar() {
     const header = document.querySelector('header'), home = $('toolbarExtras');
@@ -272,16 +272,18 @@ function toggleMathMode() {
 }
 function renderDirectory(items) {
     directoryItems = items;
+    const postponed = items.some(item => item.id === current?.id && item.postponed);
+    $('postpone').hidden = postponed; $('restorePostponed').hidden = !postponed;
     for (const id of batchSelection.keys()) if (!items.some(i => i.id === id)) batchSelection.delete(id);
     const pending = items.filter(i => ['pending', 'rework'].includes(i.status));
     $('progress').textContent = current ? current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · v' + data.edit.versions.length
         + (navigationFilter.query || navigationFilter.kind || navigationFilter.notes ? ' · 已筛选' : '') : '审核项';
-    $('progress').title = '本批可操作 ' + items.length + ' 项 · 待处理 ' + pending.length + '；点击搜索编号、位置或关联问题';
+    $('progress').title = '本批可操作 ' + items.length + ' 项 · 待处理 ' + pending.length + ' · 暂缓 ' + items.filter(i => i.postponed).length + ' · 定位冲突 ' + items.filter(i => i.source_match === false).length + '；点击搜索编号、位置或关联问题';
     if ($('directoryDialog').open) filterDirectory();
     fitToolbar();
 }
 function filterDirectory() {
-    const filter = {query: $('directoryQuery').value.trim(), kind: $('directoryKind').value, notes: $('directoryNotes').checked};
+    const filter = {query: $('directoryQuery').value.trim(), kind: $('directoryKind').value, notes: $('directoryNotes').checked, queue: $('directoryQueue').value};
     if (JSON.stringify(filter) !== JSON.stringify(navigationFilter)) {
         directoryCursor = undefined;
         navigationFilter = filter; send('filter', {filter}, false);
@@ -291,7 +293,7 @@ function filterDirectory() {
     $('directoryResults').replaceChildren();
     for (const item of found) {
         const node = document.createElement('button'); node.className = 'secondary'; node.dataset.action = 'switch'; node.dataset.target = item.id;
-        node.textContent = item.id + ' · ' + (item.source_match === false ? '定位冲突（需要重新定位）' : item.status === 'rework' ? '返修' : '待审') + ' · ' + item.file + (item.location ? ' · ' + item.location : '') + (item.requests ? ' · 批注 ' + item.requests : '') + (item.summary ? '\n' + item.summary : '');
+        node.textContent = item.id + (item.postponed ? ' · 暂缓' : '') + ' · ' + (item.source_match === false ? '定位冲突（需要重新定位）' : item.status === 'rework' ? '返修' : '待审') + ' · ' + item.file + (item.location ? ' · ' + item.location : '') + (item.requests ? ' · 批注 ' + item.requests : '') + (item.summary ? '\n' + item.summary : '');
         node.disabled = !!waiting;
         const row = document.createElement('div'), check = document.createElement('input'), choice = document.createElement('select');
         check.type = 'checkbox'; check.setAttribute('aria-label', '选择 ' + item.id);
@@ -639,7 +641,7 @@ $('comparisonChoice').addEventListener('change', () => {
     keepReading(renderReadings); remember();
 });
 $('scopeChoice').addEventListener('change', scope);
-for (const id of ['directoryKind', 'directoryNotes']) $(id).addEventListener('change', filterDirectory);
+for (const id of ['directoryKind', 'directoryNotes', 'directoryQueue']) $(id).addEventListener('change', filterDirectory);
 $('directoryDialog').addEventListener('keydown', event => {
     if (event.isComposing || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.target.id !== 'directoryQuery' && !event.target.closest('#directoryResults')) return;
@@ -704,7 +706,7 @@ document.addEventListener('click', event => {
     if (type === 'clearSelection') {batchSelection.clear(); filterDirectory(); return;}
     if (type === 'acceptBatch') {send(type,{items:[...batchSelection.values()]}); return;}
     if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
-    if (type === 'clearFilter') {$('directoryQuery').value = ''; $('directoryKind').value = ''; $('directoryNotes').checked = false; filterDirectory(); return;}
+    if (type === 'clearFilter') {$('directoryQuery').value = ''; $('directoryKind').value = ''; $('directoryNotes').checked = false; $('directoryQueue').value = 'active'; filterDirectory(); return;}
     if (type === 'nextChange' || type === 'previousChange') {jumpChange(type === 'nextChange' ? 1 : -1); return;}
     if (type === 'locateNote') {locateNote(button.closest('.note').dataset.noteId); return;}
     if (type === 'switch') $('directoryDialog').close();
@@ -825,7 +827,9 @@ window.addEventListener('message', ({data: message}) => {
         sourceDraftStale = !!resume?.sourceDraftStale; candidateDraftStale = !!resume?.candidateDraftStale; oldOriginal = resume?.oldOriginal;
         showRelatedReturn(message.relatedReturn);
         navigationFilter = message.navigationFilter;
-        $('directoryQuery').value = navigationFilter.query; $('directoryKind').value = navigationFilter.kind; $('directoryNotes').checked = navigationFilter.notes;
+        $('directoryQuery').value = navigationFilter.query; $('directoryKind').value = navigationFilter.kind; $('directoryNotes').checked = navigationFilter.notes; $('directoryQueue').value = navigationFilter.queue || 'active';
+        const postponed = message.directory.some(item => item.id === current.id && item.postponed);
+        $('postpone').hidden = postponed; $('restorePostponed').hidden = !postponed;
         if (message.reading) {sourceMode = message.reading.sourceMode; chinese = message.reading.chinese;}
         $('originalZh').hidden = !chinese;
         $('mathMode').textContent = sourceMode ? '公式预览' : 'LaTeX 源码';
