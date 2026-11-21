@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
-const {inspectBackup,backupProject,finishReview,automaticBackup,enqueueAutomatic,run} = require('./backup');
+const {inspectBackup,backupProject,finishReview,automaticBackup,enqueueAutomatic,activateAutomatic,run} = require('./backup');
 const GIT = process.env.LOCAL_LATEX_GIT;
 async function fixture(label) {
     const parent = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT,label+'-'));
@@ -36,6 +36,11 @@ async function fixture(label) {
 
 const PYTHON = process.env.LOCAL_LATEX_PYTHON;
 const SCRIPTS = fs.existsSync(path.join(__dirname,'source_review.py')) ? __dirname : path.resolve(__dirname,'../../scripts');
+async function savedLocal(f, files, trigger='保存') {
+    const parent = (await f.git(['rev-parse','HEAD'])).trim();
+    return JSON.parse(await run(PYTHON,['-X','utf8',path.join(SCRIPTS,'auto_backup.py'),'--project',f.root,'--git',GIT,'saved-local'],
+        f.root,JSON.stringify({parent,files,trigger})));
+}
 async function reviewFixture(label, dependency = false, previousFeedback = false, crlf = false) {
     const f = await fixture(label);
     fs.writeFileSync(path.join(f.root,'main.tex'),'% CODEX-RULES-BEGIN\n% 保留写作规则。\n% CODEX-RULES-END\n\\documentclass{article}\n\\begin{document}\nThe model is strong and fast.\n\\end{document}\n','utf8');
@@ -77,7 +82,234 @@ async function reviewFixture(label, dependency = false, previousFeedback = false
     const options = {git:GIT,gh:'fixture-gh',python:PYTHON,checkpointScript:path.join(SCRIPTS,'review_checkpoint.py')};
     return {...f,status,backend,common,options};
 }
-test('automatic accepted-only checkpoint preserves delayed notes, manual source and staging', async () => {
+test('saved backup commits author edits and keeps unrelated staging with legacy review privacy', async () => {
+    const f = await reviewFixture('saved-private');
+    await f.backend(['decide','--accept','1']);
+    const main = path.join(f.root,'main.tex'), reply = path.join(f.root,'reply.tex');
+    const owner = fs.readFileSync(reply);
+    fs.writeFileSync(main,fs.readFileSync(main,'utf8').replace('The model','Author model'),'utf8');
+    await f.git(['add','--','main.tex']);
+    fs.writeFileSync(main,fs.readFileSync(main,'utf8').replace('Author model','Latest author model'),'utf8');
+    fs.writeFileSync(path.join(f.root,'unrelated.txt'),'private staged choice','utf8'); await f.git(['add','--','unrelated.txt']);
+    const staged = await f.git(['show',':unrelated.txt']); const before = await f.status();
+    const result = await savedLocal(f,['main.tex','reply.tex']);
+    assert((await f.git(['show','HEAD:main.tex'])).includes('Latest author model'));
+    assert(!(await f.git(['show','HEAD:reply.tex'])).includes('CODEX-REVIEW-DATA'));
+    assert.equal(await f.git(['show',':unrelated.txt']),staged);
+    assert.equal((await f.git(['diff','--cached','--name-only'])).trim(),'unrelated.txt');
+    assert(fs.readFileSync(reply).equals(owner));
+    assert.deepEqual((await f.status()).edits,before.edits);
+    const message = await f.git(['log','-1','--format=%B']);
+    assert(message.includes('触发：保存') && message.includes('main.tex') && !message.includes('PRIVATE'));
+    await f.git(['push','origin','master']);
+    await run(PYTHON,['-X','utf8',path.join(SCRIPTS,'auto_backup.py'),'--project',f.root,'--git',GIT,'saved-update'],
+        f.root,JSON.stringify({token:result.token,commit:result.commit,done:true}));
+    assert.equal((await savedLocal(f,['main.tex','reply.tex'])).unchanged,true);
+    assert(result.commit);
+});
+
+test('saved backup uses the normal path commit without review state and preserves partial staging', async () => {
+    const f = await fixture('saved-native');
+    const main = path.join(f.root,'main.tex');
+    fs.writeFileSync(main,'First staged sentence.\n','utf8'); await f.git(['add','--','main.tex']);
+    fs.writeFileSync(main,'\\section{Method}\nLatest saved sentence.\n','utf8');
+    fs.writeFileSync(path.join(f.root,'outside.txt'),'staged','utf8'); await f.git(['add','--','outside.txt']);
+    const result = await savedLocal(f,['main.tex'],'定时');
+    assert.equal(await f.git(['show','HEAD:main.tex']),'\\section{Method}\nLatest saved sentence.\n');
+    assert.equal((await f.git(['diff','--cached','--name-only'])).trim(),'outside.txt');
+    assert.equal((await f.git(['show',':outside.txt'])),'staged');
+    assert((await f.git(['log','-1','--format=%B'])).includes('触发：定时'));
+    assert((await f.git(['log','-1','--format=%B'])).includes('\\section{Method}'));
+    assert(result.commit);
+});
+
+test('saved backup restores old inline pending proposals only in the committed copy', async () => {
+    const f = await reviewFixture('saved-inline-legacy');
+    const main = path.join(f.root,'main.tex'), owner = path.join(f.root,'reply.tex');
+    let text = fs.readFileSync(owner,'utf8');
+    text = text.replace(/^(% CODEX-REVIEW-DATA )(.*)$/m, (_,prefix,json) => {
+        const state = JSON.parse(json); state.edits['2'].deferred = false; return prefix + JSON.stringify(state);
+    });
+    fs.writeFileSync(owner,text,'utf8');
+    fs.writeFileSync(main,fs.readFileSync(main,'utf8').replace('fast','compact'),'utf8');
+    const work = fs.readFileSync(main); await savedLocal(f,['main.tex','reply.tex']);
+    assert((await f.git(['show','HEAD:main.tex'])).includes('strong and fast'));
+    assert(!(await f.git(['show','HEAD:main.tex'])).includes('compact'));
+    assert(fs.readFileSync(main).equals(work));
+    assert(!(await f.git(['show','HEAD:reply.tex'])).includes('CODEX-REVIEW-DATA'));
+});
+
+test('saved backup preserves BOM and Git EOL rules in a sanitized review file', async () => {
+    const f = await reviewFixture('saved-bom',false,false,true);
+    const main = path.join(f.root,'main.tex');
+    fs.writeFileSync(main,fs.readFileSync(main,'utf8').replace('The model','Author model'),'utf8');
+    const work = fs.readFileSync(main); await savedLocal(f,['main.tex','reply.tex']);
+    const saved = await f.git(['show','HEAD:main.tex']);
+    assert.equal(saved.charCodeAt(0),0xFEFF); assert(!saved.includes('\r\n'));
+    assert(saved.includes('Author model')); assert(fs.readFileSync(main).equals(work));
+});
+
+test('saved backup respects a rejecting Git hook and preserves staged files', async () => {
+    const f = await fixture('saved-hook'); f.edit();
+    fs.writeFileSync(path.join(f.root,'outside.txt'),'keep staged','utf8'); await f.git(['add','--','outside.txt']);
+    fs.writeFileSync(path.join(f.root,'.git/hooks/pre-commit'),'#!/bin/sh\necho saved-hook-denied >&2\nexit 1\n','utf8');
+    await assert.rejects(savedLocal(f,['main.tex']),/saved-hook-denied/);
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),f.baseline);
+    assert.equal((await f.git(['diff','--cached','--name-only'])).trim(),'outside.txt');
+    assert.equal(await f.git(['show',':outside.txt']),'keep staged');
+});
+
+test('saved backup schedules startup save and five-minute checks without UI prompts and disposes timers', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT,'backup-events-'));
+    fs.mkdirSync(path.join(root,'.git')); fs.writeFileSync(path.join(root,'main.tex'),'saved','utf8');
+    const uri = fsPath => ({scheme:'file',fsPath}), folder = {uri:uri(root)}, calls = [], logs = [], intervals = [];
+    let saved, folders;
+    const disposable = () => ({dispose() {}});
+    const vscode = {RelativePattern:class {constructor(base,pattern) {Object.assign(this,{base,pattern});}},
+        window:{createOutputChannel:() => ({appendLine:value=>logs.push(value),dispose() {}})},
+        workspace:{isTrusted:true, workspaceFolders:[folder], getConfiguration:()=>({get:(_,fallback)=>fallback}),
+            findFiles:async()=>[uri(path.join(root,'main.tex'))], getWorkspaceFolder:()=>folder,
+            onDidSaveTextDocument:handler=>{saved=handler;return disposable();},
+            onDidGrantWorkspaceTrust:disposable,
+            onDidChangeWorkspaceFolders:handler=>{folders=handler;return disposable();}}};
+    const subscriptions = [], timers = {setInterval(fn,ms) {const timer = {fn,ms,cleared:false}; intervals.push(timer); return timer;},
+        clearInterval(timer) {timer.cleared=true;}};
+    activateAutomatic(vscode,{subscriptions},(...args)=>calls.push(args),timers);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(intervals.length,1); assert.equal(intervals[0].ms,300000);
+    assert.equal(calls[0][5],'启动'); assert.equal(calls[0][1],null);
+    saved({uri:uri(path.join(root,'main.tex'))}); await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls[1][5],'保存');
+    saved({uri:uri(path.join(root,'.codex-review','state.json'))}); await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls.length,2);
+    intervals[0].fn(); await new Promise(resolve=>setImmediate(resolve)); assert.equal(calls[2][5],'定时');
+    vscode.workspace.workspaceFolders = [];
+    folders({added:[],removed:[folder]}); assert(intervals[0].cleared);
+    saved({uri:uri(path.join(root,'main.tex'))}); await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls.length,3); assert.deepEqual(logs,[]);
+    subscriptions.forEach(subscription=>subscription.dispose());
+});
+
+test('saved backup starts after a first TeX file is saved in an existing workspace', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT,'backup-first-tex-'));
+    fs.mkdirSync(path.join(root,'.git'));
+    const uri = fsPath => ({scheme:'file',fsPath}), folder = {uri:uri(root)}, calls = [];
+    let saved, hasTex = false;
+    const disposable = () => ({dispose() {}});
+    const vscode = {RelativePattern:class {},window:{createOutputChannel:()=>({appendLine() {},dispose() {}})},
+        workspace:{isTrusted:true,workspaceFolders:[folder],getConfiguration:()=>({get:(_,fallback)=>fallback}),
+            findFiles:async()=>hasTex?[uri(path.join(root,'main.tex'))]:[],getWorkspaceFolder:()=>folder,
+            onDidSaveTextDocument:handler=>{saved=handler;return disposable();},
+            onDidChangeWorkspaceFolders:disposable,onDidGrantWorkspaceTrust:disposable}};
+    const subscriptions = [], timers = {setInterval:()=>1,clearInterval() {}};
+    activateAutomatic(vscode,{subscriptions},(...args)=>calls.push(args),timers);
+    await new Promise(resolve=>setImmediate(resolve)); assert.equal(calls.length,0);
+    hasTex = true; fs.writeFileSync(path.join(root,'main.tex'),'saved','utf8');
+    saved({uri:uri(path.join(root,'main.tex'))}); await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls.length,1); assert.equal(calls[0][5],'保存');
+    subscriptions.forEach(subscription=>subscription.dispose());
+});
+
+test('saved backup keeps separate timers and save events for different projects', async () => {
+    const parent = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT,'backup-multi-'));
+    const roots = ['first','second'].map(name=>path.join(parent,name));
+    for (const root of roots) {fs.mkdirSync(path.join(root,'.git'),{recursive:true}); fs.writeFileSync(path.join(root,'main.tex'),'saved','utf8');}
+    const uri = fsPath=>({scheme:'file',fsPath}), folders = roots.map(root=>({uri:uri(root)})), calls = [], timers = [];
+    let saved; const disposable = ()=>({dispose() {}});
+    const vscode = {RelativePattern:class {constructor(base) {this.base=base;}},window:{createOutputChannel:()=>({appendLine() {},dispose() {}})},
+        workspace:{isTrusted:true,workspaceFolders:folders,getConfiguration:()=>({get:(_,fallback)=>fallback}),
+            findFiles:async pattern=>[uri(path.join(pattern.base,'main.tex'))],
+            getWorkspaceFolder:file=>folders.find(folder=>path.dirname(file.fsPath)===folder.uri.fsPath),
+            onDidSaveTextDocument:handler=>{saved=handler;return disposable();},onDidChangeWorkspaceFolders:disposable,onDidGrantWorkspaceTrust:disposable}};
+    const subscriptions = [], clock = {setInterval(fn,ms) {const timer = {fn,ms}; timers.push(timer); return timer;},clearInterval(timer) {timer.cleared=true;}};
+    activateAutomatic(vscode,{subscriptions},(...args)=>calls.push(args),clock);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(timers.length,2); assert.deepEqual(new Set(calls.map(call=>call[0])),new Set(roots));
+    saved({uri:uri(path.join(roots[1],'main.tex'))}); await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls.at(-1)[0],roots[1]); assert.equal(calls.at(-1)[5],'保存');
+    subscriptions.forEach(subscription=>subscription.dispose()); assert(timers.every(timer=>timer.cleared));
+});
+
+test('saved backup preserves a later source write during a commit hook for the next check', async () => {
+    const f = await fixture('saved-concurrent-hook'); f.edit();
+    fs.writeFileSync(path.join(f.root,'.git/hooks/pre-commit'),"#!/bin/sh\nprintf 'later save\\n' >> main.tex\n",'utf8');
+    const result = await savedLocal(f,['main.tex']);
+    assert.equal((await f.git(['rev-parse','origin/master'])).trim(),f.baseline);
+    assert.equal(await f.git(['show','HEAD:main.tex']),'Revised sentence.\n');
+    assert(fs.readFileSync(path.join(f.root,'main.tex'),'utf8').includes('later save'));
+    await f.git(['push','origin','master']);
+    await run(PYTHON,['-X','utf8',path.join(SCRIPTS,'auto_backup.py'),'--project',f.root,'--git',GIT,'saved-update'],
+        f.root,JSON.stringify({token:result.token,commit:result.commit,done:true}));
+    const next = await savedLocal(f,['main.tex']);
+    assert.notEqual(next.commit,result.commit);
+    assert((await f.git(['show','HEAD:main.tex'])).includes('later save'));
+});
+
+test('saved backup restores a pending legacy checkpoint before backing up later author edits', async () => {
+    const f = await reviewFixture('saved-legacy-resume');
+    await f.backend(['decide','--accept','1']);
+    const helper = (operation,input) => run(PYTHON,['-X','utf8',path.join(SCRIPTS,'auto_backup.py'),'--project',f.root,
+        '--state','reply.tex','--git',GIT,operation],f.root,input === undefined ? undefined : JSON.stringify(input));
+    await helper('prepare',{parent:f.baseline});
+    const before = await f.status();
+    const owner = fs.readFileSync(path.join(f.root,'reply.tex'));
+    fs.writeFileSync(path.join(f.root,'unrelated.txt'),'staged outside','utf8'); await f.git(['add','--','unrelated.txt']);
+    const main = path.join(f.root,'main.tex');
+    fs.writeFileSync(main,fs.readFileSync(main,'utf8').replace('The model','The author model'),'utf8');
+    await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
+    const history = (await f.git(['log','--format=%s',f.baseline+'..HEAD'])).trim().split('\n');
+    assert.equal(history.length,2); assert(history[1].includes('已接收成果')); assert(history[0].includes('自动备份'));
+    assert((await f.git(['show','HEAD:main.tex'])).includes('The author model'));
+    assert.equal(await f.git(['show',':unrelated.txt']),'staged outside');
+    const after = await f.status();
+    assert.deepEqual(after.edits['2'],before.edits['2']); assert.deepEqual(after.edits.a,before.edits.a);
+    assert.equal(after.edits['1'].status,before.edits['1'].status);
+    assert.deepEqual(after.edits['1'].versions,before.edits['1'].versions);
+    assert(fs.readFileSync(path.join(f.root,'reply.tex')).equals(owner));
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),(await f.git(['rev-parse','origin/master'])).trim());
+});
+
+test('saved backup works without a review and ignores damaged independent review metadata', async () => {
+    const f = await fixture('saved-bad-sidecar'); f.edit();
+    fs.mkdirSync(path.join(f.root,'.codex-review')); fs.writeFileSync(path.join(f.root,'.codex-review','state.json'),'{broken','utf8');
+    const options = {git:GIT,gh:'fixture-gh',python:PYTHON};
+    const result = await automaticBackup(f.root,null,options,()=>{},f.execute,'保存');
+    assert.equal(await f.git(['show',result.commit+':main.tex']),'Revised sentence.\n');
+    assert.equal(fs.readFileSync(path.join(f.root,'.codex-review','state.json'),'utf8'),'{broken');
+    assert.equal((await automaticBackup(f.root,null,options,()=>{},f.execute)).skipped,true);
+});
+
+test('saved backup retains its local commit when the target is not verified private', async () => {
+    const f = await fixture('saved-public'); f.edit(); f.setPrivacy(false);
+    const options = {git:GIT,gh:'fixture-gh',python:PYTHON};
+    await assert.rejects(automaticBackup(f.root,null,options,()=>{},f.execute),/未确认目标为对应的私有 GitHub 仓库/);
+    assert.notEqual((await f.git(['rev-parse','HEAD'])).trim(),f.baseline);
+    assert.equal((await f.git(['rev-parse','origin/master'])).trim(),f.baseline);
+});
+
+test('saved backup pushes only its verified commit if HEAD advances during privacy verification', async () => {
+    const f = await fixture('saved-head-race'); f.edit();
+    const options = {git:GIT,gh:'fixture-gh',python:PYTHON}; let checks = 0;
+    const execute = async (exe,args,cwd,input) => {
+        if (exe === 'fixture-gh' && ++checks === 2) {
+            fs.writeFileSync(path.join(f.root,'outside.txt'),'unrelated local commit','utf8');
+            await f.git(['add','--','outside.txt']); await f.git(['commit','-m','unrelated concurrent commit']);
+        }
+        return f.execute(exe,args,cwd,input);
+    };
+    await assert.rejects(automaticBackup(f.root,null,options,()=>{},execute),/推送后本地与 origin\/master 不一致/);
+    assert.equal((await f.git(['rev-parse','origin/master'])).trim(),(await f.git(['rev-parse','HEAD^'])).trim());
+    assert.equal((await f.git(['ls-tree','--name-only','origin/master','--','outside.txt'])).trim(),'');
+});
+
+test('saved backup refuses to push when a hook changes the commit scope', async () => {
+    const f = await fixture('saved-hook-scope'); f.edit();
+    fs.writeFileSync(path.join(f.root,'.git/hooks/pre-commit'),"#!/bin/sh\nprintf 'unexpected' > outside.txt\ngit add -- outside.txt\n",'utf8');
+    await assert.rejects(savedLocal(f,['main.tex']),/Git hook 改变了提交范围/);
+    assert.equal((await f.git(['rev-parse','origin/master'])).trim(),f.baseline);
+});
+
+test('automatic saved checkpoint preserves delayed notes, manual source and staging', async () => {
     const f = await reviewFixture('auto-partial');
     await f.backend(['decide','--accept','1']);
     const rawOwner = fs.readFileSync(path.join(f.root,'reply.tex'));
@@ -88,13 +320,12 @@ test('automatic accepted-only checkpoint preserves delayed notes, manual source 
     const result = await automaticBackup(f.root,'reply.tex',f.options,e=>events.push(e),f.execute);
     const committed = await f.git(['show',result.commit+':main.tex']);
     assert(committed.includes('reliable')); assert(committed.includes('strong') === false);
-    assert(committed.includes('fast')); assert(!committed.includes('manually edited'));
+    assert(committed.includes('fast')); assert(committed.includes('manually edited'));
     assert(fs.readFileSync(path.join(f.root,'main.tex'),'utf8').includes('manually edited'));
     const after = await f.status();
     assert.deepEqual(after.edits['2'],before.edits['2']);
     assert.deepEqual(after.edits.a,before.edits.a);
     assert(after.edits['2'].requests[0].text.includes('PRIVATE'));
-    assert.equal(after.auto_backup_done,result.source);
     assert(fs.readFileSync(path.join(f.root,'reply.tex')).equals(rawOwner), 'background progress never invalidates a foreground state-file receipt');
     assert(events.some(e=>e.status==='local')); assert.equal(events.at(-1).status,'done');
     assert.equal((await f.git(['diff','--cached','--name-only'])).trim(),'');
@@ -108,22 +339,41 @@ test('offline automatic push preserves one local commit and retries while later 
     const offline = (exe,args,cwd,input) => args[0]==='fetch' ? Promise.reject(new Error('fixture offline credentials')) : f.execute(exe,args,cwd,input);
     await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,()=>{},offline),/offline credentials/);
     const local = (await f.git(['rev-parse','HEAD'])).trim();
-    const failed = await f.status();
-    assert.equal(failed.auto_backup.status,'failed'); assert.equal(failed.auto_backup_job.commit,local);
+    const ledger = JSON.parse(fs.readFileSync(path.join(f.root,'.codex-review/automatic-backup.json'),'utf8'));
+    assert.equal(ledger.saved_job.commit,local);
     await f.backend(['decide','--accept','a']);
-    const pending = await f.status();
-    assert.notEqual(pending.auto_backup_requested,pending.auto_backup_job.source);
-    await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
-    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),local,'retry never duplicates the saved commit');
-    assert.notEqual((await f.status()).auto_backup_requested,(await f.status()).auto_backup_done);
     const next = await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
     assert.notEqual(next.commit,local);
+    assert.equal((await f.git(['rev-parse','HEAD^'])).trim(),local,'retry reuses the original commit');
     assert.equal((await f.status()).edits['2'].status,'rework');
     assert((await f.git(['show',next.commit+':reply.tex'])).includes('Thank you for this useful comment.'));
     assert(!(await f.git(['show',next.commit+':reply.tex'])).includes('CODEX-REVIEW-DATA'));
 });
 
-test('automatic backup refuses manual ahead commits and existing staging without blocking decisions', async () => {
+test('a later backup failure after offline recovery reports its own failure once', async () => {
+    const f = await fixture('saved-retry-failure'); f.edit();
+    const options = {git:GIT,gh:'fixture-gh',python:PYTHON};
+    const offline = (exe,args,cwd,input) => args[0]==='fetch' ? Promise.reject(new Error('offline first')) : f.execute(exe,args,cwd,input);
+    await assert.rejects(automaticBackup(f.root,null,options,()=>{},offline),/offline first/);
+    fs.writeFileSync(path.join(f.root,'main.tex'),'Later saved change.\n','utf8');
+    let checks = 0; const events = [];
+    const laterFailure = (exe,args,cwd,input) => exe === 'fixture-gh' && ++checks === 3
+        ? Promise.reject(new Error('later credentials')) : f.execute(exe,args,cwd,input);
+    await assert.rejects(automaticBackup(f.root,null,options,value=>events.push(value),laterFailure),/later credentials/);
+    assert.equal(events.filter(value=>value.status==='failed').length,1);
+    assert(events.at(-1).message.includes('later credentials'));
+});
+
+test('saved backup skips an unchanged project without fetching or pushing', async () => {
+    const f = await fixture('saved-unchanged'); let networks = 0;
+    const options = {git:GIT,gh:'fixture-gh',python:PYTHON};
+    const execute = (exe,args,cwd,input) => {if (args[0]==='fetch' || args[0]==='push') networks++; return f.execute(exe,args,cwd,input);};
+    assert.equal((await automaticBackup(f.root,null,options,()=>{},execute)).skipped,true);
+    assert.equal(networks,0); assert.equal((await f.git(['rev-parse','HEAD'])).trim(),f.baseline);
+    assert(!fs.existsSync(path.join(f.root,'.codex-review','automatic-backup.json')));
+});
+
+test('automatic backup refuses manual ahead commits and preserves unrelated staging without blocking decisions', async () => {
     const f = await reviewFixture('auto-ahead');
     await f.backend(['decide','--accept','1']);
     fs.writeFileSync(path.join(f.root,'unrelated.txt'),'unrelated','utf8');
@@ -137,9 +387,9 @@ test('automatic backup refuses manual ahead commits and existing staging without
     await g.backend(['decide','--accept','1']);
     fs.writeFileSync(path.join(g.root,'unrelated.txt'),'manual staging','utf8');
     await g.git(['add','unrelated.txt']);
-    const index = fs.readFileSync(path.join(g.root,'.git/index'));
-    await assert.rejects(automaticBackup(g.root,'reply.tex',g.options,()=>{},g.execute),/暂存/);
-    assert(fs.readFileSync(path.join(g.root,'.git/index')).equals(index));
+    await automaticBackup(g.root,'reply.tex',g.options,()=>{},g.execute);
+    assert.equal(await g.git(['show',':unrelated.txt']),'manual staging');
+    assert.equal((await g.git(['diff','--cached','--name-only'])).trim(),'unrelated.txt');
     assert(!fs.existsSync(path.join(g.root,'.git/index.lock')));
 });
 
@@ -152,8 +402,9 @@ test('automatic checkpoint refuses remote advancement and hook rejection with a 
     await run(GIT,['config','user.email','remote@example.invalid'],other);
     fs.writeFileSync(path.join(other,'remote.txt'),'Remote advance','utf8');
     await run(GIT,['add','remote.txt'],other); await run(GIT,['commit','-m','remote advance'],other); await run(GIT,['push','origin','master'],other);
-    await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute),/远端 master 已推进/);
-    assert.equal((await f.status()).auto_backup.status,'failed');
+    const events = [];
+    await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,value=>events.push(value),f.execute),/远端 master 已推进/);
+    assert.equal(events.at(-1).status,'failed');
     await f.backend(['decide','--accept','a']);
     assert.equal((await f.status()).edits.a.status,'accepted');
     const g = await reviewFixture('auto-hook');
@@ -175,7 +426,8 @@ test('acceptance during a background network wait completes and the queue backs 
         if (args[0]==='fetch' && !held) {held=true;entered();await gate;}
         return f.execute(exe,args,cwd,input);
     };
-    const queue = enqueueAutomatic(f.root,'reply.tex',f.options,()=>{},execute);
+    const events = [];
+    const queue = enqueueAutomatic(f.root,'reply.tex',f.options,value=>events.push(value),execute);
     await Promise.race([waiting,queue.then(()=>{throw new Error('backup ended before the network gate');})]);
     const before = await f.status();
     await f.backend(['decide','--accept','a']);
@@ -183,8 +435,7 @@ test('acceptance during a background network wait completes and the queue backs 
     enqueueAutomatic(f.root,'reply.tex',f.options,()=>{},execute);
     release(); await queue;
     const after = await f.status();
-    assert.equal(after.auto_backup.status,'done');
-    assert.equal(after.auto_backup_done,after.auto_backup_requested);
+    assert.equal(events.at(-1).status,'done');
     assert.deepEqual(after.edits['2'],before.edits['2']);
     assert((await f.git(['show','HEAD:reply.tex'])).includes('Thank you for this useful comment.'));
     assert.equal(Number((await f.git(['rev-list','--count',f.baseline+'..HEAD'])).trim()),2);

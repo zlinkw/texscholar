@@ -455,7 +455,6 @@ function createInlineReview(vscode, context, execute = run) {
         latestReviewState = state;
         require('./backup').restoreAutomaticStatus(c.repo, state.auto_backup);
         workbench.backupStatus?.(require('./backup').automaticStatus(c.repo));
-        if (state.auto_backup_requested && state.auto_backup?.status !== 'failed') scheduleBackup(c);
         reviewFiles.clear(); deferredFiles.clear();
         for (const edit of Object.values(state.edits)) if (OPEN.has(edit.status)) reviewFiles.add(path.join(c.repo, edit.file));
         if (batch && batch !== state.session) {
@@ -614,12 +613,12 @@ function createInlineReview(vscode, context, execute = run) {
         await refresh(c);
         vscode.window.showInformationMessage(`${c.id} 候选已拒绝，原文保留；不代表科学问题已解决，未提交 Git 或推送。`);
     }
-    function scheduleBackup(c) {
+    function scheduleBackup(c, trigger = '接收') {
         if (!c?.repo || !c.owner) return;
         const cfg = config();
         require('./backup').enqueueAutomatic(c.repo, c.owner,
             {git: cfg.get('gitPath', 'git'), gh: cfg.get('ghPath', 'gh'), python: cfg.get('pythonPath', 'python')},
-            value => {workbench.backupStatus?.(value); diagnostics?.appendLine(JSON.stringify({stage:'git_backup',...value}));});
+            value => diagnostics?.appendLine(JSON.stringify({stage:'git_backup',...value})), undefined, trigger);
     }
     async function acceptBatch(items) {
         if (!Array.isArray(items) || !items.length) throw new Error('请明确选择接收项及方案。');
@@ -827,7 +826,7 @@ function createInlineReview(vscode, context, execute = run) {
         acceptBatch: items => exclusive(() => acceptBatch(items)),
         relocate: c => exclusive(() => relocate(c)),
         backupStatus: () => require('./backup').automaticStatus(activeScope?.repo),
-        retryBackup: () => scheduleBackup(activeScope),
+        retryBackup: () => scheduleBackup(activeScope, '重试'),
         saved(c, option, compare) {if (selectedOption(c) === option) requestWorkbenchPDF(c, option, compare, false);},
         preview: requestWorkbenchPDF,
         locate: async (c, option) => {
@@ -863,6 +862,9 @@ function createInlineReview(vscode, context, execute = run) {
         connect: () => vscode.commands.executeCommand('localLatex.connectCodex'),
         start: () => vscode.commands.executeCommand('localLatex.startPaperTask')
     });
+    context.subscriptions.push(require('./backup').onAutomatic((root, value) => {
+        if (activeScope && sameFile(root, activeScope.repo)) workbench.backupStatus?.(value);
+    }));
     async function openWorkbench(arg) {
         await enableReview();
         const c = arg?.repo ? arg : workbench.active || orderedRecords()[0]?.c;
