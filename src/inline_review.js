@@ -704,7 +704,7 @@ function createInlineReview(vscode, context, execute = run) {
         if (!Array.isArray(items) || !items.length) throw new Error('请明确选择接收项及方案。');
         const c = decisionContext(items[0]);
         if (items.some(i => i.repo !== c.repo || i.owner !== c.owner)) throw new Error('批量接收不能跨论文项目。');
-        const state = await backend(c, ['cards']);
+        const state = await backend(c, ['cards', '--reuse-diffs'], reusableVersions(c));
         for (const item of items) {
             decisionContext(item);
             const edit = state.edits[item.id];

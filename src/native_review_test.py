@@ -1166,6 +1166,10 @@ class NativeReview(unittest.TestCase):
         for option in cached['options']:
             self.assertNotIn('changes', option)
             self.assertNotIn('scope', option)
+            self.assertNotIn('fact_changes', option)
+        wrong = self.review().cards({first: 'wrong-version'})['cards'][first]
+        self.assertNotIn('diff_reused', wrong)
+        self.assertIn('fact_changes', wrong['options'][0])
         self.assertEqual(cached['source'], packet['cards'][first]['source'])
         self.assertEqual(reused['cards'][second], packet['cards'][second])
         self.assertEqual(packet['cards'][first]['edit']['requests'][0]['text'], '保留原文，继续审核。')
