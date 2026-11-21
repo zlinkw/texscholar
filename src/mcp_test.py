@@ -295,6 +295,34 @@ class MCP(unittest.TestCase):
         server.call('rework_options', {**base, 'id':result['id'], 'version':result['version'], 'expected_sha256':result['sha256'], 'spec':{'options':newer}})
         self.assertEqual(self.review().inspect(result['id'])['options'][0]['fact_changes'][0]['kind'], 'term')
 
+    def test_fulfillment_does_not_survive_source_sync_or_manual_candidate_save(self):
+        from source_review import Review
+        state = '.codex-review/state.json'
+        fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
+        def review(): return Review(self.root,state,'missing-git')
+        r=review();text=r.read('main.tex');start=text.index('The model');end=text.index('\n',start)+1
+        updated,block=r.prepare_block({'file':'main.tex','kind':'paragraph','start':start,'end':end,'source_revision':r.source_digest(text)});r.persist(updated,digest(r.raw))
+        options=[{'label':k,'after':'The model is '+word+' and fast.','reason':k} for k,word in zip('ABC',('reliable','compact','efficient'))]
+        r=review();updated,item=r.propose_options({'file':'main.tex','kind':'manuscript','block_id':block['block_id'],'before':'The model is strong and fast.','options':options});r.persist(updated,digest(r.raw))
+        id_=item['id'];r=review();version=r.state['edits'][id_]['versions'][-1]
+        updated,note=r.feedback({'id':id_,'version':version,'side':'original','start':0,'end':0,'quote':'','text':'Clarify'});r.persist(updated,digest(r.raw))
+        def mapped_rework():
+            r=review();e=r.state['edits'][id_];old=r.payload(e); revised=[{**o,'after':o['after']+' Here.'} for o in old['options']]
+            request=e['requests'][0];mapping={'request':request['id'],'request_version':request['version'],'request_text':request['text'],
+                'option':'A','start':0,'end':1,'quote':revised[0]['after'][0],'explanation':'Attempted','status':'attempted'}
+            updated,result=r.propose_options({'options':revised,'fulfillment':[mapping]},id_,e['versions'][-1]);r.persist(updated,digest(r.raw));return review().state['edits'][id_]['versions'][-1]
+        first=mapped_rework();self.assertTrue(review().inspect(id_)['fulfillment'])
+        source=self.root/'main.tex';source.write_bytes(source.read_bytes().replace(b'The model',b'A model'))
+        r=review();updated,synced=r.sync_block(id_,first,r.source_digest(r.read('main.tex')));r.persist(updated,digest(r.raw))
+        self.assertEqual(review().inspect(id_)['fulfillment'],[])
+        latest=mapped_rework();r=review();self.assertTrue(r.inspect(id_)['fulfillment'])
+        argv=[sys.executable,'-B','-X','utf8',str(Path(__file__).with_name('source_review.py')),'--project',str(self.root),'--state',state,'--apply','--expect',digest(r.raw),
+              'edit-option','--id',id_,'--version',latest,'--option','A']
+        after=r.inspect(id_)['options'][0]['after']+' Edited.'
+        run=subprocess.run(argv,input=json.dumps({'after':after}).encode(),capture_output=True)
+        self.assertEqual(run.returncode,0,run.stderr.decode('utf-8'))
+        self.assertEqual(review().inspect(id_)['fulfillment'],[])
+
     def test_default_context_is_local_and_confirmed_roles_are_compact(self):
         main = self.root / 'main.tex'
         main.write_bytes(main.read_bytes().replace(b'\\end{document}', b'\n\nDistant paragraph.\n\nFar away context.\n\\end{document}'))
