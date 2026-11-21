@@ -1841,11 +1841,20 @@ class Review:
         self._read_cache = None
         return result
 
-    def feedback_context(self):
+    def feedback_context(self, ids=None):
         """Read exact immutable old/new text for each open note generation."""
         self.assert_ready()
+        if ids is not None:
+            if not ids or len(set(ids)) != len(ids):
+                raise Conflict('Select distinct review items for feedback')
+            for id_ in ids:
+                if id_ not in self.state['edits'] or self.state['edits'][id_]['status'] not in PENDING:
+                    raise Conflict('Selected review item is no longer pending')
+        selected = set(ids) if ids is not None else None
         groups = {}
         for id_, edit in self.state['edits'].items():
+            if selected is not None and id_ not in selected:
+                continue
             if edit['status'] not in PENDING:
                 continue
             for note in edit.get('requests', []):
@@ -1866,10 +1875,11 @@ class Review:
                 groups[key]['requests'].append(copy.deepcopy(note))
         if self.state_path.read_bytes() != self.raw:
             raise Conflict('Concurrent review modification while reading feedback context')
-        current_ids = {id_ for id_, edit in self.state['edits'].items() if edit['status'] in PENDING
+        current_ids = {id_ for id_, edit in self.state['edits'].items() if (selected is None or id_ in selected) and edit['status'] in PENDING
                        and any(n['status'] == 'open' for n in edit.get('requests', []))
                        and all(n['version'] == edit['versions'][-1] for n in edit.get('requests', []) if n['status'] == 'open')}
-        return {'items': list(groups.values()), 'sha256': digest(self.raw),
+        return {'items': list(groups.values()), 'sha256': digest(self.raw), 'session': self.state.get('session'),
+                'current_versions': {id_: self.state['edits'][id_]['versions'][-1] for id_ in ids} if ids is not None else {},
                 'known_feedback': [self.feedback_receipt(id_) for id_ in sorted(current_ids)]}
 
     def feedback_receipt(self, id_):
@@ -1957,7 +1967,8 @@ def main():
     sub.add_parser("status")
     p = sub.add_parser("cards", help="Read pending UI cards with shared live-source text; no PDF or writes")
     p.add_argument('--reuse-diffs', action='store_true', help='Read immutable item versions from JSON stdin and omit their unchanged diffs')
-    sub.add_parser('feedback-context', help='Read open notes with their exact original/candidate generation; no writes')
+    p = sub.add_parser('feedback-context', help='Read open notes with their exact original/candidate generation; no writes')
+    p.add_argument('--id', dest='ids', action='append')
     sub.add_parser("feedback", help="UTF-8 JSON anchored author annotation on stdin")
     p = sub.add_parser("inspect")
     p.add_argument("--id", required=True)
@@ -2006,7 +2017,7 @@ def dispatch(r, args):
     elif args.command == "cards":
         result = r.cards(json.loads(sys.stdin.read()) if args.reuse_diffs else None)
     elif args.command == 'feedback-context':
-        result = r.feedback_context()
+        result = r.feedback_context(args.ids)
     elif args.command == "inspect":
         result = r.inspect(args.id, args.version, args.source)
     elif args.command == "show":

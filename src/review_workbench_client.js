@@ -3,6 +3,7 @@
 const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
 const feedbackNode = $('status');
 let current, data, options = [], preview = 'A', selected, waiting = false, unavailable = false, conflict = false, focused, chinese = true;
+let currentSession;
 let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSelection, selectionStale = false;
 let navigationFilter = {query: '', kind: '', notes: false};
 let changeCursor;
@@ -748,7 +749,7 @@ document.addEventListener('click', event => {
     if (type === 'resetAppearance') {saveAppearance({reset: true}); return;}
     if (type === 'selectAll') {for (const row of $('directoryResults').children) {const input=row.querySelector('input'); if(input && !input.checked) {input.checked=true; input.dispatchEvent(new Event('change'));}} return;}
     if (type === 'clearSelection') {batchSelection.clear(); filterDirectory(); return;}
-    if (type === 'acceptBatch') {send(type,{items:[...batchSelection.values()]}); return;}
+    if (type === 'acceptBatch' || type === 'handoffSelected') {send(type,{items:[...batchSelection.values()], session:currentSession}); return;}
     if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
     if (type === 'questionTable') {$('questionTable').open=true; $('questionTable').scrollIntoView({block:'nearest'}); return;}
     if (type === 'history') {
@@ -895,6 +896,8 @@ window.addEventListener('message', ({data: message}) => {
         const saved = message.type === 'saved';
         const refresh = !saved && current && current.repo === message.c.repo && current.owner === message.c.owner && current.id === message.c.id;
         const oldOptions = options;
+        if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) batchSelection.clear();
+        if (message.session !== undefined) currentSession = message.session;
         current = message.c; data = message.data; options = message.options;
         renderQuestionTable(message.questions || []);
         stashes = message.stashes || [];

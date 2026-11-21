@@ -94,12 +94,18 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         }
         if (args.includes('inspect')) return JSON.stringify(allCards[args[args.indexOf('--id') + 1]]);
         if (args.includes('feedback')) {edit.requests.push({...input, status: 'open'}); return JSON.stringify({card: data, owner_text: 'fixture owner'});}
-        if (args.includes('feedback-context')) return JSON.stringify({items: [
+        if (args.includes('feedback-context')) {
+            const ids = args.flatMap((value, i) => value === '--id' ? [args[i + 1]] : []);
+            const items = [
             {id: '1', file: edit.file, version: 'v1', current_version: 'v1', original: data.original, candidate: data.candidate, options: data.options, requests: edit.requests},
             {id: '1', file: edit.file, version: 'v1', current_version: 'v1', original: data.original, candidate: data.options[1].after, options: data.options,
                 requests: [{option: 'B', side: 'candidate', quote: 'Clearer', text: '同一版本另一个方案的要求'}]},
-            {id: 'other', file: edit.file, version: 'v9', current_version: 'v9', original: 'Other original', candidate: 'Other candidate', requests: [{text: 'other item'}]}],
-            known_feedback: [{id: '1', version: 'v1', fingerprint: 'first-receipt'}, {id: 'other', version: 'v9', fingerprint: 'other-receipt'}]});
+            {id: 'other', file: edit.file, version: 'v9', current_version: 'v9', original: 'Other original', candidate: 'Other candidate', requests: [{text: 'other item'}]}];
+            for (let n = 2; n <= 29; n++) items.push({id:String(n), file:edit.file, version:'v1', current_version:'v1', original:`Original ${n}`, candidate:`Candidate ${n}`, requests:[{text:`Note ${n}`}]});
+            return JSON.stringify({session:'batch', sha256:'fixture', current_versions:Object.fromEntries(ids.map(id => [id, id === 'other' ? 'v9' : 'v1'])),
+                items: ids.length ? items.filter(item => ids.includes(item.id)) : items,
+                known_feedback: [{id: '1', version: 'v1', fingerprint: 'first-receipt'}, {id: 'other', version: 'v9', fingerprint: 'other-receipt'}]});
+        }
         if (args.includes('decide')) {edit.status = args.includes('--accept') ? 'accepted' : 'rejected';
             if (edit.status === 'accepted') value = value.replace(data.original, data.options.find(o => o.label === args[args.indexOf('--option') + 1]).after);
             return '{}';}
@@ -367,6 +373,14 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     assert(scoped.includes('外置状态默认保留旧批注'));
     assert(scoped.includes('旧内嵌状态保持原有返修默认行为'));
     assert(scoped.includes('discard_annotations 或 resolve_requests'));
+    await f.ui.addRequests(c, [{id:'1',version:'v1'}, {id:'2',version:'v1'}, {id:'3',version:'v1'}], 'batch');
+    const selected = fs.readFileSync(f.calls.findLast(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
+    assert(selected.includes('Note 2') && selected.includes('Note 3') && selected.includes('请更准确。'));
+    assert(!selected.includes('Note 4') && !selected.includes('other item') && !selected.includes('Candidate 4'));
+    const selectedCount = f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length;
+    await assert.rejects(f.ui.addRequests(c, [{id:'2',version:'v1'}], 'old-batch'), /批次已变化/);
+    await assert.rejects(f.ui.addRequests(c, [{id:'2',version:'old'}], 'batch'), /候选已更新/);
+    assert.equal(f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length, selectedCount);
     const sent = f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length;
     await assert.rejects(f.ui.addRequests({...c, version: 'outdated'}), /候选已更新/);
     assert.equal(f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length, sent);

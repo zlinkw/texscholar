@@ -2,6 +2,20 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html, filterItems} = require('./review_workbench');
 
+test('selected feedback handoff uses the displayed batch and exact selected identities', async () => {
+    let receive, session = 'batch1'; const calls = [], messages = [];
+    const c = {repo:'/fixture',owner:'state',id:'1',version:'v1'};
+    const data = {version:'v1',original:'Old',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'New',reason:'A',changes:[]}]};
+    const vscode = {Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services = {read:async()=>data,session:()=>session,style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[],handoff:async(...args)=>calls.push(args)};
+    const view = createWorkbench(vscode,{subscriptions:[]},services);
+    view.setRecords(new Map([['1',{c,data}],['2',{c:{...c,id:'2'},data}]])); await view.show(c); await receive({type:'ready',instance:'page'});
+    const action = {type:'handoffSelected',instance:'page',id:'1',version:'v1',session:'batch1',items:[{id:'2',version:'v1'}]};
+    await receive(action); assert.equal(calls.length,1); assert.deepEqual(calls[0],[c,action.items,'batch1']);
+    session = 'batch2'; await receive(action); assert.equal(calls.length,1);
+    assert(messages.some(m=>m.error && m.message.includes('变化')));
+});
+
 test('block source save and explicit sync preserve the selected review identity', async () => {
     let receive;
     const events = [], messages = [];

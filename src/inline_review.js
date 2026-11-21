@@ -1119,11 +1119,19 @@ function createInlineReview(vscode, context, execute = run) {
         await fs.access(file);
         await require('./pdf_navigation').openFloating(vscode, vscode.Uri.file(file));
     }
-    async function addRequests(target) {
+    async function addRequests(target, selected, session) {
         await vscode.commands.executeCommand('localLatex.checkMCPVersion', false);
-        const c = target || await discover(), state = await backend(c, ['feedback-context']);
-        const items = target ? state.items.filter(item => item.id === target.id) : state.items;
-        if (target && items.some(item => item.current_version !== target.version)) throw new Error('候选已更新，请核对新版再交接。');
+        const c = target || await discover();
+        const requested = selected || (target ? [{id:target.id, version:target.version}] : undefined);
+        if (requested && (!requested.length || new Set(requested.map(item => item.id)).size !== requested.length)) throw new Error('请选择不同的审核项。');
+        const args = ['feedback-context', ...(requested || []).flatMap(item => ['--id', item.id])];
+        const state = await backend(c, args);
+        const verify = result => {
+            if (selected && result.session !== session || requested && requested.some(item => result.current_versions?.[item.id] !== item.version))
+                throw new Error('候选已更新或批次已变化，请核对新版再交接。');
+        };
+        verify(state);
+        const items = state.items;
         const generations = new Map();
         for (const item of items) {
             const key = JSON.stringify([item.id, item.version]);
@@ -1142,12 +1150,17 @@ function createInlineReview(vscode, context, execute = run) {
         await fs.mkdir(parent, {recursive: true});
         const folder = await fs.mkdtemp(path.join(parent, 'batch-'));
         const file = path.join(folder, '返修批注.txt');
-        const ids = [...new Set(items.map(item => item.id))];
+        const ids = requested ? requested.map(item => item.id) : [...new Set(items.map(item => item.id))];
         const readRequest = {project: c.repo, state: c.owner, ids, expected_plugin_version: require('../package.json').version,
             known_feedback: (state.known_feedback || []).filter(receipt => ids.includes(receipt.id))};
         await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 参数：${JSON.stringify(readRequest)}\n若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n先核对当前状态；known_feedback 仅表示本附件已经完整提供的原文、候选与批注，工具核对未变时不重复发送，变化时以新版为准。有同版本 rules_receipt 时作为 known_rules 传回。不修改全局 SKILL。此文件是请求快照，不是状态表。\n保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；外置状态默认保留旧批注，只有作者明确要求时才使用 discard_annotations 或 resolve_requests。旧内嵌状态保持原有返修默认行为。失败保留原状。多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${notes.join('\n\n')}\n`, 'utf8');
+        if (selected) {
+            const fresh = await backend(c, args);
+            verify(fresh);
+            if (fresh.sha256 !== state.sha256) throw new Error('审核状态已更新，请重新选择后交接；未加入输入区。');
+        }
         await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
-        vscode.window.showInformationMessage((target ? '本项待处理批注' : '全部批注') + '已作为上下文加入 Codex 输入区，请检查后自行发送。');
+        vscode.window.showInformationMessage((selected ? '所选批注' : target ? '本项待处理批注' : '全部批注') + '已作为上下文加入 Codex 输入区，请检查后自行发送。');
     }
     function command(name, handler, displayOnly = false) {
         context.subscriptions.push(vscode.commands.registerCommand(name, async (...args) => {

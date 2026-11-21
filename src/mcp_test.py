@@ -192,6 +192,12 @@ class MCP(unittest.TestCase):
         self.apply('feedback', {'id': id_, 'version': version, 'side': 'candidate', 'option': 'A',
             'start': 0, 'end': 9, 'quote': 'Candidate', 'text': '作者当前要求'})
         attachment = self.review().feedback_context()
+        selected = self.review().feedback_context([id_])
+        self.assertEqual(selected['session'], self.review().state['session'])
+        self.assertEqual(selected['current_versions'], {id_: version})
+        self.assertEqual(selected['items'], attachment['items'])
+        with self.assertRaises(ValueError): self.review().feedback_context([id_, id_])
+        with self.assertRaises(ValueError): self.review().feedback_context(['missing'])
         receipts = attachment['known_feedback']
         self.assertEqual(len(receipts), 1)
         server = self.server()
