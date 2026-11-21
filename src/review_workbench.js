@@ -15,6 +15,21 @@ function filterItems(items, filter) {
         .sort((a, b) => Number(b.id.toLocaleLowerCase() === query) - Number(a.id.toLocaleLowerCase() === query));
 }
 
+function sameQuestionSnapshot(previous, current) {
+    if (previous === current) return true;
+    const oldRows = JSON.parse(previous), newRows = JSON.parse(current);
+    if (oldRows.length !== newRows.length) return false;
+    return oldRows.every((old, i) => {
+        const now = newRows[i], a = old.location, b = now.location;
+        const {location:ignoredOld, ...oldData} = old, {location:ignoredNew, ...newData} = now;
+        if (JSON.stringify(oldData) !== JSON.stringify(newData) || !a !== !b) return false;
+        if (!a) return true;
+        if (a.block !== b.block || a.parent !== b.parent || a.anchor !== b.anchor || a.heading !== b.heading || b.crossed) return false;
+        if (a.before.some(id => b.after.includes(id)) || a.after.some(id => b.before.includes(id))) return false;
+        return !(a.left && a.left === b.right || a.right && a.right === b.left);
+    });
+}
+
 function html(nonce, assets = {}) {
     const client = fs.readFileSync(path.join(__dirname, 'review_workbench_client.js'), 'utf8');
     const math = fs.readFileSync(path.join(__dirname, 'review_math.js'), 'utf8');
@@ -136,13 +151,15 @@ function createWorkbench(vscode, context, services) {
         if (!session) return [];
         const scope = JSON.stringify([c.repo, c.owner, session]);
         const checked = context.workspaceState.get('reviewQuestionChecks', {})[scope] || {};
-        const rows = services.questions(c);
+        const rows = services.questions(c, checked);
         for (const key of Object.keys(checked)) if (!rows.some(row => row.key === key)) {
             const [id,file,quote] = JSON.parse(key);
             rows.push({key, question:{id,file,quote}, entries:[], snapshot:'[]'});
         }
-        return rows.map(row => ({...row, checked: checked[row.key] === row.snapshot,
-            recheck: checked[row.key] !== undefined && checked[row.key] !== row.snapshot}));
+        return rows.map(row => {
+            const previous = checked[row.key], equal = previous !== undefined && sameQuestionSnapshot(previous, row.snapshot);
+            return {...row, checked: equal, recheck: previous !== undefined && !equal};
+        });
     }
     function packet() {
         const {file, kind, block_id, location: originalLocation, display_location, versions, requests, questions, previous_feedback} = loaded.edit;
@@ -571,12 +588,15 @@ function createWorkbench(vscode, context, services) {
                 const list = filterItems(directory(), {...navigationFilter, queue:'active'});
                 const index = list.findIndex(item => item.id === c.id);
                 const next = list.slice(index + 1).concat(list.slice(0, Math.max(0, index))).find(item => item.id !== c.id);
+                const request = showRequest;
+                const session = services.session(c);
                 if (isPostponing && !await allowSwitch()) return;
                 if (!active || active.repo !== c.repo || active.owner !== c.owner || active.id !== c.id || panel !== operationPanel) return;
                 const target = {...active};
                 await setPostponed(target, isPostponing);
-                if (!valid(target) || panel !== operationPanel) return;
+                if (!valid(target) || panel !== operationPanel || services.session(target) !== session) return;
                 post({type:'directory', directory:directory()});
+                if (isPostponing && request !== showRequest) return;
                 if (isPostponing && next) await show(lastRecords.get(next.id).c, undefined, true, true);
                 else if (isPostponing) {
                     dirty = noteDirty = false; uiState = undefined;

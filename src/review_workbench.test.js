@@ -638,7 +638,7 @@ test('history remains read-only and adopts only into the current draft', async (
 });
 
 test('problem review mark is scoped and becomes stale after associated changes', async () => {
-    let receive, snapshot='one', session='s1', present=true; const qkey=JSON.stringify(['R1-Q1','r','Exact']); const messages=[],values={};
+    let receive, snapshot=JSON.stringify([{id:'one'}]), session='s1', present=true; const qkey=JSON.stringify(['R1-Q1','r','Exact']); const messages=[],values={};
     const workspaceState={get:(k,f)=>values[k] ?? f,update:async(k,v)=>{values[k]=structuredClone(v);}};
     const c={repo:'/questions',owner:'state',id:'1',version:'v1'}, c2={...c,id:'2'};
     const data=id=>({id,version:'v1',original:'Old',source_match:true,edit:{file:'x.tex',kind:'manuscript',status:'pending',versions:['v1'],requests:[]},options:[{label:'A',after:'New',reason:'A'}]});
@@ -647,11 +647,43 @@ test('problem review mark is scoped and becomes stale after associated changes',
     const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
     const services={session:()=>session,questions:()=>present ? [row()] : [],read:async t=>structuredClone(records.get(t.id).data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[...records].map(([id,r])=>({id,...r.data.edit}))};
     const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services);view.setRecords(records);await view.show(c);await receive({type:'ready',instance:'page'});
-    await receive({type:'checkQuestion',instance:'page',id:'1',version:'v1',questionKey:qkey,snapshot:'one'});
+    await receive({type:'checkQuestion',instance:'page',id:'1',version:'v1',questionKey:qkey,snapshot:JSON.stringify([{id:'one'}])});
     assert.equal(messages.filter(m=>m.type==='questionRows').at(-1).questions[0].checked,true);
-    snapshot='two';view.sync(records,c);assert.equal(messages.filter(m=>m.type==='questionRows').at(-1).questions[0].recheck,true);
-    await receive({type:'checkQuestion',instance:'page',id:'1',version:'v1',questionKey:qkey,snapshot:'one'});
+    snapshot=JSON.stringify([{id:'two'}]);view.sync(records,c);assert.equal(messages.filter(m=>m.type==='questionRows').at(-1).questions[0].recheck,true);
+    await receive({type:'checkQuestion',instance:'page',id:'1',version:'v1',questionKey:qkey,snapshot:JSON.stringify([{id:'one'}])});
     assert(messages.some(m=>m.error && m.message.includes('关联或批注已变化')));
     await receive({type:'questionEntry',instance:'page',id:'1',version:'v1',questionKey:qkey,target:'2',targetVersion:'v1'});
     assert.equal(view.active.id,'2'); present=false; view.sync(records,c); assert.equal(messages.filter(m=>m.type==='questionRows').at(-1).questions[0].recheck,true); present=true; session='s2';view.sync(records,c);assert.equal(messages.filter(m=>m.type==='questionRows').at(-1).questions[0].checked,false);
+});
+
+test('postpone does not override a later explicit navigation even when the author returns', async () => {
+    for (const mode of ['same','other','back']) {
+        let receive,release,start;const begun=new Promise(r=>start=r),gate=new Promise(r=>release=r),values={};
+        const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);start();await gate;}};
+        const c={repo:'/nav',owner:'state',id:'1',version:'v1'}, c2={...c,id:'2'},c3={...c,id:'3'};
+        const data=id=>({id,version:'v1',original:'Old',source_match:true,edit:{file:'x',kind:'manuscript',status:'pending',versions:['v1'],requests:[]},options:[{label:'A',after:'New'}]});
+        const records=new Map([c,c2,c3].map(x=>[x.id,{c:x,data:data(x.id)}]));
+        const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage(){}}})}};
+        const services={session:()=> 's',read:async x=>structuredClone(records.get(x.id).data),readNext:async x=>structuredClone(records.get(x.id).data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[...records].map(([id,r])=>({id,...r.data.edit}))};
+        const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services);view.setRecords(records);await view.show(c);await receive({type:'ready',instance:'p'});
+        const running=receive({type:'postpone',instance:'p',id:'1',version:'v1'});await begun;
+        if(mode==='same') await view.show(c); else {await view.show(c3); if(mode==='back') await view.show(c);}
+        release();await running;assert.equal(view.active.id,mode==='other'?'3':'1',mode);assert.deepEqual(values.reviewPostponed[JSON.stringify(['/nav','state','s'])],['1']);
+    }
+});
+
+test('question review survives an unrelated prefix but not moving its fixed block across context', async () => {
+    let receive;const values={}, messages=[], q={id:'R1-Q1',file:'review.txt',quote:'Question'}, id='11111111-1111-4111-8111-111111111111';
+    const prefix='% TS-BLOCK-BEGIN id='+id+' kind=paragraph\n', content='Original.\n', suffix='% TS-BLOCK-END id='+id+'\n';
+    const chunk=prefix+content+suffix, c={repo:'/move',owner:'state',id:'1',version:'v1'};
+    const data={id:'1',version:'v1',original:'Original.',source_match:true,edit:{file:'main.tex',kind:'manuscript',status:'pending',versions:['v1'],block_id:id,requests:[],questions:[q]},options:[{label:'A',after:'New'}]};
+    const state={edits:{'1':data.edit},cards:{'1':data},sources:{'main.tex':chunk+'\nAuthor context.\n'}};
+    function locate(){const text=state.sources['main.tex'], at=text.indexOf(chunk);data.block={id,parent:null,marker_start:at,marker_end:at+chunk.length};data.source={start:at+prefix.length,end:at+prefix.length+9};}
+    locate();const records=new Map([['1',{c,data}]]), workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+    const services={session:()=> 's',questions:(_,checked)=>require('./inline_review').questionRows(state,checked),read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}]};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services);view.setRecords(records);await view.show(c);await receive({type:'ready',instance:'p'});
+    const first=messages.findLast(m=>m.type==='content').questions[0];await receive({type:'checkQuestion',instance:'p',id:'1',version:'v1',questionKey:first.key,snapshot:first.snapshot});
+    state.sources['main.tex']='Unrelated prefix.\n\n'+state.sources['main.tex'];locate();view.sync(records,c);assert.equal(messages.findLast(m=>m.type==='questionRows').questions[0].checked,true);
+    state.sources['main.tex']='Unrelated prefix.\n\nAuthor context.\nAnother paragraph.\n\n'+chunk;locate();view.sync(records,c);assert.equal(messages.findLast(m=>m.type==='questionRows').questions[0].recheck,true);
 });

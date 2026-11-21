@@ -10,15 +10,36 @@ const OPEN = new Set(['pending', 'rework']);
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**';
 const TRANSLATORS = {google: 'Google', googleapi: 'Google（googleapis）', bing: 'Bing', deepl: 'DeepL 网页版', transmart: '腾讯 TranSmart'};
 
-function questionRows(state) {
+function reviewLocation(state, edit, card, previous) {
+    const text = state.sources?.[edit.file];
+    if (!text || !card?.source_match || !card.source) return;
+    const chars = Array.from(text), block = card.block;
+    const start = block?.marker_start ?? card.source.start, end = block?.marker_end ?? card.source.end;
+    const left = chars.slice(0, start).join(''), right = chars.slice(end).join('');
+    const markers = part => [...part.matchAll(/^% TS-BLOCK-BEGIN id=([\da-f-]+)/gm)].map(m => m[1]);
+    const lines = part => part.split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('% TS-BLOCK-'));
+    const headings = [...left.matchAll(/\\(?:sub)*section\*?(?:\[[^\]]*\])?\{([^{}]*)\}/g)];
+    const leftLines = lines(left), rightLines = lines(right);
+    const crossed = !!(previous?.left && rightLines.includes(previous.left) && !leftLines.includes(previous.left)
+        || previous?.right && leftLines.includes(previous.right) && !rightLines.includes(previous.right));
+    return {block:edit.block_id, parent:block?.parent, anchor:edit.block_id ? undefined : edit.anchor?.context,
+        heading:headings.at(-1)?.[0], before:markers(left), after:markers(right),
+        left:leftLines.at(-1), right:rightLines[0], crossed};
+}
+
+function questionRows(state, checked = {}) {
     const grouped = new Map();
-    for (const [id, edit] of Object.entries(state.edits)) for (const question of edit.questions || []) {
-        const key = JSON.stringify([question.id, question.file, question.quote]);
-        if (!grouped.has(key)) grouped.set(key, {key, question, entries:[]});
+    for (const [id, edit] of Object.entries(state.edits)) {
         const source = state.cards[id];
-        grouped.get(key).entries.push({id, kind:edit.kind, file:edit.file, status:edit.status, version:edit.versions.at(-1),
-            conflict:source ? source.source_match === false : undefined, freshness:edit.freshness,
-            requests:edit.requests || [], questions:edit.questions || []});
+        for (const question of edit.questions || []) {
+            const key = JSON.stringify([question.id, question.file, question.quote]);
+            if (!grouped.has(key)) grouped.set(key, {key, question, entries:[]});
+            const prior = checked[key] && JSON.parse(checked[key]).find(row => row.id === id)?.location;
+            const location = reviewLocation(state, edit, source, prior);
+            grouped.get(key).entries.push({id, kind:edit.kind, file:edit.file, status:edit.status, version:edit.versions.at(-1),
+                conflict:source ? source.source_match === false : undefined, freshness:edit.freshness, location,
+                requests:edit.requests || [], questions:edit.questions || []});
+        }
     }
     return [...grouped.values()].map(row => {
         row.entries.sort((a,b) => a.id.localeCompare(b.id, undefined, {numeric:true}));
@@ -779,7 +800,7 @@ function createInlineReview(vscode, context, execute = run) {
     const workbench = require('./review_workbench').createWorkbench(vscode, context, {
         style, read: c => readCurrent(c, false), readNext: c => currentFromRecords(c, false), selection: selectedOption, activeChanged: selectReviewItem,
         session: c => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? latestReviewState?.session : undefined,
-        questions: c => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? questionRows(latestReviewState) : [],
+        questions: (c, checked) => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? questionRows(latestReviewState, checked) : [],
         openQuestionEntry: async (c, id, version) => openRelatedItem({...c,id,version}),
         history: async (c, version) => {
             const data = await backend(c, ['inspect', '--id', c.id, '--version', version]);
