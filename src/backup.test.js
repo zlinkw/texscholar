@@ -287,6 +287,46 @@ test('saved backup retains its local commit when the target is not verified priv
     assert.equal((await f.git(['rev-parse','origin/master'])).trim(),f.baseline);
 });
 
+test('saved backup status supersedes legacy failure without changing legacy history or review data', async () => {
+    const f = await reviewFixture('saved-status-legacy');
+    await f.backend(['decide','--accept','1']);
+    const before = await f.status(), owner = fs.readFileSync(path.join(f.root,'reply.tex'));
+    const journal = path.join(f.root,'.codex-review','automatic-backup.json');
+    const legacy = {session:before.session,status:{status:'failed',message:'旧投影备份失败记录'},done:'old-source-id'};
+    fs.writeFileSync(journal,JSON.stringify({...legacy,saved_done:{commit:'prior-commit',files:{}}}),'utf8');
+    assert.equal((await f.status()).auto_backup.commit,'prior-commit','pre-upgrade completed saved jobs remain readable');
+    fs.writeFileSync(journal,JSON.stringify(legacy),'utf8');
+    const result = await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
+    const after = await f.status();
+    assert.equal(after.auto_backup.status,'done'); assert.equal(after.auto_backup.commit,result.commit);
+    assert.equal(after.auto_backup_done,'old-source-id'); assert.equal(after.saved_backup_done.commit,result.commit);
+    assert.equal(JSON.parse(fs.readFileSync(journal,'utf8')).status.message,'旧投影备份失败记录');
+    assert.deepEqual(after.edits['2'],before.edits['2']); assert(fs.readFileSync(path.join(f.root,'reply.tex')).equals(owner));
+    const cards = JSON.parse(await run(PYTHON,[...f.common,'cards'],f.root));
+    assert.equal(cards.auto_backup.status,'done'); assert.equal(cards.saved_backup_done.commit,result.commit);
+});
+
+test('saved backup records offline failure and reads saved status without a review session', async () => {
+    const f = await reviewFixture('saved-status-no-session');
+    const journal = path.join(f.root,'.codex-review','automatic-backup.json');
+    fs.writeFileSync(journal,JSON.stringify({status:{status:'failed',message:'older session failure'}}),'utf8');
+    fs.writeFileSync(path.join(f.root,'main.tex'),fs.readFileSync(path.join(f.root,'main.tex'),'utf8').replace('The model','Author model'),'utf8');
+    const offline = (exe,args,cwd,input) => args[0]==='fetch' ? Promise.reject(new Error('offline status test')) : f.execute(exe,args,cwd,input);
+    await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,()=>{},offline),/offline status test/);
+    const result = await f.status();
+    assert.equal(result.auto_backup.status,'failed'); assert.match(result.auto_backup.message,/offline status test/);
+    assert.equal(result.auto_backup.commit,result.saved_backup_job.commit);
+    assert.equal(result.auto_backup_done,null); assert.equal(JSON.parse(fs.readFileSync(journal,'utf8')).status.message,'older session failure');
+});
+
+test('saved backup status is readable before a review batch exists', async () => {
+    const f = await fixture('saved-status-uninitialized'); f.edit();
+    const result = await automaticBackup(f.root,null,{git:GIT,gh:'fixture-gh',python:PYTHON},()=>{},f.execute);
+    fs.writeFileSync(path.join(f.root,'reply.tex'),'% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-NEXT manuscript=1 response=a\n% CODEX-REVIEW-STATE-END\n','utf8');
+    const state = JSON.parse(await run(PYTHON,['-X','utf8',path.join(SCRIPTS,'source_review.py'),'--project',f.root,'--state','reply.tex','--git',GIT,'status'],f.root));
+    assert.equal(state.initialized,false); assert.equal(state.auto_backup.status,'done'); assert.equal(state.saved_backup_done.commit,result.commit);
+});
+
 test('saved backup pushes only its verified commit if HEAD advances during privacy verification', async () => {
     const f = await fixture('saved-head-race'); f.edit();
     const options = {git:GIT,gh:'fixture-gh',python:PYTHON}; let checks = 0;
@@ -419,26 +459,67 @@ test('automatic checkpoint refuses remote advancement and hook rejection with a 
 test('acceptance during a background network wait completes and the queue backs up both checkpoints', async () => {
     const f = await reviewFixture('auto-continuous');
     await f.backend(['decide','--accept','1']);
-    let entered, release, held = false;
+    let entered, release, queued, secondStart, releaseSecond, held = false, queuedCount = 0, startCount = 0;
     const waiting = new Promise(resolve=>{entered=resolve;});
+    const secondQueued = new Promise(resolve=>{queued=resolve;});
+    const waitingSecondStart = new Promise(resolve=>{secondStart=resolve;});
+    const secondGate = new Promise(resolve=>{releaseSecond=resolve;});
     const gate = new Promise(resolve=>{release=resolve;});
     const execute = async (exe,args,cwd,input) => {
         if (args[0]==='fetch' && !held) {held=true;entered();await gate;}
-        return f.execute(exe,args,cwd,input);
+        if (args.at(-1)==='saved-event' && input && JSON.parse(input).action==='start' && ++startCount===2) {secondStart(); await secondGate;}
+        const result = await f.execute(exe,args,cwd,input);
+        if (args.at(-1)==='saved-event' && input && JSON.parse(input).action==='queued' && ++queuedCount===2) queued();
+        return result;
     };
     const events = [];
     const queue = enqueueAutomatic(f.root,'reply.tex',f.options,value=>events.push(value),execute);
     await Promise.race([waiting,queue.then(()=>{throw new Error('backup ended before the network gate');})]);
     const before = await f.status();
+    assert.equal(before.auto_backup.status,'local'); assert(before.auto_backup.commit);
     await f.backend(['decide','--accept','a']);
     assert.equal((await f.status()).edits.a.status,'accepted','foreground writer is not held by a network wait');
     enqueueAutomatic(f.root,'reply.tex',f.options,()=>{},execute);
-    release(); await queue;
+    await secondQueued; assert.equal((await f.status()).auto_backup.status,'queued');
+    release(); await waitingSecondStart;
+    assert.equal((await f.status()).auto_backup.status,'queued','an older completed push cannot claim the newer save is backed up');
+    releaseSecond(); await queue;
     const after = await f.status();
     assert.equal(events.at(-1).status,'done');
+    assert.equal(after.auto_backup.status,'done');
     assert.deepEqual(after.edits['2'],before.edits['2']);
     assert((await f.git(['show','HEAD:reply.tex'])).includes('Thank you for this useful comment.'));
     assert.equal(Number((await f.git(['rev-list','--count',f.baseline+'..HEAD'])).trim()),2);
+});
+
+test('a save arriving during local backup metadata is serialized and checked afterward', async () => {
+    const f = await fixture('saved-metadata-race'); f.edit();
+    let entered, release, held = false;
+    const waiting = new Promise(resolve=>{entered=resolve;}), gate = new Promise(resolve=>{release=resolve;});
+    const execute = async (exe,args,cwd,input) => {
+        if (args.at(-1)==='saved-local' && !held) {held=true; entered(); await gate;}
+        return f.execute(exe,args,cwd,input);
+    };
+    const options = {git:GIT,gh:'fixture-gh',python:PYTHON}, events = [];
+    const queue = enqueueAutomatic(f.root,null,options,value=>events.push(value),execute);
+    await Promise.race([waiting,queue.then(()=>{throw new Error('backup ended before local gate');})]);
+    fs.writeFileSync(path.join(f.root,'main.tex'),'Saved during backup.\n','utf8');
+    enqueueAutomatic(f.root,null,options,()=>{},execute);
+    release(); await queue;
+    assert.equal(await f.git(['show','HEAD:main.tex']),'Saved during backup.\n');
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),(await f.git(['rev-parse','origin/master'])).trim());
+    assert(!events.some(value=>value.status==='failed'));
+    assert.equal(events.at(-1).status,'idle');
+});
+
+test('a failed queued commit records the real hook error even when its metadata operation failed', async () => {
+    const f = await fixture('saved-status-hook'); f.edit();
+    fs.writeFileSync(path.join(f.root,'.git/hooks/pre-commit'),'#!/bin/sh\necho durable-hook-error >&2\nexit 1\n','utf8');
+    const options = {git:GIT,gh:'fixture-gh',python:PYTHON}, events = [];
+    await enqueueAutomatic(f.root,null,options,value=>events.push(value),f.execute);
+    const ledger = JSON.parse(fs.readFileSync(path.join(f.root,'.codex-review','automatic-backup.json'),'utf8'));
+    assert.equal(ledger.saved_status.status,'failed'); assert.match(ledger.saved_status.message,/durable-hook-error/);
+    assert.equal(events.at(-1).status,'failed');
 });
 
 test('automatic checkpoint preserves UTF-8 BOM and honors existing Git CRLF normalization', async () => {

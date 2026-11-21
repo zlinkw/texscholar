@@ -292,6 +292,7 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
                 included.add(dep); queue.append(dep)
     result = {'sha256': digest(review.raw), 'session': review.state.get('session'), 'next': review.state['next'],
               'targets': targets, 'items': {}, 'sources': {}, 'questions': {}, 'selections': selections,
+              **review.backup_packet(),
               'source_scope': ('Explicit files are complete; ids/scopes include surrounding paragraphs. Offsets refer to the actual source including retained comments.'
                                if review.sidecar else 'Explicit files are complete; ids/scopes include surrounding paragraphs. Offsets refer to source without the runtime state block.')}
     # Inspect rules without sending every unrelated comment to the model.
@@ -447,8 +448,10 @@ class Server:
                     raise Conflict('Both embedded and external review states are active; reconcile before reading')
                 state = '.codex-review/state.json'
             elif not owners:
+                context = initial_source_context(root, roles, args)
+                context.update(Review(root, '.codex-review/state.json', git, initialize=True).backup_packet())
                 return {'initialized': False, 'plugin_version': VERSION, 'files': sources, 'file_roles': role_packet(roles), **rule_packet({**args, 'modules': [*args.get('modules', []), 'writing']}),
-                        'context': initial_source_context(root, roles, args),
+                        'context': context,
                         **self.references(root, args),
                         'state': '.codex-review/state.json', 'sha256': digest(b''),
                         'next': 'Read actual author files. During authorized paper work use begin_review with this absent-state receipt. Do not initialize merely for tool installation.'}

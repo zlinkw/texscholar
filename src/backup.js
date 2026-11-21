@@ -81,13 +81,16 @@ async function legacyAutomaticBackup(root, owner, options, report = () => {}, ex
         throw new Error(value.message);
     }
 }
-async function automaticBackup(root, owner, options, report = () => {}, execute = run, trigger = '保存', afterResume = false) {
+async function automaticBackup(root, owner, options, report = () => {}, execute = run, trigger = '保存', afterResume = false, metadata = action => action()) {
     root = fs.realpathSync(root);
     const started = performance.now();
     const git = args => execute(options.git || 'git', args, root);
-    const helper = async (operation, input) => JSON.parse(await execute(options.python || 'python',
-        ['-X','utf8',path.join(__dirname,'auto_backup.py'),'--project',root,'--git',options.git || 'git',operation],
-        root, input === undefined ? undefined : JSON.stringify(input)));
+    const helper = async (operation, input, independent = false) => {
+        const invoke = () => execute(options.python || 'python',
+            ['-X','utf8',path.join(__dirname,'auto_backup.py'),'--project',root,'--git',options.git || 'git',operation],
+            root, input === undefined ? undefined : JSON.stringify(input));
+        return JSON.parse(await (operation === 'saved-status' || independent ? invoke() : metadata(invoke)));
+    };
     const notify = value => {value = {...value, elapsed_ms:performance.now()-started}; report(value);};
     let local;
     try {
@@ -104,7 +107,7 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
         let state = await helper('saved-status');
         if (state.legacy_job) {
             if (!owner) throw new Error('旧备份任务仍待恢复，请核对原审核状态。');
-            await legacyAutomaticBackup(root,owner,options,report,execute);
+            await metadata(() => legacyAutomaticBackup(root,owner,options,report,execute));
             state = await helper('saved-status');
         }
         let head = (await git(['rev-parse','HEAD'])).trim();
@@ -125,9 +128,15 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
                 newFiles = untracked.filter(name => registered.has(name));
                 files.push(...newFiles);
             }
-            if (!files.length) {notify({status:'idle',message:'没有可备份的已跟踪论文文件'}); return {skipped:true};}
+            if (!files.length) {
+                const value = {status:'idle',message:'没有可备份的已跟踪论文文件'};
+                await helper('saved-event',{action:'idle',...value}); notify(value); return {skipped:true};
+            }
             local = await helper('saved-local', {parent:head, files, new_files:newFiles, trigger});
-            if (local.unchanged) {notify({status:'idle',message:'已保存源码无变化'}); return {skipped:true};}
+            if (local.unchanged) {
+                const value = {status:'idle',message:'已保存源码无变化'};
+                await helper('saved-event',{action:'idle',...value}); notify(value); return {skipped:true};
+            }
         }
         notify({status:'local',commit:local.commit,message:'本地备份已提交，远端待上传'});
         const plan = {root,git,execute,options,repository:githubRepository(pushUrls[0])};
@@ -141,30 +150,57 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
         await helper('saved-update',{token:local.token,commit:pushed,done:true});
         if (resuming && !afterResume) {
             notify({status:'queued',commit:pushed,message:'已恢复上次备份，正在检查后续保存'});
-            return automaticBackup(root,owner,options,report,execute,trigger,true);
+            return automaticBackup(root,owner,options,report,execute,trigger,true,metadata);
         }
         notify({status:'done',commit:pushed,message:'已备份 ' + pushed.slice(0,8)});
         return {commit:pushed};
     } catch (error) {
         const value = {status:'failed', ...(local?.commit ? {commit:local.commit} : {}),
             message:(local?.commit ? '本地提交已保存，远端未确认。' : '') + '后台备份失败：' + error.message};
+        try {await helper('saved-event',{action:'failed',...value},true);}
+        catch (recordError) {value.message += '\n备份状态落盘失败：' + recordError.message;}
         notify(value); throw new Error(value.message);
     }
 }
 function enqueueAutomatic(root, owner, options, report = () => {}, execute = run, trigger = '保存') {
     root = fs.realpathSync(root);
     const previous = automaticJobs.get(root);
-    if (previous) {previous.again = true; previous.trigger = trigger; previous.owner = owner || previous.owner; return previous.promise;}
-    const entry = {again:false,trigger,owner}; automaticJobs.set(root,entry);
+    if (previous) {
+        if (!previous.again) previous.queueEvent();
+        previous.again = true; previous.trigger = trigger; previous.owner = owner || previous.owner; return previous.promise;
+    }
+    const entry = {again:false,trigger,owner,records:Promise.resolve()}; automaticJobs.set(root,entry);
+    const record = input => execute(options.python || 'python', ['-X','utf8',path.join(__dirname,'auto_backup.py'),
+        '--project',root,'--git',options.git || 'git','saved-event'],root,JSON.stringify(input));
+    const metadata = action => {
+        const result = entry.records.then(action);
+        entry.records = result.then(() => {});
+        entry.records.catch(() => {}); // The owning task observes the same rejection before its next run.
+        return result;
+    };
+    entry.queueEvent = () => {
+        const id = crypto.randomUUID(); entry.eventId = id;
+        metadata(() => record({action:'queued',id}));
+    };
+    entry.queueEvent();
     const notify = value => publishAutomatic(root, value.status === 'done' && entry.again
         ? {status:'queued',message:'上次备份已完成，新保存正在排队'} : value, report);
     notify({status:'queued',message:'后台 Git 备份排队中；可继续审核'});
     entry.promise = serializeGit(root, async () => {
         do {
             entry.again = false;
-            await automaticBackup(root,entry.owner,options,notify,execute,entry.trigger || '保存');
+            const id = entry.eventId;
+            await entry.records;
+            await metadata(() => record({action:'start',id}));
+            await automaticBackup(root,entry.owner,options,notify,execute,entry.trigger || '保存',false,metadata);
         } while (entry.again);
-    }).catch(() => {}).finally(() => {
+    }).catch(error => {
+        if (automaticStatus(root).status !== 'failed') notify({status:'failed',message:'后台备份状态落盘失败：' + error.message});
+    }).finally(async () => {
+        try {await entry.records;} catch (error) {
+            const current = automaticStatus(root);
+            if (!current.message.includes(error.message)) notify({status:'failed',message:current.message + '\n备份状态落盘失败：' + error.message});
+        }
         automaticJobs.delete(root);
         // Only a real event arriving during this run schedules another check.
         if (entry.again) enqueueAutomatic(root,entry.owner,options,report,execute,entry.trigger);

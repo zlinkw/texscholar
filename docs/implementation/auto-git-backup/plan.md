@@ -40,4 +40,8 @@
 
 ## 当前状态
 
-计划已建立，等待原 Terra 接管并开始 G1。新方案明确取代 0.9.51 对手改需人工备份的限制；历史失败记录保留，不修改成旧版已成功。
+G1–G3 已由 Terra 实现、小验收并提交推送 359fde041cdbf0dc2f2a95d99cb6ea93692e016f；精确覆盖与真实未测见 execution.md。总控 G4 在真实隔离 VS Code 宿主正常保存两文件，已实际提交/推送 5b3db6020df9ce5c9b2a891ac9ab942902569335，自动同步后的候选、延期批注、决定和范围外暂存保全，真实论文未操作。
+
+G4 R1 未通过：新 saved_done 已确认远端成功，但后端 status/backup_packet 仍返回旧投影失败或过滤无 session 的新备份日志，导致 AI 读取过时备份状态。原始证据 D:/latex-writing-checks/auto-git-backup-20261121/controller-g4/status-after-save-first.json、save-observation-first.json 及该隔离项目 ledger。已明确工具返修原 Terra：新备份持久状态与 backend/MCP/cards 消费者协调，旧历史/字段语义保留，不改审核决定，不清历史装恢复。总控隔离 UI 已关闭，无在途检查，租约已交还 Terra。有效保存/暂存保护证据复用，修复后仅补状态链路和重开验证，G5 仍须最终通过。
+
+控制器准备阶段的扩展依赖和 CRLF 边界错误，以及仅等 done 而遗漏队列末尾 idle 的观察器缺陷，均如实保留，未冒充产品失败/通过；CLI 返回 0 也未覆盖控制器实际失败。新方案明确取代 0.9.51 手改需人工备份的限制，历史失败记录不改写。

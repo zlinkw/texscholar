@@ -356,11 +356,25 @@ class Review:
         if path.is_symlink() or path.is_junction() or path.exists() and not path.is_file():
             raise Conflict('后台备份日志不是普通文件')
         data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
-        return data if data.get('session') == self.state.get('session') else {}
+        session = self.state.get('session') if self.state else None
+        if data.get('session') == session:
+            return data
+        return {key:data[key] for key in ('saved_status', 'saved_job', 'saved_done', 'saved_pending') if key in data}
 
     def backup_packet(self):
         data = self.backup_status()
-        return {'auto_backup': data.get('status', {}), 'auto_backup_job': data.get('job'), 'auto_backup_done': data.get('done')}
+        saved = data.get('saved_status')
+        if not saved and data.get('saved_job'):
+            job = data['saved_job']
+            saved = {'status':'local' if job.get('commit') else 'queued',
+                     'message':'本地备份已提交，远端待上传' if job.get('commit') else '后台 Git 备份排队中',
+                     **({'commit':job['commit']} if job.get('commit') else {})}
+        elif not saved and data.get('saved_done'):
+            commit = data['saved_done']['commit']
+            saved = {'status':'done', 'commit':commit, 'message':'已备份 ' + commit[:8]}
+        return {'auto_backup': saved or data.get('status', {}), 'auto_backup_job': data.get('job'),
+                'auto_backup_done': data.get('done'), 'saved_backup_job': data.get('saved_job'),
+                'saved_backup_done': data.get('saved_done')}
 
     def writer_lock(self):
         return writer_lock_at(self.object_root.parent)
@@ -1762,7 +1776,7 @@ class Review:
 
     def status(self):
         if not self.state:
-            return {"initialized": False, "sha256": digest(self.raw)}
+            return {"initialized": False, "sha256": digest(self.raw), **self.backup_packet()}
         result = copy.deepcopy(self.state)
         result["sha256"] = digest(self.raw)
         if self.interrupted:

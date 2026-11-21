@@ -46,8 +46,32 @@ def saved_update(root, spec):
                 raise Conflict('自动备份提交身份不一致。')
             data['saved_done'] = {'commit': job['commit'], 'files': job['files']}
             del data['saved_job']
+            if not data.get('saved_pending'):
+                data['saved_status'] = {'status':'done', 'commit':spec['commit'], 'message':'已备份 ' + spec['commit'][:8]}
         else:
             job['commit'] = spec['commit']
+            if not data.get('saved_pending'):
+                data['saved_status'] = {'status':'local', 'commit':spec['commit'], 'message':'本地备份已提交，远端待上传'}
+    return saved_ledger(root, update)
+
+
+def saved_event(root, spec):
+    directory = root / '.codex-review'
+    if spec['action'] == 'idle' and not directory.exists() and not directory.is_symlink() and not directory.is_junction():
+        return {}
+    def update(data):
+        if spec['action'] == 'queued':
+            data['saved_pending'] = spec['id']
+            data['saved_status'] = {'status':'queued', 'message':'后台 Git 备份排队中'}
+        elif spec['action'] == 'start':
+            if data.get('saved_pending') == spec['id']:
+                del data['saved_pending']
+                data['saved_status'] = {'status':'running', 'message':'正在检查已保存源码'}
+        elif spec['action'] in ('failed', 'idle'):
+            if not data.get('saved_pending'):
+                data['saved_status'] = {key:spec[key] for key in ('status', 'message', 'commit') if key in spec}
+        else:
+            raise Conflict('未知自动备份状态。')
     return saved_ledger(root, update)
 
 
@@ -495,12 +519,13 @@ def main():
     parser.add_argument('--project', required=True)
     parser.add_argument('--state')
     parser.add_argument('--git', default='git')
-    parser.add_argument('operation', choices=['status', 'prepare', 'local', 'update', 'saved-local', 'saved-status', 'saved-update'])
+    parser.add_argument('operation', choices=['status', 'prepare', 'local', 'update', 'saved-local', 'saved-status', 'saved-update', 'saved-event'])
     args = parser.parse_args()
-    if args.operation in ('saved-local', 'saved-status', 'saved-update'):
+    if args.operation in ('saved-local', 'saved-status', 'saved-update', 'saved-event'):
         root = Path(args.project).resolve(strict=True)
         result = (saved_commit(root, args.git, json.load(sys.stdin)) if args.operation == 'saved-local' else
-                  saved_recover(root, args.git) if args.operation == 'saved-status' else saved_update(root, json.load(sys.stdin)))
+                  saved_recover(root, args.git) if args.operation == 'saved-status' else
+                  saved_event(root, json.load(sys.stdin)) if args.operation == 'saved-event' else saved_update(root, json.load(sys.stdin)))
         print(json.dumps(result, ensure_ascii=False))
         return
     if not args.state:

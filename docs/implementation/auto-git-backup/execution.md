@@ -15,3 +15,17 @@
 - `python -X utf8 scripts/check.py --group editor` 首次退出 1，原因是漏配实际 `LOCAL_LATEX_FORMATTER` 和 `LOCAL_LATEX_WORKSHOP`，原始 stdout/stderr 在 `editor-e25d5390c1a0427391682015d13a6daa/`。补齐 `C:/Users/ZLK/AppData/Local/Programs/LocalLaTeXTools/tex-fmt.exe` 及已安装 `james-yu.latex-workshop-10.20.0/out/src/lint/latex-code-actions.js` 后，同一命令 133 项通过、退出 0，原始分离日志在 `editor-9549516168d540959f23f71560b7a45f/`。随后仅重试入口参数调整，`node --test --test-concurrency=1 src/inline_review.test.js` 29 项通过、退出 0，日志 `g3-inline-consumer-final.log`。
 
 未执行含真实清理的 backup 全组后段，不宣称该组全通过；未改 checkpoint 清理接口，旧任务恢复由实际隔离 Git 定向覆盖。未运行独立 backend、PDF、translation 组。上述隔离远端执行真实 Git commit/fetch/push，但以 fixture 替代 GitHub 元数据和远端地址，不冒称真实 GitHub 论文上传。尚待总控独占 G4 和明确通过后的 G5，未发行或安装。
+
+## R1：保存型备份状态的持久化和消费者
+
+总控 G4 在 359fde0 的真实隔离 VS Code 场景中发现：源码已正常提交和推送，但 `source_review.status` 仍报告旧投影失败；G4 尚未通过。原始证据由总控保留在 `controller-g4/`，本角色未操作该夹具。接回租约后，将保存型排队、处理中、本地待上传、失败和已确认远端结果写入既有备份日志；实际新事件排队时，旧任务完成不能覆盖新任务状态。`source_review`、卡片及 MCP 上下文读取新状态，单独提供 `saved_backup_job`／`saved_backup_done`，旧 `auto_backup_done` 仍是原源码快照，旧失败、旧任务和 published 字段不删除；无审核批次及旧版已完成的保存型记录也可读。不更改审核决定、候选版本或批注。
+
+本次新增定向测试均为隔离夹具、真实本地 Git 或既有 MCP 后端调用；真实论文未操作，GitHub 元数据由 fixture 替代。完整合流输出及退出码保留在同一证据目录：
+
+- `r1-status-final.log`：`node --test --test-concurrency=1 --test-name-pattern='saved backup status|saved backup records offline|acceptance during a background|offline automatic push|a later backup failure|saved backup restores a pending legacy|saved backup skips an unchanged' src/backup.test.js`，8 项退出 0。
+- `r1-status-race-final.log`：同命令模式 `saved backup status supersedes|acceptance during a background`，2 项退出 0。额外核验旧版已完成记录的兼容读取、本地待传、后续事件排队及旧提交完成后仍显示新任务排队。
+- `r1-no-review-final.log`：模式 `saved backup skips an unchanged|saved backup works without a review|saved backup records offline|saved backup status is readable`，4 项退出 0。
+- `r1-mcp-first.log`：`python -B -X utf8 -m unittest mcp_test.MCP.test_ai_context_uses_saved_backup_status_and_preserves_legacy_snapshot mcp_test.MCP.test_new_project_context_and_begin_use_external_state mcp_test.MCP.test_scoped_ai_context_preserves_rules_sources_dependencies_and_notes_without_ui_data -v`，3 项退出 0；覆盖新旧状态、无审核批次和现有 AI 范围读取。
+- `r1-backend-consumers.log`：定向执行 `native_review_test.NativeReview` 的 `test_sidecar_backup_preserves_source_conflicts_and_backup_journal`、`test_sidecar_checkpoint_preserves_all_rounds_versions_and_notes`、`test_preparing_block_alone_is_not_a_source_checkpoint` 及 `source_review_test.Flow` 的 `test_edit_feedback`、`test_state_only_saves_are_atomic_without_interrupted_intent`，5 项退出 0。无删除回归。
+- `r1-inline-metadata-final.log`：`node --test --test-concurrency=1 src/inline_review.test.js`，29 项退出 0。原 G1–G3 的 editor 133 项有效覆盖未因本轮状态字段补齐而机械重跑；backup 全组清理后段及独立 PDF、translation 组仍未运行。
+- `r1-metadata-serialization.log`：模式 `acceptance during a background|a save arriving during local backup|a failed queued commit|saved backup restores a pending legacy`，4 项退出 0。状态写入与同一项目的本地备份元数据串行，覆盖保存发生在本地提交期间、旧任务恢复及 hook 失败原因的持久化，不新增自动重试。

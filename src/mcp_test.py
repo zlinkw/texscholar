@@ -52,8 +52,13 @@ class MCP(unittest.TestCase):
         (registrations / 'workspace.json').write_text(json.dumps({'roots': [str(root)]}), encoding='utf-8')
         server = Server(registrations)
         before = source.read_bytes()
+        (root / '.codex-review').mkdir()
+        (root / '.codex-review' / 'automatic-backup.json').write_text(json.dumps({
+            'saved_status': {'status': 'done', 'commit': 'saved-commit', 'message': '已备份'},
+            'saved_done': {'commit': 'saved-commit', 'files': {}}}), encoding='utf-8')
         context = server.call('read_context', {'project': str(root), 'files': ['draft.tex']})
         self.assertFalse(context['initialized'])
+        self.assertEqual(context['context']['auto_backup']['commit'], 'saved-commit')
         args = {'project': str(root), 'state': context['state'], 'expected_sha256': context['sha256'],
                 'round': 'first', 'files': ['draft.tex']}
         self.assertFalse(server.call('begin_review', {**args, 'apply': False})['applied'])
@@ -75,6 +80,19 @@ class MCP(unittest.TestCase):
         applied = server.call('prepare_block', {**request, 'spec': {**spec, 'block_id': preview['block_id']}})
         self.assertTrue(applied['applied'])
         self.assertEqual(source.read_text(encoding='utf-8').count(preview['block_id']), 2)
+
+    def test_ai_context_uses_saved_backup_status_and_preserves_legacy_snapshot(self):
+        state = self.review().state
+        journal = self.root / '.codex-review' / 'automatic-backup.json'
+        journal.write_text(json.dumps({'session': state['session'], 'status': {'status': 'failed', 'message': 'old failure'},
+            'done': 'legacy-snapshot', 'saved_status': {'status': 'done', 'commit': 'new-commit', 'message': '已备份'},
+            'saved_done': {'commit': 'new-commit', 'files': {}}}), encoding='utf-8')
+        context = self.server().call('read_context', {'project': str(self.root), 'state': 'reply.tex'})['context']
+        self.assertEqual(context['auto_backup']['status'], 'done')
+        self.assertEqual(context['auto_backup']['commit'], 'new-commit')
+        self.assertEqual(context['auto_backup_done'], 'legacy-snapshot')
+        self.assertEqual(context['saved_backup_done']['commit'], 'new-commit')
+        self.assertEqual(json.loads(journal.read_text(encoding='utf-8'))['status']['message'], 'old failure')
 
     def test_exact_relocation_and_safe_rejection_keep_versions_and_delayed_notes(self):
         id_ = self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'The model is strong and fast.', 'after':'The model is reliable.'})['id']
