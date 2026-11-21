@@ -618,3 +618,21 @@ test('stash closes and restores only the exact session and source baseline', asy
     view=createWorkbench(vscode,context,services); view.setRecords(new Map([['1',{c:other,data}]])); await view.show(other); await receive({type:'ready',instance:'four'});
     assert.deepEqual(messages.filter(m=>m.type==='content').at(-1).stashes,[]);
 });
+
+test('history remains read-only and adopts only into the current draft', async () => {
+    let receive; const messages=[], writes=[];
+    const c={repo:'/history',owner:'state',id:'1',version:'v2'};
+    const data={id:'1',version:'v2',original:'Current',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1','v2'],requests:[]},options:[{label:'A',after:'Now',reason:'A'}]};
+    const old={version:'v1',original:'Old',options:[{label:'A',after:'Old choice'}],edit:{...data.edit,previous_feedback:{version:'v1',requests:[{text:'Old note'}]}}};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={session:()=> 's',read:async()=>structuredClone(data),history:async(target,version)=>{assert.equal(target.version,'v2');assert.equal(version,'v1');return structuredClone(old);},style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],accept:()=>writes.push('accept'),save:()=>writes.push('save')};
+    const view=createWorkbench(vscode,{subscriptions:[]},services); view.setRecords(new Map([['1',{c,data}]])); await view.show(c); await receive({type:'ready',instance:'page'});
+    await receive({type:'readHistory',instance:'page',id:'1',version:'v2',historyVersion:'v1'});
+    assert.equal(messages.find(m=>m.type==='history').history.notes[0].text,'Old note');
+    await receive({type:'adoptHistory',instance:'page',id:'1',version:'v2',option:'A',target:'A'});
+    assert.equal(messages.find(m=>m.type==='historyAdopted').text,'Old choice'); assert.deepEqual(writes,[]);
+    await receive({type:'readHistory',instance:'page',id:'1',version:'v2',historyVersion:'other'});
+    assert(messages.some(m=>m.error && m.message.includes('历史版本不可用')));
+    await receive({type:'adoptHistory',instance:'page',id:'1',version:'v1',option:'A',target:'A'});
+    assert(messages.some(m=>m.error && m.message.includes('当前项已更新'))); assert.deepEqual(writes,[]);
+});

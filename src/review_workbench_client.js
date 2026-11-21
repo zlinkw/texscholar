@@ -7,7 +7,7 @@ let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSele
 let navigationFilter = {query: '', kind: '', notes: false};
 let changeCursor;
 let directoryCursor, localFeedback;
-let stashes = [];
+let stashes = [], historyData;
 const batchSelection = new Map();
 const feedbackTargets = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap(), differences = new WeakMap();
@@ -24,7 +24,7 @@ $('currentBlock').addEventListener('keyup', () => {selectedBlockRevision = data?
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'start', 'checkUpdates', 'sourcePDF']);
 const sideBusy = new Set();
 const actionNames = {save: '保存候选', saveSource: '保存当前原文', syncBlock: '同步候选', repairBlock: '修复审核块', manualRebase: '人工更新候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
-    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
+    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', readHistory:'读取历史', adoptHistory:'采用历史草稿', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', checkUpdates: '检查插件更新', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', sourcePDF: '编译正式 PDF', related: '定位关联改动'};
 function fitToolbar() {
     const header = document.querySelector('header'), home = $('toolbarExtras');
@@ -325,6 +325,13 @@ function renderStash() {
     $('stashContents').textContent = [...Object.entries(d.state.drafts || {}).map(([label,value]) => '候选 ' + label + '\n' + value),
         ...(d.state.blockDraft === undefined ? [] : ['原文草稿\n' + d.state.blockDraft]), ...(d.state.note ? ['未提交批注\n' + d.state.note] : [])].join('\n\n');
     document.querySelector('[data-action="restoreStash"]').disabled = !d.exact || !!waiting;
+}
+function renderHistory() {
+    const option = historyData?.options.find(o => o.label === $('historyOption').value);
+    if (!option) return;
+    const changes = math.wordChanges(historyData.original, option.after);
+    renderText($('historyOriginal'), historyData.original, changes, 'original');
+    renderText($('historyCandidate'), option.after, changes, 'candidate');
 }
 function markDirectoryCursor() {
     for (const node of $('directoryResults').querySelectorAll('button')) {
@@ -655,6 +662,7 @@ $('comparisonChoice').addEventListener('change', () => {
 $('scopeChoice').addEventListener('change', scope);
 for (const id of ['directoryKind', 'directoryNotes', 'directoryQueue']) $(id).addEventListener('change', filterDirectory);
 $('stashChoice').addEventListener('change', renderStash);
+$('historyOption').addEventListener('change', renderHistory);
 $('directoryDialog').addEventListener('keydown', event => {
     if (event.isComposing || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.target.id !== 'directoryQuery' && !event.target.closest('#directoryResults')) return;
@@ -719,6 +727,13 @@ document.addEventListener('click', event => {
     if (type === 'clearSelection') {batchSelection.clear(); filterDirectory(); return;}
     if (type === 'acceptBatch') {send(type,{items:[...batchSelection.values()]}); return;}
     if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
+    if (type === 'history') {
+        const versions = data.edit.versions.slice(0,-1);
+        $('historyVersion').replaceChildren();
+        versions.forEach((version,index) => {const option=document.createElement('option'); option.value=version; option.textContent='版本 ' + (index+1); $('historyVersion').appendChild(option);});
+        $('historyStatus').textContent=versions.length ? '选择仍保留的历史版本。' : '本项没有可用历史；精简或开始新批次后不保证保留。';
+        $('historyContent').hidden=true; $('historyDialog').open=true; $('historyDialog').scrollIntoView({block:'nearest'}); return;
+    }
     if (type === 'clearFilter') {$('directoryQuery').value = ''; $('directoryKind').value = ''; $('directoryNotes').checked = false; $('directoryQueue').value = 'active'; filterDirectory(); return;}
     if (type === 'nextChange' || type === 'previousChange') {jumpChange(type === 'nextChange' ? 1 : -1); return;}
     if (type === 'locateNote') {locateNote(button.closest('.note').dataset.noteId); return;}
@@ -756,6 +771,8 @@ document.addEventListener('click', event => {
     if (type === 'saveSource') {send(type, {value: $('blockSource').value}); return;}
     if (type === 'stashClose') {send(type, {state:snapshot()}); return;}
     if (type === 'restoreStash' || type === 'discardStash') {send(type, {stash:$('stashChoice').value}); return;}
+    if (type === 'readHistory') {if ($('historyVersion').value) {$('historyContent').hidden=true; $('historyStatus').textContent='正在读取历史版本…'; send(type, {historyVersion:$('historyVersion').value});} return;}
+    if (type === 'adoptHistory') {send(type, {option:$('historyOption').value,target:$('historyTarget').value}); return;}
     if (type === 'note' || type === 'noteHandoff') {
         const handoff = type === 'noteHandoff';
         if (editingNote) {send('editNote', {request: editingNote.id, text: $('note').value, previousText: editingNote.previousText, handoff}); return;}
@@ -768,6 +785,18 @@ document.addEventListener('click', event => {
 });
 window.addEventListener('message', ({data: message}) => {
     if (message.type === 'relatedReturn') {showRelatedReturn(message.id); return;}
+    if (message.type === 'history') {
+        historyData=message.history; $('historyOption').replaceChildren(); $('historyTarget').replaceChildren();
+        for (const o of historyData.options) {const option=document.createElement('option'); option.value=o.label; option.textContent=o.label; $('historyOption').appendChild(option);}
+        for (const o of options) {const option=document.createElement('option'); option.value=o.label; option.textContent=o.label; $('historyTarget').appendChild(option);}
+        $('historyNotes').textContent = historyData.notes === undefined ? '该版本的当时批注快照未保留。' : historyData.notes.length ? historyData.notes.map(n => (n.option || '整项') + ' · ' + n.text).join('\n\n') : '该版本没有已保留的批注。';
+        $('historyStatus').textContent='只读历史对照。'; $('historyContent').hidden=false; renderHistory(); return;
+    }
+    if (message.type === 'historyAdopted') {
+        drafts.set(message.option, message.text.replace(/\r\n/g,'\n')); $('edit-' + message.option).value=drafts.get(message.option);
+        $('editor-' + message.option).hidden=false; $('historyDialog').open=false; dirty(); queueDraftPreview();
+        status('已放入当前方案草稿；尚未保存或接收。'); return;
+    }
     if (message.type === 'handoffRetry') {$('retryHandoff').hidden = !message.available; return;}
     if (message.type === 'busy') {waiting = message.action; buttons(); return;}
     if (message.type === 'actionResult') {sideBusy.delete(message.action); buttons(); if (message.message) status(message.message, message.error, message.action); return;}
