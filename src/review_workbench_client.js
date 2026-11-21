@@ -899,15 +899,24 @@ window.addEventListener('message', ({data: message}) => {
         for (const o of options) $('option-' + o.label).classList.toggle('selected', preview === o.label);
         renderReadings(); return;
     }
-    if (message.type === 'noteEdited') {data.edit.requests = message.requests; data.edit.previous_feedback = message.previous_feedback; closeComposer(); renderNotes(message.requests);}
+    if (message.type === 'noteEdited') {data.edit.requests = message.requests; data.edit.previous_feedback = message.previous_feedback; if (!message.preserveInput) closeComposer(); renderNotes(message.requests);}
     if (message.type === 'notes') {data.edit.requests = message.requests; data.edit.questions = message.questions; data.edit.previous_feedback = message.previous_feedback;
         keepReading(() => {renderNotes(message.requests); renderQuestions(message.questions);}); return;}
-    if (message.type === 'noteSaved') closeComposer();
+    if (message.type === 'noteSaved' && !message.preserveInput) closeComposer();
     if (message.type === 'conflict') {
         conflict = true;
         if (!$('latest')) {const b = document.createElement('button'); b.id = 'latest'; b.dataset.action = 'latest'; b.textContent = '载入最新（需确认放弃草稿）'; $('pageFeedback').appendChild(b);}
     }
     if (message.type === 'unavailable') {unavailable = true; $('empty').hidden = false; $('review').hidden = true;}
+    if (message.type === 'stashes') {
+        stashes = message.stashes || [];
+        const priorStash = $('stashChoice').value;
+        $('stashChoice').replaceChildren();
+        for (const item of stashes) {const option = document.createElement('option'); option.value=item.id; option.textContent='批次 ' + item.session.slice(0,8) + ' · 版本 ' + item.version + (item.exact ? '' : ' · 基准已变化'); $('stashChoice').appendChild(option);}
+        if (stashes.some(item => item.id === priorStash)) $('stashChoice').value = priorStash;
+        $('stashedDrafts').hidden = !stashes.length; if (stashes.length) renderStash();
+        return;
+    }
     if (message.type === 'content' || message.type === 'saved') {
         const renderStarted = performance.now();
         rendering = true; restoration = undefined;

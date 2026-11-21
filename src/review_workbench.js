@@ -77,8 +77,9 @@ function createWorkbench(vscode, context, services) {
     const translations = new Map();
     let translationRun, translationRequested = false, retryTranslation = false, translationEpoch = 0;
     let lastRecords = new Map(), sourceSelection;
-    let ready = false, client, uiState, notice, reading, handoffRetry;
-    let appearanceWork = Promise.resolve(), draftWork = Promise.resolve(), draftScope;
+    let ready = false, client, uiState, notice, reading, handoffRetry, restoredDraft;
+    let appearanceWork = Promise.resolve(), draftWork = Promise.resolve();
+    const observedDraftSessions = new Map();
     let navigationFilter = {query: '', kind: '', notes: false};
     let relatedReturn, showRequest = 0;
     let history;
@@ -90,19 +91,21 @@ function createWorkbench(vscode, context, services) {
     }
     function post(message) {
         if (['result', 'saved', 'noteSaved', 'noteEdited', 'conflict'].includes(message.type)) message.action = handling || undefined;
-        if (message.type === 'noteSaved' || message.type === 'noteEdited') {
+        if ((message.type === 'noteSaved' || message.type === 'noteEdited') && !message.preserveInput) {
             noteDirty = false;
             if (uiState) Object.assign(uiState, {note: '', editingNote: undefined, selected: undefined, composer: false});
         }
         if (message.type === 'saved' && uiState) {
-            uiState.c = {...active}; delete uiState.drafts[message.option];
+            uiState.c = {...active};
+            if (!message.preserveInput) delete uiState.drafts[message.option];
             if (uiState.selected) {
                 const chosen = uiState.selected;
                 const text = chosen.side === 'candidate' ? options(loaded).find(o => o.label === chosen.option)?.after : loaded.original;
                 uiState.selectionStale = text === undefined || text.replace(/\r\n/g, '\n') !== chosen.value;
             }
             message.resume = uiState;
-            dirty = Object.entries(uiState.drafts).some(([label, value]) => options(loaded).some(o => o.label === label && o.after.replace(/\r\n/g, '\n') !== value));
+            dirty = Object.entries(uiState.drafts).some(([label, value]) => options(loaded).some(o => o.label === label && o.after.replace(/\r\n/g, '\n') !== value)) ||
+                uiState.blockDraft !== undefined && (uiState.sourceDraftStale || uiState.blockDraft !== loaded.block?.text.replace(/\r\n/g, '\n'));
         }
         if (['result', 'noteSaved', 'noteEdited'].includes(message.type)) notice = message;
         if (ready && panel?.visible) return panel.webview.postMessage(message);
@@ -140,14 +143,49 @@ function createWorkbench(vscode, context, services) {
         for (const k of remove) delete next[k];
         return next;
     }
-    function updateDrafts(c, session, change = value => value, background = false) {
+    function updateDrafts(c, session, change = value => value, observed = false) {
         const task = draftWork.then(async () => {
-            if (services.session(c) !== session) {
-                if (background) return;
+            if (!observed && services.session(c) !== session) {
                 throw new Error('审核批次已变化，未修改暂存草稿。');
             }
             const old = context.workspaceState.get('reviewDrafts', {}), next = change(rollDrafts(old, c, session));
             if (next !== old) await context.workspaceState.update('reviewDrafts', next);
+        });
+        draftWork = task.catch(() => {});
+        return task;
+    }
+    function observeSession(c, session) {
+        if (!session || !context.workspaceState) return;
+        const scope = JSON.stringify([c.repo, c.owner]);
+        if (observedDraftSessions.get(scope) === session) return;
+        observedDraftSessions.set(scope, session);
+        const task = updateDrafts(c, session, undefined, true);
+        task.catch(error => {
+            if (observedDraftSessions.get(scope) === session) observedDraftSessions.delete(scope);
+            vscode.window.showErrorMessage('草稿批次更新失败：' + error.message);
+        });
+        return task;
+    }
+    function consumeRestoredDraft(token, component, option) {
+        if (!token) return Promise.resolve();
+        const task = draftWork.then(async () => {
+            const saved = context.workspaceState.get('reviewDrafts', {}), current = saved[token.id];
+            if (JSON.stringify(current) !== token.snapshot) return;
+            const record = structuredClone(current), state = record.state;
+            if (component === 'candidate') delete state.drafts[option];
+            else if (component === 'source') delete state.blockDraft;
+            else {state.note = ''; delete state.editingNote; delete state.selected; state.composer = false;}
+            const next = {...saved};
+            const hasCandidates = Object.entries(state.drafts || {}).some(([label, value]) => state.candidateDraftStale ||
+                value !== record.options.find(([name]) => name === label)?.[1].replace(/\r\n/g, '\n'));
+            const hasSource = state.blockDraft !== undefined && (state.sourceDraftStale || state.blockDraft !== record.block?.text.replace(/\r\n/g, '\n'));
+            if (!hasCandidates && !hasSource && !state.note?.trim() && !state.editingNote) delete next[token.id];
+            else next[token.id] = record;
+            try {await context.workspaceState.update('reviewDrafts', next);}
+            catch (error) {throw new Error('内容已保存，但本机暂存更新失败：' + error.message + '；请勿重复保存。');}
+            if (restoredDraft === token) token.snapshot = JSON.stringify(next[token.id]);
+            if (restoredDraft === token && active && active.repo === current.c.repo && active.owner === current.c.owner && active.id === current.c.id)
+                post({type:'stashes', stashes:storedDrafts(active)});
         });
         draftWork = task.catch(() => {});
         return task;
@@ -268,6 +306,7 @@ function createWorkbench(vscode, context, services) {
     }
     async function savePendingInputs() {
         const state = uiState;
+        const operationPanel = panel;
         if (!state) throw new Error('尚未收到当前草稿，请返回审核页后重试。');
         if (state.candidateDraftStale) throw new Error('候选草稿基于旧原文；请先人工更新候选。');
         if (loaded.block && state.blockDraft !== undefined && state.blockDraft !== loaded.block.text.replace(/\r\n/g, '\n')) throw new Error('请先明确点击“保存当前原文”，再切换。');
@@ -276,6 +315,7 @@ function createWorkbench(vscode, context, services) {
         try {
             // Save an existing version's note before draft edits create a new version.
             if (noteDirty) {
+                const restored = restoredDraft, target = {...active}, noteBefore = uiState?.note;
                 if (state.selectionStale) throw new Error('批注所选文字已变化，请重新选择范围或明确改为整项批注。');
                 if (state.editingNote) {
                     const note = loaded.edit.requests.find(n => n.id === state.editingNote.id);
@@ -290,7 +330,12 @@ function createWorkbench(vscode, context, services) {
                         option: /^[ABC]$/.test(state.scope) ? state.scope : undefined};
                     await services.note({...active}, selected, state.note);
                 }
-                loaded = await services.read({...active});
+                await consumeRestoredDraft(restored, 'note');
+                if (panel !== operationPanel || !valid(target)) throw new Error('批注已保存，审核页已改变');
+                const refreshed = await services.read(target);
+                if (panel !== operationPanel || !valid(target)) throw new Error('批注已保存，审核页已改变');
+                loaded = refreshed;
+                if (uiState?.note !== noteBefore) throw new Error('批注已保存，保存期间产生的新输入仍未保存');
                 post({type: 'noteEdited', requests: loaded.edit.requests || [], previous_feedback: loaded.edit.previous_feedback, message: '批注已保存，继续保存候选。'});
             }
             for (const [label, text] of Object.entries({...state.drafts})) {
@@ -298,9 +343,15 @@ function createWorkbench(vscode, context, services) {
                 if (!option) throw new Error('草稿对应方案已不存在：' + label);
                 if (text === option.after.replace(/\r\n/g, '\n')) continue;
                 const value = option.after.includes('\r\n') ? text.replace(/\r?\n/g, '\r\n') : text;
-                loaded = await services.save({...active}, label, value);
+                const restored = restoredDraft, target = {...active}, candidateBefore = uiState?.drafts?.[label];
+                const saved = await services.save(target, label, value);
+                await consumeRestoredDraft(restored, 'candidate', label);
+                if (panel !== operationPanel || !valid(target)) throw new Error('候选已保存，审核页已改变');
+                loaded = saved;
                 active = {...active, version: loaded.version};
-                post({...packet(), type: 'saved', option: label});
+                const preserveInput = uiState?.drafts?.[label] !== candidateBefore;
+                post({...packet(), type: 'saved', option: label, preserveInput});
+                if (preserveInput) throw new Error('候选已保存，保存期间产生的新草稿仍未保存');
             }
             dirty = noteDirty = false;
             services.saved({...active}, services.selection(active), !!state.compare);
@@ -321,7 +372,7 @@ function createWorkbench(vscode, context, services) {
         if (session && context.workspaceState) await updateDrafts(c, session);
         if (request !== showRequest || session && services.session(c) !== session) return;
         active = {...c}; loaded = data; dirty = noteDirty = false; hasPending = false; sourceSelection = undefined; history = undefined;
-        uiState = notice = handoffRetry = undefined;
+        uiState = notice = handoffRetry = restoredDraft = undefined;
         if (restore) {uiState = readingState(restore.state); navigationFilter = restore.filter;}
         if (!panel) {
             panel = vscode.window.createWebviewPanel('texscholarReview', '论文审核', vscode.ViewColumn.One,
@@ -330,7 +381,7 @@ function createWorkbench(vscode, context, services) {
             panel.onDidChangeViewState(({webviewPanel}) => {if (!webviewPanel.visible) {ready = false; translationRequested = retryTranslation = false;}});
             panel.onDidDispose(() => {panel = undefined; active = loaded = pending = sourceSelection = undefined;
                 lastRecords = new Map(); hasPending = dirty = noteDirty = ready = handling = false; pendingSynchronized.clear(); showRequest++;
-                uiState = notice = client = reading = relatedReturn = undefined; translationEpoch++; translations.clear();});
+                uiState = notice = client = reading = relatedReturn = restoredDraft = undefined; translationEpoch++; translations.clear();});
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
@@ -340,11 +391,6 @@ function createWorkbench(vscode, context, services) {
     }
     function sync(records, scope, synchronized = new Set()) {
         if (!active || active.repo !== scope.repo || active.owner !== scope.owner) return;
-        const session = services.session?.(active), identity = session && JSON.stringify([active.repo,active.owner,session]);
-        if (identity && identity !== draftScope && context.workspaceState) {
-            draftScope = identity;
-            updateDrafts({...active}, session, undefined, true).catch(error => vscode.window.showErrorMessage('草稿批次更新失败：' + error.message));
-        }
         lastRecords = records;
         const next = records.get(active.id);
         post({type: 'directory', directory: directory()});
@@ -585,7 +631,7 @@ function createWorkbench(vscode, context, services) {
                     if (answer !== '替换暂存') return;
                     if (!valid(c) || panel !== operationPanel || services.session(c) !== session) return;
                 }
-                const record = {c, session, original:loaded.original, block:loaded.block, options:options(loaded).map(o => [o.label,o.after]), state};
+                const record = {c, session, revision:crypto.randomBytes(16).toString('hex'), original:loaded.original, block:loaded.block, options:options(loaded).map(o => [o.label,o.after]), state};
                 await updateDrafts(c, session, saved => {
                     if (JSON.stringify(existing) !== JSON.stringify(saved[k])) throw new Error('暂存草稿已变化，未覆盖。');
                     const next = {...saved, [k]:record};
@@ -598,15 +644,20 @@ function createWorkbench(vscode, context, services) {
                 const draft = storedDrafts(c).find(item => item.id === message.stash);
                 if (!draft) throw new Error('暂存草稿不存在或不属于当前项。');
                 if (message.type === 'discardStash') {
+                    const snapshot = JSON.stringify(context.workspaceState.get('reviewDrafts', {})[draft.id]);
                     const answer = await vscode.window.showWarningMessage('确定放弃这份暂存草稿？', {modal:true}, '放弃暂存');
                     if (answer !== '放弃暂存') return;
                     if (!valid(c) || panel !== operationPanel) return;
                     const session = services.session(c);
-                    await updateDrafts(c, session, saved => {const next = {...saved}; delete next[draft.id]; return next;});
+                    await updateDrafts(c, session, saved => {
+                        if (JSON.stringify(saved[draft.id]) !== snapshot) throw new Error('暂存草稿已变化，未放弃新版。');
+                        const next = {...saved}; delete next[draft.id]; return next;
+                    });
                     if (valid(c) && panel === operationPanel) sendContent(false);
                 } else {
                     if (!draft.exact) throw new Error('暂存的批次、版本或正文基准已变化；请对照旧草稿人工处理，不能直接恢复。');
                     if (dirty || noteDirty) throw new Error('当前页已有未保存内容，请先保存或暂存后再恢复。');
+                    restoredDraft = {id:draft.id, snapshot:JSON.stringify(context.workspaceState.get('reviewDrafts', {})[draft.id])};
                     uiState = {...draft.state, c:{...active}};
                     if (uiState.selected?.side === 'translation') uiState.selectionStale = true;
                     dirty = Object.keys(uiState.drafts).length > 0 || uiState.blockDraft !== undefined && uiState.blockDraft !== loaded.block?.text.replace(/\r\n/g, '\n');
@@ -671,11 +722,16 @@ function createWorkbench(vscode, context, services) {
                 const value = option.after.includes('\r\n') ? message.value.replace(/\r?\n/g, '\r\n') : message.value;
                 if (message.type === 'save' && value === option.after) return post({type: 'result', message: '候选未修改，无需保存。'});
                 if (value !== option.after) {
-                    loaded = await services.save(c, message.option, value);
+                    const restored = restoredDraft, candidateBefore = uiState?.drafts?.[message.option];
+                    const saved = await services.save(c, message.option, value);
+                    await consumeRestoredDraft(restored, 'candidate', message.option);
+                    if (panel !== operationPanel || !valid(c)) return;
+                    loaded = saved;
                     active = {...c, version: loaded.version}; dirty = false;
-                    post({...packet(), type: 'saved', option: message.option, message: '方案 ' + message.option + ' 已保存；尚未接收。'});
+                    post({...packet(), type: 'saved', option: message.option, preserveInput:uiState?.drafts?.[message.option] !== candidateBefore, message: '方案 ' + message.option + ' 已保存；尚未接收。'});
                 }
                 if (message.type === 'saveAccept') {
+                    if (dirty || noteDirty) throw new Error('候选已保存；保存期间产生的新草稿尚未保存，未接收。');
                     try {await decideAndAdvance({...active}, 'accept', message.option);}
                     catch (error) {throw new Error('候选保存步骤已完成，接收或跳转返回错误：' + error.message + '；请核对当前状态，不要重复保存。');}
                 } else {
@@ -684,9 +740,14 @@ function createWorkbench(vscode, context, services) {
             } else if (message.type === 'editNote') {
                 const note = (loaded.edit.requests || []).find(n => n.id === message.request);
                 if (!note || note.status !== 'open' || note.version !== c.version) throw new Error('该批注已更新或不是当前版本的待处理批注，请核对新版。');
+                const restored = restoredDraft, noteBefore = uiState?.note;
                 await services.editNote(c, note, message.text, message.previousText);
-                loaded = await services.read(c);
-                post({type: 'noteEdited', request: note.id, requests: loaded.edit.requests || [], previous_feedback: loaded.edit.previous_feedback, message: '批注已修改；编号、选区与候选保持不变。'});
+                await consumeRestoredDraft(restored, 'note');
+                if (panel !== operationPanel || !valid(c)) return;
+                const refreshed = await services.read(c);
+                if (panel !== operationPanel || !valid(c)) return;
+                loaded = refreshed;
+                post({type: 'noteEdited', preserveInput:uiState?.note !== noteBefore, request: note.id, requests: loaded.edit.requests || [], previous_feedback: loaded.edit.previous_feedback, message: '批注已修改；编号、选区与候选保持不变。'});
                 if (message.handoff) return await handoffSavedNote(c);
             } else if (message.type === 'note') {
                 if (dirty) throw new Error('请先保存候选编辑，再绑定返修选区。');
@@ -704,13 +765,21 @@ function createWorkbench(vscode, context, services) {
                     if (message.side === 'original' && message.start !== undefined) selected = {...selection(excerpt, message.value, message.start, message.end), side: 'original'};
                     if (option) selected.option = option.label;
                 }
-                await services.note(c, selected, message.text); noteDirty = false; sourceSelection = undefined;
-                post({type: 'noteSaved', message: '返修要求已保存，可继续添加；未发送 AI。'});
+                const restored = restoredDraft, noteBefore = uiState?.note;
+                await services.note(c, selected, message.text);
+                await consumeRestoredDraft(restored, 'note');
+                if (panel !== operationPanel || !valid(c)) return;
+                const preserveInput = uiState?.note !== noteBefore;
+                if (!preserveInput) noteDirty = false;
+                sourceSelection = undefined;
+                post({type: 'noteSaved', preserveInput, message: '返修要求已保存，可继续添加；未发送 AI。'});
                 if (message.handoff) return await handoffSavedNote(c);
             } else if (message.type === 'saveSource') {
                 if (uiState?.sourceDraftStale) throw new Error('原文草稿基于旧正文；请先复制或放弃后载入最新。');
                 if (!loaded.block || typeof message.value !== 'string') throw new Error('当前块不可编辑，请先核对标记。');
+                const restored = restoredDraft;
                 await services.saveSource(c, loaded.block, message.value);
+                await consumeRestoredDraft(restored, 'source');
                 if (panel !== operationPanel || !valid(c)) return;
                 const savedText = message.value.replace(/\r\n/g, '\n');
                 if (uiState?.blockDraft === savedText) uiState.blockDraft = undefined;
@@ -749,9 +818,11 @@ function createWorkbench(vscode, context, services) {
             } else if (message.type === 'acceptBatch') {
                 if (dirty || noteDirty) throw new Error('请先保存候选和批注，再批量接收。');
                 const items = message.items;
+                const session = services.session(c);
+                if (!session || message.session !== session) throw new Error('审核批次已变化，请重新选择；未接收任何项。');
                 if (!Array.isArray(items) || !items.length || items.some(i => !lastRecords.has(i.id) || lastRecords.get(i.id).c.version !== i.version)) throw new Error('选中项已过期，请重新核对。');
                 const request = showRequest;
-                await services.acceptBatch(items.map(i => ({...c, ...i, repo: c.repo, owner: c.owner})));
+                await services.acceptBatch(items.map(i => ({...c, ...i, repo: c.repo, owner: c.owner})), session);
                 if (request !== showRequest) return;
                 const next = filterItems(directory(), {...navigationFilter, queue:'active'})[0];
                 if (next) await show(lastRecords.get(next.id).c, undefined, true);
@@ -794,7 +865,7 @@ function createWorkbench(vscode, context, services) {
         }
     }
     context.subscriptions.push({dispose() {panel?.dispose();}});
-    return {show, sync, setRecords(records) {lastRecords = records; trimTranslations();},
+    return {show, sync, observeSession, setRecords(records) {lastRecords = records; trimTranslations();},
         assertReloadSafe() {
             if (handling) throw new Error('审核操作正在进行，已停止重载；请等该操作完成。');
             if (dirty || noteDirty) throw new Error('审核页有未保存的候选编辑或返修批注，已停止重载；请先保存或明确放弃。');

@@ -546,6 +546,7 @@ function createInlineReview(vscode, context, execute = run) {
         }
         watchEvidence(c, state);
         latestReviewState = state; latestReviewScope = {repo:c.repo, owner:c.owner};
+        workbench.observeSession(c, state.session);
         require('./backup').restoreAutomaticStatus(c.repo, state.auto_backup);
         workbench.backupStatus?.(require('./backup').automaticStatus(c.repo));
         reviewFiles.clear(); deferredFiles.clear();
@@ -714,11 +715,21 @@ function createInlineReview(vscode, context, execute = run) {
             {git: cfg.get('gitPath', 'git'), gh: cfg.get('ghPath', 'gh'), python: cfg.get('pythonPath', 'python')},
             value => diagnostics?.appendLine(JSON.stringify({stage:'git_backup',...value})), undefined, trigger);
     }
-    async function acceptBatch(items) {
+    async function acceptBatch(items, session) {
         if (!Array.isArray(items) || !items.length) throw new Error('请明确选择接收项及方案。');
         const c = decisionContext(items[0]);
         if (items.some(i => i.repo !== c.repo || i.owner !== c.owner)) throw new Error('批量接收不能跨论文项目。');
-        const state = await backend(c, ['cards', '--reuse-diffs'], reusableVersions(c));
+        let state = latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner && latestReviewState?.session === session ? latestReviewState : undefined;
+        if (state) {
+            const owner = await fs.readFile(path.join(c.repo, c.owner));
+            if (crypto.createHash('sha256').update(owner).digest('hex') !== state.sha256 || items.some(item => {
+                const record = records.get(item.id), edit = state.edits[item.id];
+                return !record || record.c.repo !== c.repo || record.c.owner !== c.owner || record.c.version !== item.version ||
+                    record.data.sha256 !== state.sha256 || !edit || edit.file !== record.data.edit.file;
+            })) state = undefined;
+        }
+        if (!state) state = await backend(c, ['cards', '--reuse-diffs'], reusableVersions(c));
+        if (!session || state.session !== session) throw new Error('审核批次已变化，请重新选择；未接收任何项。');
         for (const item of items) {
             decisionContext(item);
             const edit = state.edits[item.id];
@@ -927,7 +938,7 @@ function createInlineReview(vscode, context, execute = run) {
         }),
         note: (c, selected, text) => exclusive(() => saveNote(c, selected, text)),
         accept: c => exclusive(() => accept(c)), reject: c => exclusive(() => reject(c)),
-        acceptBatch: items => exclusive(() => acceptBatch(items)),
+        acceptBatch: (items, session) => exclusive(() => acceptBatch(items, session)),
         relocate: c => exclusive(() => relocate(c)),
         backupStatus: () => require('./backup').automaticStatus(activeScope?.repo),
         retryBackup: () => scheduleBackup(activeScope, '重试'),

@@ -152,7 +152,7 @@ test('batch preflight reuses only immutable display data and still sends exact d
     await f.ui.open(c); await f.receive({type:'ready',instance:'page'});
     f.batchHook = async () => {throw new Error('fixture stopped at decision boundary');};
     const start = f.backendCalls.length;
-    await f.receive({type:'acceptBatch',instance:'page',id:'1',version:'v1',items:[{id:'1',version:'v1',option:'B'}]});
+    await f.receive({type:'acceptBatch',instance:'page',id:'1',version:'v1',session:'batch',items:[{id:'1',version:'v1',option:'B'}]});
     const calls = f.backendCalls.slice(start), preflight = calls.find(call => call.args.includes('cards'));
     assert(preflight.args.includes('--reuse-diffs')); assert.deepEqual(preflight.input, {'1':'v1'});
     const decide = calls.find(call => call.args.includes('decide-batch'));
@@ -160,9 +160,24 @@ test('batch preflight reuses only immutable display data and still sends exact d
     assert(decide.args.includes('--expect')); assert.equal(f.edit.status,'pending');
     f.edit.versions.push('v2');
     const again = f.backendCalls.length;
-    await f.receive({type:'acceptBatch',instance:'page',id:'1',version:'v1',items:[{id:'1',version:'v1',option:'B'}]});
+    await f.receive({type:'acceptBatch',instance:'page',id:'1',version:'v1',session:'batch',items:[{id:'1',version:'v1',option:'B'}]});
     assert(!f.backendCalls.slice(again).some(call => call.args.includes('decide-batch')));
     assert.equal(f.edit.status,'pending');
+});
+
+test('batch uses owner-verified current records while retaining buffer and session guards', async () => {
+    const f=hostFixture();await f.ui.ready;
+    const digest=require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(f.root,'reply.tex'))).digest('hex');
+    f.data.sha256=digest;f.cardsTransform=p=>({...p,sha256:digest});
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});const c=f.rows()[0].children[0].command.arguments[0];
+    await f.ui.open(c);await f.receive({type:'ready',instance:'page'});f.batchHook=async()=>{throw Error('stop at decision');};
+    const msg={type:'acceptBatch',instance:'page',id:'1',version:'v1',session:'batch',items:[{id:'1',version:'v1',option:'B'}]};
+    let start=f.backendCalls.length;await f.receive(msg);let calls=f.backendCalls.slice(start);
+    assert(!calls.some(x=>x.args.includes('cards')));assert.deepEqual(calls.find(x=>x.args.includes('decide-batch')).input.items,msg.items);
+    f.document.isDirty=true;start=f.backendCalls.length;await f.receive(msg);calls=f.backendCalls.slice(start);
+    assert(!calls.some(x=>x.args.includes('decide-batch')));assert(f.packets.some(x=>x.error&&x.message.includes('未保存编辑')));
+    f.document.isDirty=false;start=f.backendCalls.length;await f.receive({...msg,session:'old'});
+    assert(!f.backendCalls.slice(start).some(x=>x.args.includes('decide-batch')));
 });
 
 test('advance can display a pending card while its editor buffer is dirty', async () => {

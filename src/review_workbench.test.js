@@ -753,3 +753,94 @@ test('single workspace draft record retains only current and previous batch per 
     assert.equal(count().length,0,'batches without stashes still advance the retention window');
     assert(Object.values(values.reviewDrafts).some(d=>d?.c?.repo==='/other'));
 });
+
+test('observed empty sessions roll closed and other-project drafts in order', async () => {
+    let receive, dispose, release, waiting=false, session='A'; const values={}, errors=[];
+    const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{if(waiting){waiting=false;await new Promise(r=>release=r);}values[k]=structuredClone(v);}};
+    const c={repo:'/closed',owner:'state',id:'1',version:'v1'}, other={...c,repo:'/other'};
+    const data={id:'1',version:'v1',original:'Original',source_match:true,edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{showErrorMessage:m=>errors.push(m),createWebviewPanel:()=>({visible:true,reveal(){},dispose(){dispose();},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage(){}}})}};
+    const services={session:t=>t.repo===c.repo?session:'other-session',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}]};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'p'});
+    await receive({type:'stashClose',instance:'p',id:'1',version:'v1',state:{c,drafts:{A:'private A'},note:'private note',selected:{value:'nested secret'}}});
+    session='B';waiting=true;view.observeSession(c,'B');await new Promise(r=>setImmediate(r));
+    session='C';view.observeSession(c,'C');release();
+    await view.show(other);view.sync(new Map(),c);
+    await view.show(c);assert.deepEqual(values.reviewDrafts._batches[JSON.stringify(['/closed','state'])],['C','B']);
+    assert(!JSON.stringify(values.reviewDrafts).includes('private'));assert.deepEqual(errors,[]);
+});
+
+test('restored components are consumed only after successful saves and preserve the old base', async () => {
+    for (const component of ['note','edit','candidate','source','failure']) {
+        let receive,dispose;const values={},messages=[],writes=[];
+        const c={repo:'/consume',owner:'state',id:'1',version:'v1'};
+        let data={id:'1',version:'v1',original:'Original',source_match:true,block:{id:'b',text:'Original\n'},edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[{id:'r1',version:'v1',status:'open',text:'old'}]},options:[{label:'A',after:'Candidate'}]};
+        const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+        const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{showWarningMessage:async(_m,_o,a)=>a,showErrorMessage:m=>messages.push({error:true,message:m}),createWebviewPanel:()=>({visible:true,reveal(){},dispose(){dispose();},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+        const services={session:()=> 's',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],saved(){},note:async(_c,_selection,text)=>{if(component==='failure')throw Error('note failed');writes.push(text);},editNote:async(_c,note,text,previous)=>{assert.equal(note.id,'r1');assert.equal(previous,'old');writes.push(text);},save:async(_c,_label,value)=>{writes.push(value);data={...data,version:'v2',edit:{...data.edit,versions:['v1','v2']},options:[{label:'A',after:value}]};return structuredClone(data);},saveSource:async(_c,_block,value)=>{writes.push(value);}};
+        const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services), records=new Map([['1',{c,data}]]);view.setRecords(records);await view.show(c);await receive({type:'ready',instance:'p'});
+        const state={c,drafts:{A:'New candidate'},blockDraft:'New source',note:'New note',...(component==='edit'?{editingNote:{id:'r1',previousText:'old'}}:{}),scope:'group',editors:[],textareas:{},expandedNotes:[]};
+        await receive({type:'stashClose',instance:'p',id:'1',version:'v1',state});view.setRecords(records);await view.show(c);await receive({type:'ready',instance:'q'});
+        const draft=messages.findLast(m=>m.type==='content').stashes[0];await receive({type:'restoreStash',instance:'q',id:'1',version:'v1',stash:draft.id});
+        if(component==='candidate') {
+            await receive({type:'dirty',instance:'q',id:'1',version:'v1',dirty:true,noteDirty:false,state:{...state,note:''}});
+            await receive({type:'save',instance:'q',id:'1',version:'v1',option:'A',value:'New candidate'});
+            await receive({type:'accept',instance:'q',id:'1',version:'v2',option:'A'});
+            assert(messages.some(m=>m.error&&m.message.includes('先保存候选和返修要求')),'unsaved source still blocks acceptance');
+        }
+        else if(component==='source') await receive({type:'saveSource',instance:'q',id:'1',version:'v1',value:'New source'});
+        else {await receive({type:'dirty',instance:'q',id:'1',version:'v1',dirty:false,noteDirty:true,state});await receive(component==='edit'?{type:'editNote',instance:'q',id:'1',version:'v1',request:'r1',previousText:'old',text:'New note'}:{type:'note',instance:'q',id:'1',version:'v1',side:'original',text:'New note'});}
+        const record=values.reviewDrafts[draft.id];assert(record,component);
+        assert.equal(record.state.note,['note','edit'].includes(component)?'':'New note',component);
+        assert.equal(record.state.drafts.A,component==='candidate'?undefined:'New candidate',component);
+        assert.equal(record.state.blockDraft,component==='source'?undefined:'New source',component);
+        assert.equal(record.c.version,'v1');assert.equal(record.original,'Original');
+        if(component==='failure') assert(messages.some(m=>m.error&&m.message.includes('note failed')));
+        if(component==='candidate') assert.equal(messages.findLast(m=>m.type==='saved').stashes[0].exact,false);
+    }
+});
+
+test('an old note save does not consume a newer identical stash or clear its page', async () => {
+    let receive,dispose,release,started;const begun=new Promise(r=>started=r),gate=new Promise(r=>release=r),values={},messages=[];
+    const c={repo:'/race',owner:'state',id:'1',version:'v1'}, data={id:'1',version:'v1',original:'Original',source_match:true,edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate'}]};
+    const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{showWarningMessage:async(_m,_o,a)=>a,showErrorMessage:m=>messages.push({error:true,message:m}),createWebviewPanel:()=>({visible:true,reveal(){},dispose(){dispose();},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+    const services={session:()=> 's',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],note:async()=>{started();await gate;}};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services),records=new Map([['1',{c,data}]]),state={c,drafts:{},note:'same',scope:'group',editors:[],textareas:{}};
+    const open=async instance=>{view.setRecords(records);await view.show(c);await receive({type:'ready',instance});};
+    await open('p');await receive({type:'stashClose',instance:'p',id:'1',version:'v1',state});await open('q');
+    const draft=messages.findLast(m=>m.type==='content').stashes[0];await receive({type:'restoreStash',instance:'q',id:'1',version:'v1',stash:draft.id});
+    const saving=receive({type:'note',instance:'q',id:'1',version:'v1',side:'original',text:'same'});await begun;
+    dispose();await open('r');await receive({type:'stashClose',instance:'r',id:'1',version:'v1',state});
+    const replacement=structuredClone(values.reviewDrafts[draft.id]);assert.notEqual(JSON.stringify(replacement),undefined);
+    await open('s');await receive({type:'restoreStash',instance:'s',id:'1',version:'v1',stash:draft.id});
+    release();await saving;assert.deepEqual(values.reviewDrafts[draft.id],replacement);
+    assert.equal(messages.findLast(m=>m.type==='content').resume.note,'same');
+});
+
+test('saving the only restored note removes a record containing just an unchanged block', async () => {
+    let receive,dispose;const values={},messages=[],notes=[];
+    const c={repo:'/only-note',owner:'state',id:'1',version:'v1'},data={id:'1',version:'v1',original:'Original',source_match:true,block:{id:'b',text:'Original\n'},edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate'}]};
+    const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},dispose(){dispose();},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+    const services={session:()=> 's',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],note:async(_c,_selected,text)=>notes.push(text)};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services),records=new Map([['1',{c,data}]]);
+    const open=async instance=>{view.setRecords(records);await view.show(c);await receive({type:'ready',instance});};
+    await open('p');await receive({type:'stashClose',instance:'p',id:'1',version:'v1',state:{c,drafts:{},blockDraft:'Original\n',note:'new note'}});
+    await open('q');const stash=messages.findLast(m=>m.type==='content').stashes[0];await receive({type:'restoreStash',instance:'q',id:'1',version:'v1',stash:stash.id});
+    await receive({type:'note',instance:'q',id:'1',version:'v1',side:'original',text:'new note'});
+    assert.deepEqual(notes,['new note']);assert.equal(values.reviewDrafts[stash.id],undefined);assert.deepEqual(messages.findLast(m=>m.type==='stashes').stashes,[]);
+});
+
+test('typing a newer candidate while save-and-accept runs keeps it and stops acceptance', async () => {
+    let receive,release,start;const begun=new Promise(r=>start=r),gate=new Promise(r=>release=r),messages=[],accepted=[];
+    const c={repo:'/typing',owner:'state',id:'1',version:'v1'},data={id:'1',version:'v1',original:'Original',source_match:true,edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+    const services={session:()=> 's',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],save:async()=>{start();await gate;return {...data,version:'v2',options:[{label:'A',after:'first'}]};},accept:async()=>accepted.push(true)};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'p'});
+    await receive({type:'dirty',instance:'p',id:'1',version:'v1',dirty:true,state:{c,drafts:{A:'first'}}});
+    const saving=receive({type:'saveAccept',instance:'p',id:'1',version:'v1',option:'A',value:'first'});await begun;
+    await receive({type:'dirty',instance:'p',id:'1',version:'v1',dirty:true,state:{c,drafts:{A:'newer'}}});release();await saving;
+    assert.deepEqual(accepted,[]);assert.equal(messages.findLast(m=>m.type==='saved').resume.drafts.A,'newer');
+    assert(messages.some(m=>m.error&&m.message.includes('保存期间产生的新草稿')));
+});
