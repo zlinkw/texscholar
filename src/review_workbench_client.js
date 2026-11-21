@@ -7,6 +7,7 @@ let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSele
 let navigationFilter = {query: '', kind: '', notes: false};
 let changeCursor;
 let directoryCursor, localFeedback;
+let stashes = [];
 const batchSelection = new Map();
 const feedbackTargets = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap(), differences = new WeakMap();
@@ -23,7 +24,7 @@ $('currentBlock').addEventListener('keyup', () => {selectedBlockRevision = data?
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'start', 'checkUpdates', 'sourcePDF']);
 const sideBusy = new Set();
 const actionNames = {save: '保存候选', saveSource: '保存当前原文', syncBlock: '同步候选', repairBlock: '修复审核块', manualRebase: '人工更新候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
-    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
+    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', checkUpdates: '检查插件更新', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', sourcePDF: '编译正式 PDF', related: '定位关联改动'};
 function fitToolbar() {
     const header = document.querySelector('header'), home = $('toolbarExtras');
@@ -183,6 +184,7 @@ function buttons() {
         if (passiveActions.has(button.dataset.action)) button.disabled = sideBusy.has(button.dataset.action);
     }
     if (data?.source_match === false) for (const b of document.querySelectorAll('[data-action="accept"],[data-action="saveAccept"],[data-action="preview"],[data-action="pdf"]')) b.disabled = true;
+    document.querySelector('[data-action="restoreStash"]').disabled ||= !stashes.find(item => item.id === $('stashChoice').value)?.exact;
     $('operationStatus').textContent = waiting ? current.id + ' · ' + (actionNames[waiting] || '审核操作') + '…' : '';
     for (const node of document.querySelectorAll('textarea.edit')) node.readOnly = !!waiting;
     for (const button of document.querySelectorAll('[data-action="save"]')) {
@@ -314,6 +316,16 @@ function filterDirectory() {
     $('directoryHint').textContent = found.length + ' 项；↑↓ 选择，Enter 打开，Esc 关闭。';
 }
 function selectedCount() {$('selectedCount').textContent = '已选 ' + batchSelection.size + ' 项' + (batchSelection.size ? '；接收顺序（同点插入依此排列）：' + [...batchSelection.values()].map(i => i.id + '(' + i.option + ')').join(' → ') : '');}
+function renderStash() {
+    const d = stashes.find(item => item.id === $('stashChoice').value);
+    if (!d) return;
+    $('stashStatus').textContent = d.exact ? '基准一致，可恢复草稿；恢复不代表保存或接收。' : '批次、版本或原文基准已变化；仅供对照，不能直接恢复。';
+    $('stashOriginal').textContent = d.block?.text ?? d.original;
+    $('stashCurrent').textContent = data.block?.text ?? data.original;
+    $('stashContents').textContent = [...Object.entries(d.state.drafts || {}).map(([label,value]) => '候选 ' + label + '\n' + value),
+        ...(d.state.blockDraft === undefined ? [] : ['原文草稿\n' + d.state.blockDraft]), ...(d.state.note ? ['未提交批注\n' + d.state.note] : [])].join('\n\n');
+    document.querySelector('[data-action="restoreStash"]').disabled = !d.exact || !!waiting;
+}
 function markDirectoryCursor() {
     for (const node of $('directoryResults').querySelectorAll('button')) {
         const active = node.dataset.target === directoryCursor;
@@ -642,6 +654,7 @@ $('comparisonChoice').addEventListener('change', () => {
 });
 $('scopeChoice').addEventListener('change', scope);
 for (const id of ['directoryKind', 'directoryNotes', 'directoryQueue']) $(id).addEventListener('change', filterDirectory);
+$('stashChoice').addEventListener('change', renderStash);
 $('directoryDialog').addEventListener('keydown', event => {
     if (event.isComposing || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.target.id !== 'directoryQuery' && !event.target.closest('#directoryResults')) return;
@@ -741,6 +754,8 @@ document.addEventListener('click', event => {
             options:options.map(o => ({label:o.label, after:drafts.get(o.label) ?? o.after.replace(/\r\n/g, '\n')}))}); return;
     }
     if (type === 'saveSource') {send(type, {value: $('blockSource').value}); return;}
+    if (type === 'stashClose') {send(type, {state:snapshot()}); return;}
+    if (type === 'restoreStash' || type === 'discardStash') {send(type, {stash:$('stashChoice').value}); return;}
     if (type === 'note' || type === 'noteHandoff') {
         const handoff = type === 'noteHandoff';
         if (editingNote) {send('editNote', {request: editingNote.id, text: $('note').value, previousText: editingNote.previousText, handoff}); return;}
@@ -822,6 +837,12 @@ window.addEventListener('message', ({data: message}) => {
         const refresh = !saved && current && current.repo === message.c.repo && current.owner === message.c.owner && current.id === message.c.id;
         const oldOptions = options;
         current = message.c; data = message.data; options = message.options;
+        stashes = message.stashes || [];
+        const priorStash = $('stashChoice').value;
+        $('stashChoice').replaceChildren();
+        for (const item of stashes) {const option = document.createElement('option'); option.value=item.id; option.textContent='批次 ' + item.session.slice(0,8) + ' · 版本 ' + item.version + (item.exact ? '' : ' · 基准已变化'); $('stashChoice').appendChild(option);}
+        if (stashes.some(item => item.id === priorStash)) $('stashChoice').value = priorStash;
+        $('stashedDrafts').hidden = !stashes.length; if (stashes.length) renderStash();
         const resume = message.resume;
         selectedBlockRevision = undefined;
         sourceDraftStale = !!resume?.sourceDraftStale; candidateDraftStale = !!resume?.candidateDraftStale; oldOriginal = resume?.oldOriginal;

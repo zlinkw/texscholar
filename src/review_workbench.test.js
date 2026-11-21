@@ -589,3 +589,32 @@ test('postponed queue persists per project and session without changing review s
     assert.equal(messages.filter(m=>m.type==='directory').at(-1).directory.find(i=>i.id==='1').postponed,false);
     assert.equal(filterItems([{id:'1',postponed:true},{id:'2'}],{query:'',kind:'',notes:false}).length,1);
 });
+
+test('stash closes and restores only the exact session and source baseline', async () => {
+    let receive, onDispose, session='s1', data;
+    const values={}, messages=[], writes=[];
+    const workspaceState={get:(k,f)=>values[k] ?? f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+    const c={repo:'/stash-project',owner:'state',id:'1',version:'v1'};
+    const make=original=>({id:'1',version:'v1',original,source_match:true,block:{id:'b',text:original,source_revision:original},edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate',reason:'A'}]});
+    data=make('Original');
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{showWarningMessage:async()=>undefined,createWebviewPanel:()=>({visible:true,reveal(){},dispose(){onDispose();},onDidDispose:f=>{onDispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={session:()=>session,read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],save:()=>writes.push('save'),note:()=>writes.push('note'),saveSource:()=>writes.push('source')};
+    const context={subscriptions:[],workspaceState};
+    const state={c,drafts:{A:'Draft'},blockDraft:'Source draft',note:'Note draft',selected:{side:'original',value:'Original',start:0,end:3},scope:'original',editors:['A'],textareas:{},expandedNotes:[]};
+    let view=createWorkbench(vscode,context,services); view.setRecords(new Map([['1',{c,data}]])); await view.show(c); await receive({type:'ready',instance:'one'});
+    await receive({type:'stashClose',instance:'one',id:'1',version:'v1',state});
+    assert.equal(view.active,undefined); assert.deepEqual(writes,[]);
+    view=createWorkbench(vscode,context,services); view.setRecords(new Map([['1',{c,data}]])); await view.show(c); await receive({type:'ready',instance:'two'});
+    const stash=messages.filter(m=>m.type==='content').at(-1).stashes[0]; assert.equal(stash.exact,true);
+    await receive({type:'restoreStash',instance:'two',id:'1',version:'v1',stash:stash.id});
+    const restored=messages.filter(m=>m.type==='content').at(-1).resume;
+    assert.equal(restored.drafts.A,'Draft'); assert.equal(restored.blockDraft,'Source draft'); assert.equal(restored.note,'Note draft'); assert.deepEqual(writes,[]);
+    data=make('Changed'); session='s2';
+    view=createWorkbench(vscode,context,services); view.setRecords(new Map([['1',{c,data}]])); await view.show(c); await receive({type:'ready',instance:'three'});
+    const stale=messages.filter(m=>m.type==='content').at(-1).stashes[0]; assert.equal(stale.exact,false); assert.equal(stale.original,'Original');
+    await receive({type:'restoreStash',instance:'three',id:'1',version:'v1',stash:stale.id});
+    assert(messages.some(m=>m.error && m.message.includes('基准已变化'))); assert.deepEqual(writes,[]);
+    const other={...c,repo:'/other-project'};
+    view=createWorkbench(vscode,context,services); view.setRecords(new Map([['1',{c:other,data}]])); await view.show(other); await receive({type:'ready',instance:'four'});
+    assert.deepEqual(messages.filter(m=>m.type==='content').at(-1).stashes,[]);
+});
