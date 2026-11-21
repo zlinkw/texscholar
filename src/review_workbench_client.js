@@ -370,7 +370,7 @@ function renderOption(o) {
     article.dataset.reviewId = current.id; article.dataset.reviewVersion = current.version;
     article.className = [preview === o.label ? 'selected' : '', focused === o.label ? 'focused' : focused ? 'folded' : ''].join(' ');
     if (!article.children.length) article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
-        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small><p class="tradeoff"></p><p class="scopeSummary"></p><details class="reason"><summary>详细取舍</summary><span></span></details>'
+        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small><p class="tradeoff"></p><p class="scopeSummary"></p><details class="factChanges"><summary></summary><pre></pre></details><details class="reason"><summary>详细取舍</summary><span></span></details>'
         + '<div class="detail"><div class="review-text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
         + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" title="保存此候选（Ctrl/Cmd+Enter）" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><button data-action="saveAccept" data-write data-option="' + o.label + '">保存并接收 ' + o.label + '</button><small>“保存”只更新待审版本；“保存并接收”替换正文并进入下一项。</small></div></div>';
     article.querySelector('.tradeoff').textContent = o.summary || o.reason;
@@ -381,6 +381,13 @@ function renderOption(o) {
         : `相对原文的变动涉及：原文 ${count.old_sentences} 句 → 候选 ${count.new_sentences} 句`
             + (count.old_environments || count.new_environments ? `；独立环境 ${count.old_environments} → ${count.new_environments}` : '');
     article.querySelector('.scopeSummary').title = '按 TeX 结构统计涉及变化的句子，不是质量评分或修改上限；不含纯首尾空白变化。';
+    const facts = o.fact_changes || [], factBox = article.querySelector('.factChanges');
+    factBox.hidden = !facts.length;
+    factBox.querySelector('summary').textContent = `数字、引用、公式或保留术语有 ${facts.length} 处变化，需核对依据`;
+    factBox.querySelector('pre').textContent = facts.map(f => {
+        const describe = values => values.map(([value, start, end]) => `${value} [${start},${end})`).join('、') || '无';
+        return `${({number:'数字',citation:'引用键',math:'公式',term:'保留术语'})[f.kind]}：${describe(f.old)} → ${describe(f.new)}；unsupported（未核对依据）`;
+    }).join('\n');
     if (translatedText.has(o.label) && translatedText.get(o.label).source !== o.after) {
         translatedText.delete(o.label); $('zh-' + o.label).textContent = ''; rendered.delete($('zh-' + o.label));
     }
@@ -416,6 +423,7 @@ function renderReadings() {
         article.querySelector('.draftLabel').textContent = draft ? '未保存预览；句数统计与译文保存后更新。'
             : o.manually_edited ? '作者已手动调整；下方为原 AI 取舍。' : '';
         article.querySelector('.scopeSummary').hidden = draft;
+        article.querySelector('.factChanges').hidden = draft || !(o.fact_changes || []).length;
         $('zh-' + o.label).hidden = !chinese || draft;
         if (article.hidden) continue;
         const changes = paired ? pairChanges : draft ? textChanges($('text-' + o.label), data.original, displayed(o)) : o.changes;

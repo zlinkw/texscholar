@@ -12,6 +12,7 @@
 5. question_refs 在读取结果中引用本次 context.questions；提交可在 question_pool 明确提供完整 {id,file,quote}，由各项 question_refs 引用。仅在本次请求内有效，不自动配对；每条摘录仍由工具核验。新候选直接带关联，只补关联用 link_questions，也可放入 submit_options。 submit_options 的 propose/rework 操作可在操作层或 spec 内给 questions/question_refs；两层同时提供时按 spec 在前、操作层在后合并，并按完整 id/file/quote 去重。预检和保存使用同一份归一化输入，未知引用或不精确摘录报错。回执 questions 是实际保存后的完整关联列表，可据此核对，不能把已保存操作重复提交。replace=true 才替换整组关联。
 6. 批量首错停止，results 中成功项已保存，不能重放；只续写失败和未尝试项。invalid_field 的 field 指出需修正的位置，无需为修参数重读论文。状态、原文、版本冲突按 recovery 重读实际受影响范围，不盲目重试，不绕过写入锁或精确匹配。重叠错误的 existing 指向已有项，核对后返修，不自动合并。
 7. references 可与 read_context 同时请求：每项给 kind（label/citation/macro）、准确 key 和 files。返回指定源文件中的真实定义及邻近内容；缺失或多处匹配明确报告。仅查定义可同时传 ids=[]。不执行宏展开，不把 BibTeX 条目当作已验证文献，跨段逻辑与科学事实仍由 AI 核对。
+   作者明确要求保留的术语可作为 `protected_terms` 精确字符串随候选提交。审核页只提示数字、引用键、公式及这些术语的局部变化；提示不阻止接收，也不证明事实正确，未核对依据标记 unsupported。
 
 ## 候选生成
 

@@ -55,7 +55,8 @@ SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'respo
         'options': {'type': 'array', 'items': OPTION, 'minItems': 1, 'maxItems': 3},
         'fewer_options_reason': STRING, 'questions': {'type': 'array', 'items': QUESTION}, 'question_refs': STRINGS,
         'deps': {'type': 'array', 'items': STRING}, 'discard_annotations': {'type': 'boolean'},
-        'resolve_requests': {'type': 'array', 'items': STRING}, 'fulfillment': {'type':'array', 'items':FULFILLMENT}}
+        'resolve_requests': {'type': 'array', 'items': STRING}, 'fulfillment': {'type':'array', 'items':FULFILLMENT},
+        'protected_terms': {'type':'array', 'items':STRING, 'description':'Only exact terms the author explicitly requires to preserve.'}}
 TOOLS = [
     ('get_instructions', 'Read requested rule modules; pass known_rules from an earlier receipt to omit unchanged modules. Core is always required. No SKILL edits.', schema(RULES), True),
     ('read_context', 'FIRST: ids for revisions, scopes for exact source/cursor/section, files only for full files. Default all pending items with local context. Pass known_feedback only from an attachment still in context; unchanged prose/notes are reused, source and state are checked. references reads explicit label/citation/macro keys. Reuse rules receipt.', schema(READ, ['project']), True),
@@ -324,7 +325,7 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
         payload = review.payload(edit)
         item.update(version=edit['versions'][-1], original=payload['before'],
                     options=payload.get('options', [{'label': 'A', 'after': payload['after'], 'reason': '已有单方案'}]),
-                    intent=payload.get('intent'), fulfillment=payload.get('fulfillment', []), fewer_options_reason=payload.get('fewer_options_reason', ''),
+                    intent=payload.get('intent'), fulfillment=payload.get('fulfillment', []), protected_terms=payload.get('protected_terms', []), fewer_options_reason=payload.get('fewer_options_reason', ''),
                     left=payload['left'], right=payload['right'])
         receipt = review.feedback_receipt(id_)
         item['feedback_receipt'] = receipt

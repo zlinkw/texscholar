@@ -527,7 +527,7 @@ function createInlineReview(vscode, context, execute = run) {
             if (!previous || previous.version !== data.version || previous.original !== data.original || previous.candidate !== data.candidate ||
                 previous.options.length !== data.options.length || data.options.some((o, i) => o.label !== previous.options[i].label || o.after !== previous.options[i].after))
                 throw new Error('不可变候选版本与已显示内容不一致；已停止复用差异。');
-            data.options = data.options.map((o, i) => ({...o, changes: previous.options[i].changes, scope: previous.options[i].scope}));
+            data.options = data.options.map((o, i) => ({...o, changes: previous.options[i].changes, scope: previous.options[i].scope, fact_changes: previous.options[i].fact_changes}));
             data.changes = previous.changes;
             delete data.diff_reused;
         }

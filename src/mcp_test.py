@@ -280,6 +280,21 @@ class MCP(unittest.TestCase):
                                       'spec':{'options':updated, 'discard_annotations':False}})
         self.assertEqual(self.review().inspect(id_)['fulfillment'], [])
 
+    def test_fact_hints_use_explicit_terms_and_actual_candidate(self):
+        server = self.server(); base = {'project':str(self.root), 'state':'reply.tex'}
+        options = [{'label':k, 'after':'The model is ' + word + ' and fast.', 'reason':k}
+                   for k, word in zip('ABC', ('reliable', 'compact', 'efficient'))]
+        result = server.call('propose_options', {**base, 'expected_sha256':digest(self.review().raw),
+            'spec':{'file':'main.tex', 'kind':'manuscript', 'before':'The model is strong and fast.',
+                    'options':options, 'protected_terms':['strong']}})
+        packet = self.review().inspect(result['id'])
+        self.assertEqual(packet['options'][0]['fact_changes'][0]['kind'], 'term')
+        self.assertEqual(packet['options'][0]['fact_changes'][0]['evidence'], 'unsupported')
+        self.assertEqual(server.call('read_context', {**base,'ids':[result['id']]})['context']['items'][result['id']]['protected_terms'], ['strong'])
+        newer = [{**o, 'after':o['after'] + ' Here.'} for o in options]
+        server.call('rework_options', {**base, 'id':result['id'], 'version':result['version'], 'expected_sha256':result['sha256'], 'spec':{'options':newer}})
+        self.assertEqual(self.review().inspect(result['id'])['options'][0]['fact_changes'][0]['kind'], 'term')
+
     def test_default_context_is_local_and_confirmed_roles_are_compact(self):
         main = self.root / 'main.tex'
         main.write_bytes(main.read_bytes().replace(b'\\end{document}', b'\n\nDistant paragraph.\n\nFar away context.\n\\end{document}'))

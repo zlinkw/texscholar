@@ -1250,6 +1250,11 @@ class Review:
             item['fewer_options_reason'] = spec.get('fewer_options_reason', '')
         if 'intent' in spec:
             item['intent'] = copy.deepcopy(spec['intent'])
+        terms = spec.get('protected_terms', old.get('protected_terms', []) if rework else [])
+        if not isinstance(terms, list) or any(not isinstance(term, str) or not term.strip() for term in terms) or len(set(terms)) != len(terms):
+            raise FieldConflict('spec.protected_terms', 'Protected terms must be distinct nonempty strings')
+        if terms:
+            item['protected_terms'] = terms.copy()
         if 'fulfillment' in spec:
             if not rework or not isinstance(spec['fulfillment'], list):
                 raise FieldConflict('spec.fulfillment', 'Fulfillment applies to existing review requests only')
@@ -1523,6 +1528,8 @@ class Review:
         else:
             for option in result['options']:
                 option['scope'] = change_scope(result['original'], option['after'], option['changes'])
+                from review_facts import changes as fact_changes
+                option['fact_changes'] = fact_changes(result['original'], option['after'], shown.get('protected_terms', []))
         self.timings['diff_scope_s'] += time.perf_counter() - started
         if edit.get('accepted_option'):
             result['candidate'] = self.option(shown, edit['accepted_option'])['after']
