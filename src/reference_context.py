@@ -1,18 +1,19 @@
 """Read explicit local TeX labels/macros and BibTeX keys, without compiling or guessing."""
 from pathlib import PurePosixPath
 import re
-from source_review import Conflict, FieldConflict, body
+from source_review import BEGIN, END, Conflict, FieldConflict, body, digest, split_state
 from ai_context import paragraph_context
 from review_pdf import _command, _environment_end, group_end, skip_space
 
 
-def source_path(root, name):
+def source_path(root, name, extensions=None):
     if not isinstance(name, str) or not name or any(c in name for c in '\\\x00\r\n:'):
         raise FieldConflict('references.files', 'Use project-relative UTF-8 source paths with /')
     rel = PurePosixPath(name)
-    if rel.is_absolute() or '..' in rel.parts or str(rel) != name or rel.suffix.lower() not in {'.tex', '.bib', '.sty', '.cls'}:
-        raise FieldConflict('references.files', 'Only project-local .tex/.bib/.sty/.cls sources are supported')
-    if any(p in {'.git', '.codex-review', '.latex-build', 'node_modules', 'clean_dir'} for p in rel.parts):
+    allowed = extensions if extensions is not None else {'.tex', '.bib', '.sty', '.cls'}
+    if rel.is_absolute() or '..' in rel.parts or str(rel) != name or rel.suffix.lower() not in allowed:
+        raise FieldConflict('references.files', 'Use a supported project-local source file')
+    if any(p.casefold() in {'.git', '.codex-review', '.latex-build', 'node_modules', 'clean_dir'} for p in rel.parts):
         raise FieldConflict('references.files', 'Generated or runtime directories are not reference sources')
     target = root / name
     for p in [target, *target.parents]:
@@ -23,6 +24,45 @@ def source_path(root, name):
     if not target.is_file() or not target.resolve().is_relative_to(root):
         raise Conflict('Reference source is missing or outside the project: ' + name)
     return target
+
+
+EVIDENCE_EXTENSIONS = {'.tex', '.bib', '.sty', '.cls', '.md', '.txt', '.csv', '.json', '.log'}
+
+
+def evidence_source(root, name):
+    path = source_path(root, name, EVIDENCE_EXTENSIONS)
+    raw = path.read_bytes()
+    return path, raw, raw.decode('utf-8-sig')
+
+
+def evidence_range(text, start, end):
+    if not 0 <= start < end <= len(text):
+        return False
+    if BEGIN in text or END in text:
+        before, state, _ = split_state(text)
+        if start < len(before) + len(state) and end > len(before):
+            return False
+    return True
+
+
+def read_evidence_scopes(root, requests):
+    if not isinstance(requests, list):
+        raise FieldConflict('evidence_scopes', 'Provide explicit project-relative files and character ranges')
+    seen, result = {}, []
+    for index, item in enumerate(requests):
+        if not isinstance(item, dict) or set(item) != {'file', 'start', 'end'} or not isinstance(item['file'], str) or type(item['start']) is not int or type(item['end']) is not int:
+            raise FieldConflict(f'evidence_scopes[{index}]', 'Provide file, start and end as Unicode character offsets')
+        name = item['file']
+        if name not in seen:
+            seen[name] = evidence_source(root, name)
+        path, raw, text = seen[name]
+        start, end = item['start'], item['end']
+        if not evidence_range(text, start, end):
+            raise FieldConflict(f'evidence_scopes[{index}]', 'Evidence range is outside the source or overlaps review state')
+        result.append({'file':name, 'start':start, 'end':end, 'quote':text[start:end], 'source_revision':digest(raw)})
+    if any(path.read_bytes() != raw for path, raw, _ in seen.values()):
+        raise Conflict('Evidence changed during reading; reread the selected range')
+    return result
 
 
 def commands(text):

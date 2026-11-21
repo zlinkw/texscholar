@@ -295,8 +295,78 @@ class MCP(unittest.TestCase):
         server.call('rework_options', {**base, 'id':result['id'], 'version':result['version'], 'expected_sha256':result['sha256'], 'spec':{'options':newer}})
         self.assertEqual(self.review().inspect(result['id'])['options'][0]['fact_changes'][0]['kind'], 'term')
 
+    def test_fact_evidence_is_bound_to_exact_change_and_fresh_source(self):
+        server=self.server();base={'project':str(self.root),'state':'reply.tex'}
+        evidence=self.root/'experiments'/'results.csv';evidence.parent.mkdir();evidence.write_text('count,score\n42,0.91\n',encoding='utf-8')
+        start=evidence.read_bytes().decode('utf-8').index('42,0.91')
+        read=server.call('read_context',{**base,'ids':[],'evidence_scopes':[{'file':'experiments/results.csv','start':start,'end':start+7}]})['evidence_scopes'][0]
+        self.assertEqual(read['quote'],'42,0.91')
+        options=[{'label':k,'after':f'The model has 42 {word}.','reason':k} for k,word in zip('ABC',('results','cases','records'))]
+        from review_facts import changes
+        change=changes('The model is strong and fast.',options[0]['after'])[0]
+        mapping={'option':'A','change_index':0,'kind':'number','change_old':[list(v) for v in change['old']], 'change_new':[list(v) for v in change['new']],**read}
+        args={**base,'expected_sha256':digest(self.review().raw),'spec':{'file':'main.tex','kind':'manuscript','before':'The model is strong and fast.','options':options}}
+        before=self.review().raw
+        for invalid in ({**mapping,'file':'../outside.csv'}, {**mapping,'quote':'wrong'}, {**mapping,'source_revision':'old'},
+                        {**mapping,'end':999}, {**mapping,'change_index':99}, {**mapping,'kind':'math'}, {**mapping,'change_new':[['43',14,16]]}):
+            with self.assertRaises(ValueError): server.call('propose_options',{**args,'spec':{**args['spec'],'fact_evidence':[invalid]}})
+            self.assertEqual(self.review().raw,before)
+        saved=server.call('propose_options',{**args,'spec':{**args['spec'],'fact_evidence':[mapping]}})
+        result=self.review().inspect(saved['id']);self.assertTrue(result['fact_evidence'][0]['location_checked'])
+        packet=server.call('read_context',{**base,'ids':[saved['id']]})['context']['items'][saved['id']]
+        self.assertTrue(packet['fact_evidence'][0]['location_checked'])
+        self.assertEqual(packet['fact_changes']['A'][0]['kind'],'number')
+        self.assertEqual(result['options'][0]['fact_changes'][0]['evidence'],'unsupported')
+        evidence.write_text('count,score\n42,0.90\n',encoding='utf-8')
+        self.assertFalse(self.review().inspect(saved['id'])['fact_evidence'][0]['location_checked'])
+        self.assertFalse(server.call('read_context',{**base,'ids':[saved['id']]})['context']['items'][saved['id']]['fact_evidence'][0]['location_checked'])
+        revised=[{**o,'after':o['after']+' Revised.'} for o in options]
+        with self.assertRaises(ValueError): server.call('rework_options',{**base,'id':saved['id'],'version':'old','expected_sha256':saved['sha256'],'spec':{'options':revised,'fact_evidence':[mapping]}})
+        server.call('rework_options',{**base,'id':saved['id'],'version':saved['version'],'expected_sha256':saved['sha256'],'spec':{'options':revised}})
+        self.assertEqual(self.review().inspect(saved['id'])['fact_evidence'],[])
+
+    def test_evidence_scopes_exclude_runtime_paths_and_embedded_review_state(self):
+        server=self.server();base={'project':str(self.root),'state':'reply.tex'}
+        from source_review import BEGIN, END
+        text='Source 42.\n'+BEGIN+'\n% private annotation\n'+END+'\nTail.\n'
+        (self.root/'evidence.tex').write_text(text,encoding='utf-8',newline='')
+        read=lambda file,start,end: server.call('read_context',{**base,'ids':[], 'evidence_scopes':[{'file':file,'start':start,'end':end}]})
+        self.assertEqual(read('evidence.tex',0,10)['evidence_scopes'][0]['quote'],'Source 42.')
+        with self.assertRaises(ValueError): read('evidence.tex',text.index('private'),text.index('private')+7)
+        with self.assertRaises(ValueError): read('evidence.tex',0,text.index('private')+7)
+        with self.assertRaises(ValueError): read('.CODEX-REVIEW/objects/secret.json',0,1)
+
+    def test_evidence_change_between_preparation_and_persist_stops_write(self):
+        from source_review import Conflict
+        evidence=self.root/'basis.txt';evidence.write_text('42 cases',encoding='utf-8');raw=evidence.read_bytes()
+        options=[{'label':k,'after':'The model has 42 '+word+'.','reason':k} for k,word in zip('ABC',('cases','results','records'))]
+        from review_facts import changes
+        change=changes('The model is strong and fast.',options[0]['after'])[0]
+        mapping={'option':'A','change_index':0,'kind':'number','change_old':[list(v) for v in change['old']], 'change_new':[list(v) for v in change['new']],
+                 'file':'basis.txt','start':0,'end':8,'quote':'42 cases','source_revision':digest(raw)}
+        r=self.review();before=r.raw
+        updated,_=r.propose_options({'file':'main.tex','kind':'manuscript','before':'The model is strong and fast.','options':options,'fact_evidence':[mapping]})
+        evidence.write_text('43 cases',encoding='utf-8')
+        with self.assertRaisesRegex(Conflict,'Evidence source changed'):r.persist(updated,digest(before))
+        self.assertEqual(self.review().raw,before)
+
+    def test_existing_candidate_can_add_evidence_without_changing_options(self):
+        server=self.server();base={'project':str(self.root),'state':'reply.tex'}
+        source=self.root/'basis.txt';source.write_bytes(b'42 cases')
+        options=[{'label':k,'after':'The model has 42 '+word+'.','reason':k} for k,word in zip('ABC',('cases','results','records'))]
+        saved=server.call('propose_options',{**base,'expected_sha256':digest(self.review().raw),'spec':{'file':'main.tex','kind':'manuscript','before':'The model is strong and fast.','options':options}})
+        context=server.call('read_context',{**base,'ids':[saved['id']],'evidence_scopes':[{'file':'basis.txt','start':0,'end':8}]})
+        change=context['context']['items'][saved['id']]['fact_changes']['A'][0]
+        mapping={**context['evidence_scopes'][0],'option':'A','change_index':0,'kind':change['kind'],
+                 'change_old':[list(v) for v in change['old']],'change_new':[list(v) for v in change['new']]}
+        result=server.call('rework_options',{**base,'id':saved['id'],'version':saved['version'],'expected_sha256':saved['sha256'],
+            'spec':{'options':options,'discard_annotations':False,'fact_evidence':[mapping]}})
+        self.assertNotEqual(result['version'],saved['version'])
+        self.assertTrue(self.review().inspect(saved['id'])['fact_evidence'][0]['location_checked'])
+
     def test_fulfillment_does_not_survive_source_sync_or_manual_candidate_save(self):
         from source_review import Review
+        from review_facts import changes
         state = '.codex-review/state.json'
         fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
         def review(): return Review(self.root,state,'missing-git')
@@ -306,15 +376,20 @@ class MCP(unittest.TestCase):
         r=review();updated,item=r.propose_options({'file':'main.tex','kind':'manuscript','block_id':block['block_id'],'before':'The model is strong and fast.','options':options});r.persist(updated,digest(r.raw))
         id_=item['id'];r=review();version=r.state['edits'][id_]['versions'][-1]
         updated,note=r.feedback({'id':id_,'version':version,'side':'original','start':0,'end':0,'quote':'','text':'Clarify'});r.persist(updated,digest(r.raw))
+        basis=self.root/'basis.txt';basis.write_bytes(b'Author specified strong')
         def mapped_rework():
             r=review();e=r.state['edits'][id_];old=r.payload(e); revised=[{**o,'after':o['after']+' Here.'} for o in old['options']]
             request=e['requests'][0];mapping={'request':request['id'],'request_version':request['version'],'request_text':request['text'],
                 'option':'A','start':0,'end':1,'quote':revised[0]['after'][0],'explanation':'Attempted','status':'attempted'}
-            updated,result=r.propose_options({'options':revised,'fulfillment':[mapping]},id_,e['versions'][-1]);r.persist(updated,digest(r.raw));return review().state['edits'][id_]['versions'][-1]
-        first=mapped_rework();self.assertTrue(review().inspect(id_)['fulfillment'])
+            fact=changes(old['before'],revised[0]['after'],['strong'])[0]
+            proof={'option':'A','change_index':0,'kind':'term','change_old':[list(v) for v in fact['old']],'change_new':[list(v) for v in fact['new']],
+                   'file':'basis.txt','start':0,'end':23,'quote':'Author specified strong','source_revision':digest(basis.read_bytes())}
+            updated,result=r.propose_options({'options':revised,'fulfillment':[mapping],'protected_terms':['strong'],'fact_evidence':[proof]},id_,e['versions'][-1]);r.persist(updated,digest(r.raw));return review().state['edits'][id_]['versions'][-1]
+        first=mapped_rework();self.assertTrue(review().inspect(id_)['fulfillment']);self.assertTrue(review().inspect(id_)['fact_evidence'][0]['location_checked'])
         source=self.root/'main.tex';source.write_bytes(source.read_bytes().replace(b'The model',b'A model'))
         r=review();updated,synced=r.sync_block(id_,first,r.source_digest(r.read('main.tex')));r.persist(updated,digest(r.raw))
         self.assertEqual(review().inspect(id_)['fulfillment'],[])
+        self.assertEqual(review().inspect(id_)['fact_evidence'],[])
         latest=mapped_rework();r=review();self.assertTrue(r.inspect(id_)['fulfillment'])
         argv=[sys.executable,'-B','-X','utf8',str(Path(__file__).with_name('source_review.py')),'--project',str(self.root),'--state',state,'--apply','--expect',digest(r.raw),
               'edit-option','--id',id_,'--version',latest,'--option','A']
@@ -322,6 +397,7 @@ class MCP(unittest.TestCase):
         run=subprocess.run(argv,input=json.dumps({'after':after}).encode(),capture_output=True)
         self.assertEqual(run.returncode,0,run.stderr.decode('utf-8'))
         self.assertEqual(review().inspect(id_)['fulfillment'],[])
+        self.assertEqual(review().inspect(id_)['fact_evidence'],[])
 
     def test_default_context_is_local_and_confirmed_roles_are_compact(self):
         main = self.root / 'main.tex'

@@ -13,6 +13,7 @@
 6. 批量首错停止，results 中成功项已保存，不能重放；只续写失败和未尝试项。invalid_field 的 field 指出需修正的位置，无需为修参数重读论文。状态、原文、版本冲突按 recovery 重读实际受影响范围，不盲目重试，不绕过写入锁或精确匹配。重叠错误的 existing 指向已有项，核对后返修，不自动合并。
 7. references 可与 read_context 同时请求：每项给 kind（label/citation/macro）、准确 key 和 files。返回指定源文件中的真实定义及邻近内容；缺失或多处匹配明确报告。仅查定义可同时传 ids=[]。不执行宏展开，不把 BibTeX 条目当作已验证文献，跨段逻辑与科学事实仍由 AI 核对。
    作者明确要求保留的术语可作为 `protected_terms` 精确字符串随候选提交。审核页只提示数字、引用键、公式及这些术语的局部变化；提示不阻止接收，也不证明事实正确，未核对依据标记 unsupported。
+   若有具体依据，先用 `read_context.evidence_scopes` 传项目内文件及 Unicode 字符 `start`/`end`，读取精确 `quote` 与 `source_revision`；返修或新候选的 `spec.fact_evidence` 将这些字段与方案 `option`、该方案变化的 `change_index`、`kind` 和 `change_old`/`change_new` 一并提交。后两项逐字复制 `read_context` 当前方案 `fact_changes` 中该变化的 `old`/`new` 数组；索引从零开始。可按这些结果用同文案重交并添加依据，旧内嵌状态需显式 `discard_annotations=false` 才保留批注。来源变动或候选更新后需重新读取并关联；界面只称定位已核对，科学结论仍未验证。缺依据保留 unsupported，不将引用存在当作科学证明。
 
 ## 候选生成
 

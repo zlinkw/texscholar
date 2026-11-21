@@ -384,9 +384,11 @@ function renderOption(o) {
     const facts = o.fact_changes || [], factBox = article.querySelector('.factChanges');
     factBox.hidden = !facts.length;
     factBox.querySelector('summary').textContent = `数字、引用、公式或保留术语有 ${facts.length} 处变化，需核对依据`;
-    factBox.querySelector('pre').textContent = facts.map(f => {
+    factBox.querySelector('pre').textContent = facts.map((f, index) => {
         const describe = values => values.map(([value, start, end]) => `${value} [${start},${end})`).join('、') || '无';
-        return `${({number:'数字',citation:'引用键',math:'公式',term:'保留术语'})[f.kind]}：${describe(f.old)} → ${describe(f.new)}；unsupported（未核对依据）`;
+        const evidence = (data.fact_evidence || []).filter(e => e.option === o.label && e.change_index === index && e.kind === f.kind);
+        const sources = evidence.map(e => e.location_checked ? `\n依据定位已核对：${e.file} [${e.start},${e.end})\n${e.quote}\n科学结论未验证` : `\n依据已变化或不可读取：${e.file}；请重新核对`);
+        return `${({number:'数字',citation:'引用键',math:'公式',term:'保留术语'})[f.kind]}：${describe(f.old)} → ${describe(f.new)}；${evidence.some(e => e.location_checked) ? '科学结论未验证' : 'unsupported（未核对依据）'}${sources.join('')}`;
     }).join('\n');
     if (translatedText.has(o.label) && translatedText.get(o.label).source !== o.after) {
         translatedText.delete(o.label); $('zh-' + o.label).textContent = ''; rendered.delete($('zh-' + o.label));
@@ -870,6 +872,7 @@ window.addEventListener('message', ({data: message}) => {
         return;
     }
     if (message.type === 'translationStatus') {$('translateStatus').textContent = message.message; return;}
+    if (message.type === 'factEvidence') {data.fact_evidence = message.evidence; keepReading(() => {options.forEach(renderOption); renderReadings();}); return;}
     if (message.type === 'pdfStatus') {pdfStatus(message.message); return;}
     if (message.type === 'locationStatus') {
         const oldBlock = data.block, changed = oldBlock?.text !== message.block?.text;

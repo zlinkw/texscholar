@@ -47,7 +47,13 @@ FULFILLMENT = schema({'request': STRING, 'request_version': STRING, 'request_tex
     'option': {'type':'string', 'enum':['A','B','C']}, 'start': {'type':'integer'}, 'end': {'type':'integer'}, 'quote': STRING,
     'explanation': STRING, 'status': {'type':'string', 'enum':['attempted','partial','author','evidence']}},
     ['request','request_version','request_text','option','start','end','quote','explanation','status'])
-READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS, 'scopes': SCOPES, 'known_feedback': FEEDBACK_RECEIPTS, 'references': REFERENCES}
+EVIDENCE_SCOPES = {'type':'array', 'items':schema({'file':STRING, 'start':{'type':'integer'}, 'end':{'type':'integer'}}, ['file','start','end'])}
+READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS, 'scopes': SCOPES, 'known_feedback': FEEDBACK_RECEIPTS, 'references': REFERENCES, 'evidence_scopes':EVIDENCE_SCOPES}
+FACT_EVIDENCE = schema({'option':{'type':'string','enum':['A','B','C']}, 'change_index':{'type':'integer'},
+    'kind':{'type':'string','enum':['number','citation','math','term']}, 'change_old':{'type':'array','items':{'type':'array'}},
+    'change_new':{'type':'array','items':{'type':'array'}}, 'file':STRING, 'start':{'type':'integer'},
+    'end':{'type':'integer'}, 'quote':STRING, 'source_revision':STRING},
+    ['option','change_index','kind','change_old','change_new','file','start','end','quote','source_revision'])
 SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'response']},
         'block_id': STRING,
         'intent': schema({'goal': STRING, 'preserve': STRING}, ['goal', 'preserve']),
@@ -56,7 +62,8 @@ SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'respo
         'fewer_options_reason': STRING, 'questions': {'type': 'array', 'items': QUESTION}, 'question_refs': STRINGS,
         'deps': {'type': 'array', 'items': STRING}, 'discard_annotations': {'type': 'boolean'},
         'resolve_requests': {'type': 'array', 'items': STRING}, 'fulfillment': {'type':'array', 'items':FULFILLMENT},
-        'protected_terms': {'type':'array', 'items':STRING, 'description':'Only exact terms the author explicitly requires to preserve.'}}
+        'protected_terms': {'type':'array', 'items':STRING, 'description':'Only exact terms the author explicitly requires to preserve.'},
+        'fact_evidence': {'type':'array', 'items':FACT_EVIDENCE}}
 TOOLS = [
     ('get_instructions', 'Read requested rule modules; pass known_rules from an earlier receipt to omit unchanged modules. Core is always required. No SKILL edits.', schema(RULES), True),
     ('read_context', 'FIRST: ids for revisions, scopes for exact source/cursor/section, files only for full files. Default all pending items with local context. Pass known_feedback only from an attachment still in context; unchanged prose/notes are reused, source and state are checked. references reads explicit label/citation/macro keys. Reuse rules receipt.', schema(READ, ['project']), True),
@@ -325,8 +332,11 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
         payload = review.payload(edit)
         item.update(version=edit['versions'][-1], original=payload['before'],
                     options=payload.get('options', [{'label': 'A', 'after': payload['after'], 'reason': '已有单方案'}]),
-                    intent=payload.get('intent'), fulfillment=payload.get('fulfillment', []), protected_terms=payload.get('protected_terms', []), fewer_options_reason=payload.get('fewer_options_reason', ''),
+                    intent=payload.get('intent'), fulfillment=payload.get('fulfillment', []), protected_terms=payload.get('protected_terms', []),
+                    fact_evidence=review.evidence_status(payload.get('fact_evidence', [])), fewer_options_reason=payload.get('fewer_options_reason', ''),
                     left=payload['left'], right=payload['right'])
+        from review_facts import changes as fact_changes
+        item['fact_changes'] = {o['label']:fact_changes(payload['before'], o['after'], payload.get('protected_terms', [])) for o in item['options']}
         receipt = review.feedback_receipt(id_)
         item['feedback_receipt'] = receipt
         if receipt in (known_feedback or []):
@@ -569,10 +579,13 @@ class Server:
 
     @staticmethod
     def references(root, args):
-        if 'references' not in args:
-            return {}
-        from reference_context import read_references
-        return {'references': read_references(root, args['references'])}
+        from reference_context import read_references, read_evidence_scopes
+        result = {}
+        if 'references' in args:
+            result['references'] = read_references(root, args['references'])
+        if 'evidence_scopes' in args:
+            result['evidence_scopes'] = read_evidence_scopes(root, args['evidence_scopes'])
+        return result
 
     def submit(self, args):
         operations = args['operations']

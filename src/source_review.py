@@ -337,6 +337,7 @@ class Review:
             self.interrupted = False
         self.original = {}
         self.question_original = {}
+        self.evidence_original = {}
         self._objects = {}
         self._read_cache = None
         self._raw_sources = {}
@@ -661,6 +662,7 @@ class Review:
                    'left': text[max(0, row['start'] + start - 120):row['start'] + start],
                    'right': text[row['start'] + end:row['start'] + end + 120]}
         updated.pop('fulfillment', None)
+        updated.pop('fact_evidence', None)
         new_version = self.snapshot({'original.tex': before.encode('utf-8'), 'candidate.tex': options[0]['after'].encode('utf-8'),
                                      'span.json': json.dumps(updated, ensure_ascii=False).encode('utf-8')}, 'synchronized review item ' + id_)
         edit['versions'].append(new_version)
@@ -1157,7 +1159,7 @@ class Review:
             raise Conflict('不能把文件角色登记混入正文候选。')
         if (not options and (before == after or (rework and old["after"] == after))) or (options and all(o['after'] == original for o in options)):
             raise Conflict("No content change")
-        if rework and options and options == old.get('options') and manual_anchor is None:
+        if rework and options and options == old.get('options') and manual_anchor is None and spec.get('fact_evidence', old.get('fact_evidence', [])) == old.get('fact_evidence', []):
             raise Conflict('No content change')
         if self.storage == 'files' and (not rework or edit.get('scope_policy') == 'single-unit'):
             validate_review_unit(original)
@@ -1255,6 +1257,34 @@ class Review:
             raise FieldConflict('spec.protected_terms', 'Protected terms must be distinct nonempty strings')
         if terms:
             item['protected_terms'] = terms.copy()
+        if 'fact_evidence' in spec:
+            from reference_context import evidence_range, evidence_source
+            from review_facts import changes as fact_changes
+            entries = spec['fact_evidence']
+            if not isinstance(entries, list):
+                raise FieldConflict('spec.fact_evidence', 'Evidence must be an array')
+            choices = {o['label']:o['after'] for o in options or []}
+            checked = []
+            for entry in entries:
+                if not isinstance(entry, dict) or set(entry) != {'option','change_index','kind','change_old','change_new','file','start','end','quote','source_revision'}:
+                    raise FieldConflict('spec.fact_evidence', 'Each evidence entry needs an exact change and source range')
+                if any(not isinstance(entry[k], str) for k in ('option','kind','file','quote','source_revision')) or any(type(entry[k]) is not int for k in ('change_index','start','end')):
+                    raise FieldConflict('spec.fact_evidence', 'Evidence identity and offsets have invalid types')
+                candidate = choices.get(entry['option'])
+                changes = fact_changes(original, candidate, terms) if candidate is not None else []
+                i = entry['change_index']
+                if (not 0 <= i < len(changes) or changes[i]['kind'] != entry['kind']
+                        or entry['change_old'] != [list(value) for value in changes[i]['old']]
+                        or entry['change_new'] != [list(value) for value in changes[i]['new']]):
+                    raise FieldConflict('spec.fact_evidence', 'Evidence does not identify a current option change')
+                path, raw, evidence_text = evidence_source(self.repo, entry['file'])
+                if digest(raw) != entry['source_revision'] or not evidence_range(evidence_text, entry['start'], entry['end']) or evidence_text[entry['start']:entry['end']] != entry['quote']:
+                    raise FieldConflict('spec.fact_evidence', 'Evidence source revision, range or quote changed')
+                previous = self.evidence_original.setdefault(entry['file'], raw)
+                if previous != raw:
+                    raise Conflict('Evidence changed during candidate preparation')
+                checked.append(copy.deepcopy(entry))
+            item['fact_evidence'] = checked
         if 'fulfillment' in spec:
             if not rework or not isinstance(spec['fulfillment'], list):
                 raise FieldConflict('spec.fulfillment', 'Fulfillment applies to existing review requests only')
@@ -1504,6 +1534,26 @@ class Review:
         return updated, {'accepted': accept, 'rejected': reject,
                          'accepted_source': self.state['accepted'] if accept else None}
 
+    def evidence_status(self, entries):
+        from reference_context import evidence_range, evidence_source
+        result = []
+        for entry in entries:
+            try:
+                path, raw, text = evidence_source(self.repo, entry['file'])
+                valid = (digest(raw) == entry['source_revision'] and evidence_range(text, entry['start'], entry['end'])
+                         and text[entry['start']:entry['end']] == entry['quote'] and path.read_bytes() == raw)
+            except (Conflict, OSError, UnicodeError):
+                valid = False
+            result.append({**entry, 'location_checked':valid})
+        return result
+
+    def verify_evidence_sources(self):
+        from reference_context import evidence_source
+        for file, expected in self.evidence_original.items():
+            _, raw, _ = evidence_source(self.repo, file)
+            if raw != expected:
+                raise Conflict('Evidence source changed during saving; reread it before retrying')
+
     def inspect(self, id_, version=None, source=False, reuse_diff=False):
         self.assert_ready()
         edit = self.state["edits"][id_]
@@ -1523,6 +1573,7 @@ class Review:
         result['fewer_options_reason'] = shown.get('fewer_options_reason', '')
         result['intent'] = shown.get('intent')
         result['fulfillment'] = shown.get('fulfillment', [])
+        result['fact_evidence'] = self.evidence_status(shown.get('fact_evidence', []))
         if reuse_diff:
             result['diff_reused'] = True
         else:
@@ -1659,6 +1710,7 @@ class Review:
     def persist(self, updated, expect):
         if expect != digest(self.raw):
             raise Conflict("Stale/missing --expect state-file SHA256")
+        self.verify_evidence_sources()
         if self.sidecar:
             return self.persist_sidecar(updated)
         targets = {}
@@ -1723,6 +1775,7 @@ class Review:
             raise Conflict('Concurrent source/state modification; no source writes')
         if any(self.question_source(p) != raw for p, raw in self.question_original.items()):
             raise Conflict('Concurrent reviewer-question source modification; no source writes')
+        self.verify_evidence_sources()
         if not targets:
             self.write(self.state_path, self.state_bytes())
             return

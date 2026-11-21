@@ -27,3 +27,13 @@ Q7小验收：`q7-ui3` 全新30项中通过实际MCP rework_options预设返修�
 本阶段未运行会真实清理的备份后段、独立PDF/translation全组、机器冷启动、复杂真实论文、实网论文上传、Mac、强杀和真实五分钟等待；旧有效覆盖及明确失败不变。真实论文、范围外暂存、已安装扩展和全局设置未操作；所有隔离夹具/日志保留。Q8由总控在独立新样本执行，不提前发行。
 
 Q7补充映射消费者：`q7-sync-first.log` 首次exit1，测试夹具误以为底层propose回执带version；按实际持久状态取版本后 `q7-sync-fixed.log` exit0。cwd src、`SOURCE_REVIEW_FIXTURES=D:/latex-writing-checks/review-quality-20261121/q7-sync-fixed`、`PYTHONPATH=D:/GitRepo/texscholar/scripts/test-support;D:/GitRepo/texscholar/src`，argv `C:/Python314/python.exe -B -X utf8 -m unittest mcp_test.MCP.test_fulfillment_does_not_survive_source_sync_or_manual_candidate_save -v`；实际sidecar自动源码同步及CLI手改保存都不继承旧映射，批注仍留存。
+
+Q8未通过及R1：总控新样本 `controller-q8/mixed3` 实际完成所选1/2/3附件、MCP返修兑现和四类变化展示，但E3当时只有unsupported，缺所批准的真实依据定位路径；未获发行许可。mixed1因夹具git add不存在的response.tex退出1；mixed2漏注册workspace，MCP拒绝，observer1、host=false、CLI0。mixed3旧版本命令等待无回执，因确定的E3缺口总控中止，observer被精确终止exit4294967295、host=false、CLI0、聚合1；未接受、无事务，不重放未知操作。
+
+R1实现：MCP `read_context.evidence_scopes` 按项目内明确file及Unicode范围读取quote和源revision；`spec.fact_evidence` 将option、change_index、kind、change_old/new与范围、精确quote及revision绑定到不可变候选，提交和落盘期间校验。禁止项目外、链接/接合点、运行目录及旧版嵌入审核状态范围；手改/同步新版不继承，依据文件变化时实际页面刷新为失效。页面显示定位是否核对和“科学结论未验证”，缺依据仍unsupported；不自动接受或判断科学真实性。旧调用可不传；需要为现有方案补依据时可用相同options返修，旧格式按原约定显式保留批注。指南记录协议。
+
+`r1-mcp-first.log` exit1因Windows CRLF夹具偏移错误，按真实文件字符计算后 `r1-mcp-second.log` exit0；`r1-ui`、`r1-rpc` 首次prepare exit1发现实际源码局部变量遮蔽，已修复并保留原日志。最终 `r1-mcp-boundary.log` 39项exit0，cwd `D:/GitRepo/texscholar/src`，环境 `SOURCE_REVIEW_FIXTURES=D:/latex-writing-checks/review-quality-20261121/r1-mcp-boundary`、`SOURCE_REVIEW_GIT=D:/Git/cmd/git.exe`、`PYTHONPATH=D:/GitRepo/texscholar/scripts/test-support;D:/GitRepo/texscholar/src`，argv `C:/Python314/python.exe -B -X utf8 -m unittest mcp_test -v`。覆盖实际MCP新旧调用、精确身份/错误范围/引述/版本、持久化竞争、状态内嵌与运行路径排除、依据变化、同步及手改失效。`r1-editor-third.log` 58项exit0，cwd仓库根、`LOCAL_LATEX_TEST_ROOT=D:/latex-writing-checks/review-quality-20261121`，argv `C:/Program Files/nodejs/node.exe --test src/inline_review.test.js src/review_workbench.test.js`；后续仅更改后端读取边界及对应测试。
+
+`r1-ui3` 新隔离正常VS Code实际Webview显示依据片段、已核对定位及科学未验证；修改证据文件后不切页自动显示失效及unsupported，observer/CLI均0、ui-done与host-result均true，完整argv/cwd/输出见样本logs。`r1-rpc2` 新隔离样本通过注册命令 `vscode.commands.executeCommand('localLatex.inlineAccept',{...record.c,version:oldVersion,option:'A',workbench:true})` 调用旧版本，返回并显示“该项已有新版或审核决定……未代为接收或覆盖”，源与决定未变，CLI0、host-result=true。命令包装层处理冲突并显示通知，调用正常返回而非必须抛异常；原mixed3无回执根因仍未知，不将新样本通过说成已解释原失败。
+
+此前全部性能样本、不利结果和未测项保持原记录；R1未重复总控完整30项验收、未重新测端到端速度，未运行真实清理备份后段、独立PDF/translation全组、真实论文或实网论文上传。隔离样本及失败日志保留；真实论文与范围外暂存未操作，Q8明确通过前不发行。

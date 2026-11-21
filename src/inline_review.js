@@ -166,6 +166,7 @@ function createInlineReview(vscode, context, execute = run) {
     const protectedBlock = vscode.window.createTextEditorDecorationType({isWholeLine: true, borderWidth: '0 0 0 2px', borderStyle: 'solid', borderColor: new vscode.ThemeColor('editorWarning.foreground')});
     let activeScope, busy = false, startup = Promise.resolve(), ownerAfterWrite, batch;
     let watchedScope, watcher, stateWatcher, autoRefresh, renderedOwnerHash, refreshChain = Promise.resolve();
+    const evidenceWatchers = new Map();
     const changedFiles = new Set(), reviewFiles = new Set(), deferredFiles = new Set();
     const synchronizedVersions = new Map();
     const synchronizationConflicts = new Map();
@@ -488,6 +489,8 @@ function createInlineReview(vscode, context, execute = run) {
     }
     function watchScope(c) {
         if (watchedScope && sameFile(watchedScope.repo, c.repo) && watchedScope.owner === c.owner) return;
+        for (const item of evidenceWatchers.values()) item.dispose();
+        evidenceWatchers.clear();
         watcher?.dispose(); stateWatcher?.dispose(); changedFiles.clear(); reviewFiles.clear(); deferredFiles.clear(); renderedOwnerHash = undefined; ownerAfterWrite = undefined;
         synchronizedVersions.clear();
         watchedScope = {repo: c.repo, owner: c.owner};
@@ -497,6 +500,16 @@ function createInlineReview(vscode, context, execute = run) {
         if (c.owner === '.codex-review/state.json') {
             stateWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(c.repo, '.codex-review/state.json'));
             context.subscriptions.push(stateWatcher, stateWatcher.onDidChange(changed), stateWatcher.onDidCreate(changed), stateWatcher.onDidDelete(changed));
+        }
+    }
+    function watchEvidence(c, state) {
+        const files = new Set(Object.values(state.cards).flatMap(data => (data.fact_evidence || []).map(item => item.file)));
+        for (const [file, item] of evidenceWatchers) if (!files.has(file)) {item.dispose(); evidenceWatchers.delete(file);}
+        for (const file of files) if (!evidenceWatchers.has(file)) {
+            const item = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(c.repo, file));
+            const changed = () => refresh(c, false, true).catch(error => vscode.window.showErrorMessage('依据更新失败：' + error.message));
+            context.subscriptions.push(item, item.onDidChange(changed), item.onDidCreate(changed), item.onDidDelete(changed));
+            evidenceWatchers.set(file, item);
         }
     }
     function reusableVersions(c, source = records) {
@@ -531,6 +544,7 @@ function createInlineReview(vscode, context, execute = run) {
             data.changes = previous.changes;
             delete data.diff_reused;
         }
+        watchEvidence(c, state);
         latestReviewState = state; latestReviewScope = {repo:c.repo, owner:c.owner};
         require('./backup').restoreAutomaticStatus(c.repo, state.auto_backup);
         workbench.backupStatus?.(require('./backup').automaticStatus(c.repo));

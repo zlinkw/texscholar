@@ -190,7 +190,7 @@ function createWorkbench(vscode, context, services) {
     function packet() {
         const {file, kind, block_id, location: originalLocation, display_location, versions, requests, questions, previous_feedback} = loaded.edit;
         const location = display_location || originalLocation;
-        return {type: 'content', c: active, data: {original: loaded.original, source_match: loaded.source_match, conflict: loaded.conflict, block: loaded.block, edit: {file, kind, block_id, location, versions, requests, questions, previous_feedback}, intent: loaded.intent, fulfillment: loaded.fulfillment || [], fewer_options_reason: loaded.fewer_options_reason},
+        return {type: 'content', c: active, data: {original: loaded.original, source_match: loaded.source_match, conflict: loaded.conflict, block: loaded.block, edit: {file, kind, block_id, location, versions, requests, questions, previous_feedback}, intent: loaded.intent, fulfillment: loaded.fulfillment || [], fact_evidence: loaded.fact_evidence || [], fewer_options_reason: loaded.fewer_options_reason},
             options: options(loaded), directory: directory(), session: services.session?.(active), navigationFilter, style: services.style(), stashes: storedDrafts(active), questions: questionTable(active),
             sourceSelection, resume: uiState, reading, busy: handling, relatedReturn: relatedReturn?.c.id,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
@@ -361,9 +361,11 @@ function createWorkbench(vscode, context, services) {
         if (!next) {post({type: 'unavailable', message: '当前项已处理或原文冲突；未覆盖任何未保存内容。'}); return;}
         if (next.c.version === active.version) {
             const questionsChanged = JSON.stringify(loaded.edit.questions) !== JSON.stringify(next.data.edit.questions);
+            const evidenceChanged = JSON.stringify(loaded.fact_evidence) !== JSON.stringify(next.data.fact_evidence);
             const locationChanged = loaded.source_match !== next.data.source_match || loaded.conflict !== next.data.conflict ||
                 JSON.stringify(loaded.block) !== JSON.stringify(next.data.block);
             loaded = next.data;
+            if (evidenceChanged) post({type:'factEvidence', evidence:loaded.fact_evidence || []});
             if (locationChanged) post({type:'locationStatus', source_match:loaded.source_match, conflict:loaded.conflict, block:loaded.block});
             post({type: 'notes', requests: loaded.edit.requests || [], previous_feedback: loaded.edit.previous_feedback, questions: loaded.edit.questions || []});
             if (questionsChanged) autoTranslate();

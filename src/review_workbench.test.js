@@ -67,6 +67,21 @@ test('same-version refresh sends current block identity and revisions without re
     }
 });
 
+test('same-version refresh updates evidence freshness without replacing the draft', async () => {
+    let receive; const messages=[];
+    const c={repo:'/fixture',owner:'state',id:'1',version:'v1'};
+    const data={version:'v1',original:'Old',source_match:true,fact_evidence:[{file:'experiments/results.csv',location_checked:true}],
+        edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'New',reason:'A',changes:[]}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[]};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    await receive({type:'dirty',instance:'page',id:'1',version:'v1',dirty:true,state:{drafts:{A:'Unsaved draft'}}});
+    const changed={...data,fact_evidence:[{...data.fact_evidence[0],location_checked:false}]};
+    view.sync(new Map([['1',{c,data:changed}]]),c);
+    assert.equal(messages.findLast(m=>m.type==='factEvidence').evidence[0].location_checked,false);
+    assert(!messages.slice(-4).some(m=>m.type==='content'));
+});
+
 test('automatic version keeps candidate, source and note drafts on their old base', async () => {
     let receive; const messages = [];
     const c = {repo:'/fixture',owner:'.codex-review/state.json',id:'1',version:'v1'};
