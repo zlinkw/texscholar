@@ -281,6 +281,7 @@ function toggleMathMode() {
     if (!data || unavailable) return;
     renderReadings();
     renderQuestions(data.edit.questions || []);
+    if (reviewMode === 'question') renderQuestionMode();
     // Draft editors, note text, selected source coordinates and version stay intact.
 }
 function renderDirectory(items) {
@@ -457,7 +458,8 @@ function renderQuestionMode() {
         for (const entry of entries.filter(e=>e.kind===kind)) {
             const card=document.createElement('article'), title=document.createElement('h4');
             const activeDraft=questionEntryDraft(entry);
-            title.textContent=entry.id + ' · ' + entry.file + (entry.location ? ' · ' + (entry.location.heading || '') : '') + (entry.conflict ? ' · 定位冲突' : '') + (entry.card?.postponed ? ' · 暂缓' : '') + (entry.status==='rework' ? ' · 返修' : '') + (activeDraft ? ' · 未保存草稿，变化标记待保存后重算' : '') + ((entry.requests || []).some(note=>note.status==='open') ? ' · 有待处理批注' : '') + (!entry.card ? ' · 已处理或历史不可用' : '');
+            title.textContent=entry.id + ' · ' + entry.file + (entry.version ? ' · 版本 ' + entry.version.slice(0,8) : '') + (entry.location ? ' · ' + (entry.location.heading || '') : '') + (entry.conflict ? ' · 定位冲突' : '') + (entry.card?.postponed ? ' · 暂缓' : '') + (entry.status==='rework' ? ' · 返修' : '') + (activeDraft ? ' · 未保存草稿，变化标记待保存后重算' : '') + ((entry.requests || []).some(note=>note.status==='open') ? ' · 有待处理批注' : '') + (!entry.card ? ' · 已处理或历史不可用' : '');
+            if (entry.version) title.title='完整版本：'+entry.version;
             card.appendChild(title);
             if (entry.card) {
                 const check=document.createElement('input'), select=document.createElement('select'); check.type='checkbox'; check.setAttribute('aria-label','选择 '+entry.id);
@@ -467,22 +469,35 @@ function renderQuestionMode() {
                 select.setAttribute('aria-label',entry.id+' 接收方案');
                 check.disabled = entry.conflict || entry.card.postponed;
                 check.addEventListener('change',()=>{if(check.checked) batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value}); else batchSelection.delete(entry.id); saveBatchSelection(); selectedCount();});
-                const excerpt=document.createElement('pre'); excerpt.className='review-text';
+                const reference=document.createElement('div'), referenceTitle=document.createElement('strong'), referenceText=document.createElement('pre'), referenceWarning=document.createElement('small');
+                reference.className='questionReference'; referenceTitle.textContent='原文'; referenceText.className='review-text'; reference.append(referenceTitle,referenceText,referenceWarning);
+                const comparison=document.createElement('div'); comparison.className='questionOptions';
+                const optionNodes=entry.card.options.map(option=>{
+                    const node=document.createElement('div'), heading=document.createElement('strong'), text=document.createElement('pre');
+                    node.className='questionOption'; heading.textContent='方案 '+option.label; text.className='review-text';
+                    node.append(heading,text); comparison.appendChild(node); return {option,node,text};
+                });
                 const updateExcerpt=()=>{
-                    const chosen=entry.card.options.find(option=>option.label===select.value);
                     const activeDraft=entry.id===current?.id && entry.version===current.version;
                     const sourceEdited=activeDraft && (sourceDraftStale || data?.block && $('blockSource').value!==data.block.text.replace(/\r\n/g,'\n'));
-                    const candidate=activeDraft ? displayed(options.find(option=>option.label===chosen.label) || chosen) : chosen.after;
-                    const changes=math.wordChanges(entry.card.original,candidate);
-                    excerpt.textContent=sourceEdited ? '原文草稿尚未保存，变更片段暂不可用；请回到本项核对。' : changes.length ? '原文：\n'+changedLines(entry.card.original,changes,'old')+'\n方案 '+chosen.label+(activeDraft && candidate!==chosen.after ? '（未保存草稿）' : '')+'：\n'+changedLines(candidate,changes,'new') : '方案与原文没有文字变化。';
-                    excerpt.hidden=$('questionViewStyle').value==='full';
+                    const full=$('questionViewStyle').value==='full';
+                    const changes=optionNodes.map(({option})=>math.wordChanges(entry.card.original,activeDraft ? displayed(options.find(item=>item.label===option.label) || option) : option.after));
+                    const original=sourceEdited || full ? entry.card.original : changedLines(entry.card.original,changes.flat(),'old') || entry.card.original;
+                    math.render(referenceText,original,[],'original',sourceMode ? 'source' : 'preview',globalThis.katex);
+                    referenceWarning.textContent=sourceEdited ? '原文草稿尚未保存，变更片段暂不可用；请回到本项核对。' : '';
+                    optionNodes.forEach(({option,node,text},index)=>{
+                        const value=activeDraft ? displayed(options.find(item=>item.label===option.label) || option) : option.after;
+                        const clipped=sourceEdited || full ? value : changedLines(value,changes[index],'new') || value;
+                        const baseline=sourceEdited || full ? entry.card.original : changedLines(entry.card.original,changes[index],'old') || entry.card.original;
+                        const visibleChanges=sourceEdited ? [] : full ? changes[index] : math.wordChanges(baseline,clipped);
+                        node.classList.toggle('selected',select.value===option.label);
+                        math.render(text,clipped,visibleChanges,'candidate',sourceMode ? 'source' : 'preview',globalThis.katex);
+                        node.querySelector('strong').textContent='方案 '+option.label+(activeDraft && value!==option.after ? '（未保存草稿）' : '');
+                    });
                 };
                 select.addEventListener('change',()=>{if(check.checked && batchSelection.get(entry.id)?.version===entry.version) {batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value});saveBatchSelection();selectedCount();}updateExcerpt();});
                 card.append(check,select);
-                const details=document.createElement('details'), summary=document.createElement('summary');summary.textContent='展开原文与方案';details.appendChild(summary);
-                const original=document.createElement('pre');original.className='review-text';original.textContent='已保存原文：\n'+entry.card.original;details.appendChild(original);
-                for (const option of entry.card.options) {const text=document.createElement('pre');text.className='review-text';const active=entry.id===current?.id && entry.version===current.version;const value=active ? displayed(options.find(item=>item.label===option.label) || option) : option.after;text.textContent=option.label+(active && value!==option.after ? '（未保存草稿）' : '')+'：\n'+value;details.appendChild(text);}
-                details.open=$('questionViewStyle').value==='full'; updateExcerpt(); card.append(excerpt,details);
+                updateExcerpt(); card.append(reference,comparison);
             }
             const open=document.createElement('button');open.className='secondary';open.dataset.action='questionEntry';open.dataset.questionKey=selectedQuestion;open.dataset.target=entry.id;open.textContent='打开本项';
             if (selectedQuestion==='__unbound__') {open.dataset.action='switch';open.dataset.target=entry.id;}
@@ -492,6 +507,8 @@ function renderQuestionMode() {
     }
     $('questionModeScope').textContent='仅显示本轮明确关联；未绑定不代表没有修改。没有标记不代表低风险；接收不代表科学问题解决。';
     $('questionModeView').hidden=reviewMode!=='question'; $('review').hidden=reviewMode==='question' || unavailable;
+    document.querySelector('[data-action="paragraphMode"]').setAttribute('aria-pressed',String(reviewMode==='paragraph'));
+    document.querySelector('[data-action="questionMode"]').setAttribute('aria-pressed',String(reviewMode==='question'));
     selectedCount();
 }
 function markDirectoryCursor() {
@@ -825,6 +842,15 @@ function selectionChanged(event) {
     } else bindSelection(next);
 }
 document.addEventListener('mouseup', selectionChanged);
+const outsideDialogs = new WeakSet();
+for (const dialog of document.querySelectorAll('dialog')) {
+    const outside = event => {const box=dialog.getBoundingClientRect(); return event.clientX<box.left || event.clientX>box.right || event.clientY<box.top || event.clientY>box.bottom;};
+    dialog.addEventListener('pointerdown', event => {if (event.target===dialog && outside(event)) outsideDialogs.add(dialog); else outsideDialogs.delete(dialog);});
+    dialog.addEventListener('click', event => {if (event.target===dialog && outsideDialogs.has(dialog) && outside(event)) dialog.close(); outsideDialogs.delete(dialog);});
+}
+document.addEventListener('pointerdown', event => {
+    for (const menu of document.querySelectorAll('details.more[open]')) if (!menu.contains(event.target)) menu.open=false;
+});
 document.addEventListener('pointerdown', event => {
     restoration = undefined;
     if (globalThis.CSS?.highlights) CSS.highlights.delete('review-location');
@@ -1071,7 +1097,7 @@ window.addEventListener('message', ({data: message}) => {
         renderNotes(data.edit.requests || []); draftWarning(); dirty(); return;}
     if (message.type === 'titles') {data.edit.location = message.location; $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (message.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length; renderDirectory(message.directory); return;}
     if (message.type === 'titleStatus') {$('titleStatus').textContent = message.message; return;}
-    if (message.type === 'backupStatus') {$('backupStatus').textContent = message.message || '后台 Git 备份尚无任务'; return;}
+    if (message.type === 'backupStatus') {$('backupStatus').textContent = message.message || '后台 Git 备份尚无任务'; if (['failed','local'].includes(message.status)) $('backupDetails').open=true; return;}
     if (message.type === 'directory') {renderDirectory(message.directory); return;}
     if (message.type === 'preview') {
         preview = message.option;
