@@ -79,13 +79,13 @@ AI协作配置入口单独提供查看当前配置、修改某项、修复缺失
 
 ## 连续阶段、验证分工与完成条件
 
-- [x] C1 Terra：A1任务类别、范围/可选补充、不同提示词和真实上下文、预览/加入输入区语义、旧入口兼容及局部回归。C6发现预览可读性缺口，见R1。
+- [x] C1 Terra：A1任务类别、范围/可选补充、不同提示词和真实上下文、预览/加入输入区语义、旧入口兼容及局部回归。预览可读性R1已修复并通过真实补验。
 - [x] C2 Terra：A2配置引导分流、成功偏好记忆、旧自定义/键/自有版本路径承接、作用域与失效原因；完成局部配置/迁移/取消/失败回归。
 - [x] C3 Terra：B组Git说明与确认后保存事务、实际文件范围和取消零写、旧调用方及受影响消费者回归。
-- [x] C4 Terra：B组工具候选/文件挑选、自定义及作用域持久化、外观常用选项；确认已选择入口的真实空态/取消，不扩大重构。C6发现工具名可读性缺口，见R1。
+- [x] C4 Terra：B组工具候选/文件挑选、自定义及作用域持久化、外观常用选项；确认已选择入口的真实空态/取消，不扩大重构。工具用途名称及命令可发现性R1已通过真实补验。
 - [x] C5 Terra：最终本轮规定测试/阶段小验收与使用说明，审新增判断/抽象/依赖实际用途；冻结提交与完整交包，明确移交测试/UI/产品冻结租约。冻结8766af4a，规定editor及增量证据有效；不得提前做总控同场景最终大验收。
 - [x] C6 总控：审实际diff和原证据，仅做未覆盖的正常Development跨入口、跨进程及版本路径变更组合大验收；首次R1返修已完成，788e8f9的可读性/入口补验通过，结合既有功能/持久化/Git证据整体通过，现交C7。
-- [ ] C7 Terra：核预计0.9.57唯一性，必要版本/MCP/发行工具检查，一次构建；源码普通push/fetch、附注tag双摘要、正式Release/API附件digest核对、安装同一VSIX、执行尾提交/远端一致。总控最终核元数据并维护plan/index结案，不包后冒烟、不自动reload。
+- [x] C7 Terra：0.9.57唯一性与必要版本/MCP/发行工具检查通过，一次构建；源码普通push/fetch、附注tag双摘要、正式Release/API附件digest、同一VSIX安装及执行尾提交一致。总控已最终核实际元数据并结案；无包后冒烟或自动reload。
 
 C1–C4沿上述A/B两组连续实施，按实际内聚调用链组织提交，不为每个按钮换会话或分别冷启动。Terra在execution登记实际改动文件、阶段、返修次数、套件及命令；覆盖所有批准项，不能只做截图菜单或仅记一个内存变量。
 
@@ -99,7 +99,7 @@ Terra小验收负责各任务生成文本/上下文归属、所有选择分支/�
 
 ## 当前归属与下一动作
 
-C1–C5冻结8766af4a，R1冻结788e8f94f5cd2a4a84a029297dd129da7f343881，普通push/fetch一致、clean。总控已审实际diff、execution和局部证据；R1补验及C6组合整体通过，见下文。总控所有隔离宿主/observer/命令已退出，现将产品冻结后发行、测试/安装租约交原Terra连续C7，plan/index仍归总控。沿已授权预计0.9.57正式发行和同包安装；总控无独立待办后角色空闲，待完整交付再核发行元数据结案，不做包后冒烟。
+C1–C7完成。0.9.57已正式发布并同包安装，总控已核本地摘要、远端附注标签、实际Release API与本机安装登记，结案事实见末节；无需继续产品/测试/UI动作。真实论文、批注、草稿及范围外暂存受保护，全部宿主/命令退出、租约释放。用户需自行重载对应VSCode窗口并重启MCP连接启用新版，不做包后冒烟。
 
 ## C6实际证据与R1
 
@@ -133,3 +133,17 @@ R1已按范围完成：任务确认预览为可读任务/说明、聊天、项�
 无感补核新根`D:/latex-writing-checks/choice-settings-20261122/controller-hidden`：仅外置夹具，以Windows现有CreateDesktopW创建未切换的独立桌面，CreateProcessW显式lpDesktop=winsta0\\TeXScholarHidden93e697f2a6594f8797610aeb52478602启动正常Development宿主，无SwitchDesktop、不改变用户活动工具/剪贴板/键鼠。实际EnumDesktopWindows确认Chrome_WidgetWin_1在该私有桌面、不在Default；输入桌面始终Default，启动前、ready时、退出后前台HWND均86837022（同pid/thread），CDP只在隐藏宿主内查看真实八项工具菜单并取消，未保存配置/正文。CLI/observer均0、host/observed true、样例正文不变；结束后无Chrome_WidgetWin_1，桌面handle已正常关闭，随后核此宿主主进程及crashpad PID均已退出。argv/env/cwd和窗口/焦点实测见run-result.json、desktop-observation.json、logs。截图`C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-a6e8debf7c5142a4b5d935d3bf5450bc.png`非空并已逐图查看（CSS视口1440×900，真实菜单渲染正常），未删除任何旧图或失败证据。完整启动/交互/截图无感不以隐藏控制台或独立profile替代证明；本次无需重复全部产品链，C6含此补核最终通过。
 
 C7继续由原Terra执行：核实际下一版0.9.57的版本/tag/Release/输出目录唯一性；仅必要版本/MCP/发行工具检查，一次构建，源码普通push/fetch；附注tag关联源码提交及VSIX/源码包双摘要，正式Release并API核附件digest，真实CLI安装同一VSIX，execution尾提交普通push/fetch clean。不得自动reload真实VSCode/MCP，不包后冒烟；用户需再次重载对应窗口及重启MCP启用新版。总控仅最终核元数据/日志与计划索引结案。
+
+## 0.9.57正式交付与结案
+
+2026-11-22：C7完成，总控已只读核实际元数据及日志。源码提交`ee95ac97c3325afb6fe7ff3fdee6103b8a190f03`（相对C6仅package版本更新），执行尾提交`4956cc741fc0cf866f607e0a0944cb06b2742772`与origin/master一致、clean。附注tag `v0.9.57`对象`db202c9a7f7df84b841496e04b4d27cae8a79772`，本地及远端解引用均为源码提交，注释含下述双摘要。版本/MCP 2项、发行工具12项均exit0；一次build、publish均exit0，完整argv/cwd/env和输出见execution及外置c7-*.process.json/logs。
+
+正式发行[TeXScholar v0.9.57](https://github.com/zlinkw/texscholar/releases/tag/v0.9.57)。总控实际调用Release API，核draft=false、prerelease=false，三附件digest与本地实算及tag一致：
+
+- `dist/v0.9.57/texscholar-0.9.57.vsix`：SHA256 `30fad53556cb3e59a89f8c8769c29fc5e8cfea60a126bd8f069fb03d911b1526`。
+- `dist/v0.9.57/texscholar-0.9.57-source.zip`：SHA256 `fa695570dc1cfe7fa888fe9e45cc354c32f136b8edbe1095b2c242da9dae2ddb`。
+- `dist/v0.9.57/SHA256SUMS.txt`：SHA256 `c9364620ac38334cdd2428b05c14090a57e590e2adcc110463401804c22f9b67`。
+
+API实核摘要记录`D:/latex-writing-checks/choice-settings-20261122/controller-release-meta.json`。真实code.cmd对同一路径VSIX安装exit0；总控读登记确认local-research.latex-writing-tools 0.9.57、source=vsix、pinned=true，安装manifest也为0.9.57。首次cmd.exe空格路径引用错误exit1且未启动安装，正确引用后的c7-install-retry成功；首次本机tag解引用因未引用^{}出现fatal，后精确引用验证通过；Node DEP0169弃用警告均如实保留。没有第二次构建、包后冒烟或自动重载。
+
+任务、工具和外观偏好、真实Memento草稿、同profile整进程重启及版本路径承接已由前述隔离组合验证；原用户环境反复重配的具体根因仍未复现，不将本次隔离通过改写成原环境复现。既有未测范围与首次失败全部保留，不因结案增测或删除。正文/批注/未保存稿/范围外stage及真实全局配置未操作；唯一授权真实安装已完成。最后总控plan/index仅文档尾提交普通push/fetch，完整任务结案；用户重载对应VSCode窗口并重启MCP后启用0.9.57。
