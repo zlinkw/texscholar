@@ -1,5 +1,11 @@
 # 画布阅读界面执行记录
 
+2026-11-23 总控 U6 明确通过，最终功能候选 d940b6，完整组合与保留失败见同目录 plan.md 的 U6 最终结论；本代返修2次。U7 实核 gpt-6.1-terra/high/priority、match/continue，起点 f091a07 与 origin/master 一致且 clean。0.9.59 本地/远端标签不存在、Release API 404、`dist/v0.9.59` 不存在；仅将 package 版本改为0.9.59，MCP 同源读取。版本/MCP `u7-version` 2项 exit0；发行工具首次 `u7-release-check` 因新隔离夹具根未创建有2个 FileNotFoundError、exit1，未改产品或断言；创建另一新根后 `u7-release-check2` 12项 exit0，测试内 EOF 是模拟读失败。单次 `scripts/build.py --output dist/v0.9.59` 的 `u7-build` exit0；源码提交 69b138c46c11defe8a1bd093519492152aea5e7b 普通 push/fetch 一致。完整命令、环境、输出和真实退出保留在 `D:/latex-writing-checks/canvas-ui-20261123/u7-*`。
+
+附注标签 v0.9.59 对象 184b49d7b5beea8a2daf0bdd9314961644ec40f9，本地与远端解引用均为上述源码提交，附注含双包摘要。VSIX SHA256 `a3c12af04fee9258f137e91b4fe5c94562f804e1214cf07f3c8bf38cf45b13be`，源码包 SHA256 `25613670ba1cbe148b07b7a00b9ae7f9926c586f48d83a61f9e38137f3bf429f`，SHA256SUMS.txt SHA256 `92a67b535f9eeae52872199e22dedc86637a6dfc68d481edb95d6b29258b221c`。`u7-publish` exit0，[正式 Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.59) 的 `u7-release-api` 实际返回 draft=false、prerelease=false，三附件 digest 与本地一致。
+
+同一 VSIX 经真实 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.59/texscholar-0.9.59.vsix --force` 安装，`u7-install` exit0 并报告成功；Node DEP0169 警告原样保留。`u7-registration` exit0，登记及安装 manifest 均0.9.59、source=vsix、pinned=true。未包后冒烟，未自动重载 VS Code 或重启 MCP。实网AI/翻译质量、人工吞吐收益、原升级重配根因、cleanup后段、独立PDF/translation全组合、复杂论文/冷启动、Mac、强杀、真实五分钟及PDF查看器显示仍未测；真实论文、批注、未保存稿、范围外暂存及全局资料保护不变。
+
 2026-11-23 U6 继续未通过，真实返修计数 2。总控 `controller-unbound1` 实际选择未绑定问题时捕获原生 TypeError，旧批注条目 requests 为目录的待处理数量，而标题展示误按关联问题的批注数组调用 `.some`；该轮只查看，源、状态和范围外暂存前后相同，失败及截图留存。修复只在 `questionEntries` 汇合边界建立共同的 `openRequests` 数量：未绑定沿目录计数，关联项按其真实批注数组统计 open；原 requests 字段与数据不变，标题只读取共同计数，不吞错或伪造批注。
 
 `r2-route-first` 40项 exit0，覆盖未绑定有/无批注、关联项同时有 open 和已关闭批注，并验证原字段保留；既有精确身份、忙态、草稿和消费者测试同轮通过。新正常 Development 隔离 `r2-unbound1` 中，关联问题可显示；未绑定的2无批注、5有既存长期批注，两项真实ABC各四动作共24个、无页面错误；从非当前5/B直接打开批注并保存personal用途。`r2-state-unbound1` 独立比较前后快照，只有5新增一条正确版本/B/personal批注，长期原批注、其他项、两个源文件、counter及范围外已暂存哨兵保持；setup/prepare/stage/host/observer/外层和状态核对均0。截图 `ui-7d780a64853d4fad8cffe3834e2cdcd5.png` 已查看并保留；私有未切桌面，前中后前台HWND 86837022、Default输入桌面一致。完整argv/cwd/env/日志/真exit、快照和首败均在 `D:/latex-writing-checks/canvas-ui-20261123`；隔离夹具禁用自动备份，不声称重测Git/PDF完整链。其他未变链复用前次证据；总控仍需全新样例完成U6剩余组合，通过前不发行。
