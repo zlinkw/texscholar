@@ -55,9 +55,12 @@ async function configureChktex(vscode, context, found) {
     if (!found.pythonPath) return;
     const cfg = vscode.workspace.getConfiguration();
     const pathKey = 'latex-workshop.linting.chktex.exec.path', argsKey = 'latex-workshop.linting.chktex.exec.args';
+    const saved = {...context.globalState.get('writingSettings', {})};
     let command = cfg.get(pathKey, found.chktexPath || 'chktex'), args = cfg.get(argsKey, []);
     if (args[0] === '-X' && args[1] === 'utf8' && path.basename(args[2] || '') === 'chktex_filter.py'
         && args[3] === '--chktex' && args[5] === '--') {
+        if (!saved[':' + argsKey] || !equal(args, saved[':' + argsKey].applied))
+            throw new Error('ChkTeX 适配器参数与插件记录不一致；保留现有配置，请核对后再调整。');
         command = args[4]; args = args.slice(6);
     }
     if (command === 'chktex' && found.chktexPath) command = found.chktexPath;
@@ -65,7 +68,6 @@ async function configureChktex(vscode, context, found) {
         {key: argsKey, value: ['-X', 'utf8', path.join(__dirname, 'chktex_filter.py'), '--chktex', command, '--', ...args]},
         {key: pathKey, value: found.pythonPath}
     ];
-    const saved = {...context.globalState.get('writingSettings', {})};
     for (const row of incoming) {
         const own = cfg.inspect(row.key).globalValue;
         if (equal(own, row.value)) continue;
@@ -174,6 +176,42 @@ async function activate(context, vscode = require('vscode')) {
         }
         output.appendLine('TeX 发行版和 GitHub 登录由各自工具管理；本命令不安装软件、不登录、不编译、不操作 Git。');
         output.show(true);
+    });
+    command('localLatex.chooseTool', async () => {
+        const keys = ['texFmtPath','gitPath','pythonPath','checkcitesPath','latexdiffPath','latexmkPath','ghPath','ripgrepPath'];
+        const cfg = vscode.workspace.getConfiguration('localLatex');
+        const found = tools.discover(key => cfg.get(key)).found;
+        const picked = await vscode.window.showQuickPick(keys.map(key => {
+            const info = cfg.inspect(key);
+            const scope = info.workspaceFolderValue !== undefined ? '文件夹' : info.workspaceValue !== undefined ? '工作区' : info.globalValue !== undefined ? '用户' : '默认';
+            return {label:key, description:String(cfg.get(key)), detail:`来源：${scope}；${found[key] ? '已找到 ' + found[key] : '未找到当前配置'}`, key};
+        }), {title:'选择要修改的工具'});
+        if (!picked) return;
+        const detected = tools.findExecutable(tools.TOOLS[picked.key], tools.searchDirectories());
+        const choices = [
+            ...(detected ? [{label:'使用检测到的工具', description:detected, value:detected}] : []),
+            {label:'选择可执行文件', action:'file'}, {label:'自定义命令或路径', action:'custom'},
+            {label:'重置某一层设置', action:'reset'}
+        ];
+        const choice = await vscode.window.showQuickPick(choices, {title:picked.label, placeHolder:'只显示已检测到的候选；取消不更改设置'});
+        if (!choice) return;
+        let value = choice.value;
+        if (choice.action === 'file') value = (await vscode.window.showOpenDialog({canSelectFiles:true, canSelectFolders:false, canSelectMany:false, openLabel:'选择工具'}))?.[0]?.fsPath;
+        if (choice.action === 'custom') value = await vscode.window.showInputBox({title:'自定义命令或路径', value:String(cfg.get(picked.key)), validateInput:v => v.trim() ? undefined : '请输入命令或路径。'});
+        if (choice.action !== 'reset' && !value) return;
+        if (value) value = value.trim();
+        const executable = value && tools.findExecutable([value], tools.searchDirectories());
+        if (choice.action !== 'reset' && !executable) throw new Error('未找到所选工具；原配置未更改。');
+        if (picked.key === 'pythonPath' && executable) {
+            const match = /Python (\d+)\.(\d+)/.exec(await tools.version(executable));
+            if (!match || +match[1] !== 3 || +match[2] < 12) throw new Error('连接需要 Python 3.12 或更新版本；原配置未更改。');
+        }
+        const scopes = [{label:'用户', description:'机器级工具设置，不从论文项目加载可执行路径', target:vscode.ConfigurationTarget.Global}];
+        const scope = await vscode.window.showQuickPick(scopes, {title:'确认保存范围', placeHolder:'工具路径仅能保存为受信任的机器级设置'});
+        if (!scope) return;
+        if (choice.action === 'reset' && await vscode.window.showWarningMessage(`重置${scope.label}设置中的 ${picked.key}？其他作用域不变。`, {modal:true}, '重置') !== '重置') return;
+        await cfg.update(picked.key, value, scope.target, false);
+        vscode.window.showInformationMessage(`${picked.label} 已保存到${scope.label}设置。`);
     });
     command('localLatex.installRecommended', async () => {
         const options = RECOMMENDED.filter(([id]) => !vscode.extensions.getExtension(id)).map(([id, description]) => ({label: id, description, picked: id === 'james-yu.latex-workshop'}));

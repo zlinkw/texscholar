@@ -7,6 +7,70 @@ const path = require('node:path');
 const cp = require('node:child_process');
 const {inspectBackup,backupProject,finishReview,automaticBackup,enqueueAutomatic,activateAutomatic,reviewWriter,run} = require('./backup');
 const GIT = process.env.LOCAL_LATEX_GIT;
+test('backup cancellation leaves selected dirty buffers and Git state untouched', async () => {
+    const f = await fixture('backup-cancel');
+    const handlers = new Map(), subscriptions = [], disposed = () => ({dispose() {}});
+    const uri = file => ({scheme:'file', fsPath:file, toString:() => file});
+    const folder = {uri:uri(f.root)}, source = path.join(f.root,'main.tex');
+    let saves = 0;
+    const document = {uri:uri(source), version:1, isDirty:true, save:async () => {saves++; return true;}};
+    const vscode = {RelativePattern:class {}, commands:{registerCommand:(id,fn) => {handlers.set(id,fn); return disposed();}},
+        window:{activeTextEditor:{document}, createOutputChannel:() => ({appendLine() {},dispose() {}}),
+            showQuickPick:async () => undefined, showWarningMessage:async () => undefined,
+            showErrorMessage:message => {throw Error(message);}},
+        workspace:{isTrusted:true, workspaceFolders:[], textDocuments:[document], getWorkspaceFolder:() => folder,
+            getConfiguration:() => ({get:(key,fallback) => key === 'gitPath' ? GIT : fallback}),
+            onDidSaveTextDocument:disposed, onDidChangeWorkspaceFolders:disposed, onDidGrantWorkspaceTrust:disposed}};
+    const before = await f.git(['status','--porcelain=v1']);
+    require('./backup').activate({subscriptions}, vscode);
+    try {
+        await handlers.get('localLatex.backupProject')();
+        assert.equal(saves,0); assert.equal(await f.git(['status','--porcelain=v1']),before);
+        assert.equal(fs.readFileSync(source,'utf8'),'Original sentence.\n');
+    } finally {subscriptions.forEach(value => value.dispose());}
+});
+test('confirmed backup saves only chosen dirty files before reporting an invalid remote', async () => {
+    const f = await fixture('backup-scope');
+    const handlers = new Map(), subscriptions = [], disposed = () => ({dispose() {}});
+    const uri = file => ({scheme:'file', fsPath:file, toString:() => file});
+    const folder = {uri:uri(f.root)}, saved = [];
+    const document = name => ({uri:uri(path.join(f.root,name)), version:1, isDirty:true,
+        async save() {saved.push(name); fs.writeFileSync(this.uri.fsPath,'chosen edit','utf8'); this.isDirty=false; return true;}});
+    const main = document('main.tex'), other = document('other.tex');
+    const vscode = {RelativePattern:class {}, commands:{registerCommand:(id,fn) => {handlers.set(id,fn); return disposed();}},
+        window:{activeTextEditor:{document:main}, createOutputChannel:() => ({appendLine() {},dispose() {}}),
+            showQuickPick:async options => typeof options[0] === 'string' ? options[0] : options.filter(item => item.entry.file === 'main.tex'),
+            showInputBox:async () => '', showWarningMessage:async () => '继续备份', showErrorMessage:message => {throw Error(message);}},
+        workspace:{isTrusted:true, workspaceFolders:[], textDocuments:[main,other], getWorkspaceFolder:() => folder,
+            getConfiguration:() => ({get:(key,fallback) => key === 'gitPath' ? GIT : fallback}),
+            onDidSaveTextDocument:disposed, onDidChangeWorkspaceFolders:disposed, onDidGrantWorkspaceTrust:disposed}};
+    require('./backup').activate({subscriptions}, vscode);
+    try {
+        await assert.rejects(handlers.get('localLatex.backupProject')(), /github\.com/);
+        assert.deepEqual(saved,['main.tex']); assert.equal(other.isDirty,true);
+        assert.equal(fs.existsSync(other.uri.fsPath),false); assert.equal((await f.git(['rev-parse','HEAD'])).trim(),f.baseline);
+        await f.git(['add','main.tex']); main.isDirty = true; main.version++;
+        await assert.rejects(handlers.get('localLatex.backupProject')(), /已有手动暂存/);
+        assert.deepEqual(saved,['main.tex'], 'staged overlap is rejected before saving the dirty buffer');
+    } finally {subscriptions.forEach(value => value.dispose());}
+});
+test('review checkpoint cancellation does not save its dirty document', async () => {
+    const f = await fixture('checkpoint-cancel');
+    fs.mkdirSync(path.join(f.root,'.codex-review'));
+    fs.writeFileSync(path.join(f.root,'.codex-review','state.json'),'{}','utf8');
+    const handlers = new Map(), subscriptions = [], disposed = () => ({dispose() {}});
+    const uri = file => ({scheme:'file', fsPath:file, toString:() => file});
+    const folder = {uri:uri(f.root)}, source=path.join(f.root,'main.tex'); let saves=0;
+    const document = {uri:uri(source), version:1, isDirty:true, save:async () => {saves++; return true;}};
+    const vscode = {RelativePattern:class {}, commands:{registerCommand:(id,fn) => {handlers.set(id,fn); return disposed();}},
+        window:{activeTextEditor:{document}, createOutputChannel:() => ({appendLine() {},dispose() {}}),
+            showQuickPick:async () => undefined, showErrorMessage:message => {throw Error(message);}},
+        workspace:{isTrusted:true, workspaceFolders:[], textDocuments:[document], getWorkspaceFolder:() => folder,
+            findFiles:async () => [uri(source)], onDidSaveTextDocument:disposed, onDidChangeWorkspaceFolders:disposed, onDidGrantWorkspaceTrust:disposed}};
+    require('./backup').activate({subscriptions}, vscode);
+    try {await handlers.get('localLatex.finishReview')(); assert.equal(saves,0); assert.equal(fs.readFileSync(source,'utf8'),'Original sentence.\n');}
+    finally {subscriptions.forEach(value => value.dispose());}
+});
 async function fixture(label) {
     const parent = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT,label+'-'));
     const root = path.join(parent,'paper'), remote = path.join(parent,'origin.git');
@@ -673,6 +737,22 @@ test('existing manual staging and edits after selection stop without discarding 
     await assert.rejects(backupProject(plan,plan.entries,'方法更新'),/内容发生变化/);
     assert.equal((await g.git(['rev-parse','HEAD'])).trim(),g.baseline);
     assert.equal(fs.readFileSync(path.join(g.root,'main.tex'),'utf8'),'Author edit after selection.\n');
+});
+test('project backup preserves unrelated staged content and rejects staged overlap',async () => {
+    const f = await fixture('backup-unrelated-stage'); f.edit();
+    fs.writeFileSync(path.join(f.root,'outside.txt'),'author staged','utf8'); await f.git(['add','outside.txt']);
+    const staged = await f.git(['diff','--cached','--raw','--no-abbrev','-z']);
+    const plan = await inspectBackup(f.root,{git:GIT,gh:'fixture-gh',allowOtherStaged:true},f.execute);
+    await backupProject(plan,plan.entries.filter(row => row.file === 'main.tex'),'正文修改');
+    assert.equal(await f.git(['diff','--cached','--raw','--no-abbrev','-z']),staged);
+    assert.equal(await f.git(['show',':outside.txt']),'author staged');
+    assert.equal(await f.git(['show','HEAD:main.tex']),'Revised sentence.\n');
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),(await f.git(['rev-parse','origin/master'])).trim());
+    const g = await fixture('backup-overlap'); g.edit(); await g.git(['add','main.tex']);
+    const overlap = await inspectBackup(g.root,{git:GIT,gh:'fixture-gh',allowOtherStaged:true},g.execute);
+    await assert.rejects(backupProject(overlap,overlap.entries,'正文修改'),/已有手动暂存/);
+    assert.equal(await g.git(['show',':main.tex']),'Revised sentence.\n');
+    assert.equal((await g.git(['rev-parse','HEAD'])).trim(),g.baseline);
 });
 test('public or unverified target never receives the new local backup commit',async () => {
     const f = await fixture('backup-public'); f.edit();

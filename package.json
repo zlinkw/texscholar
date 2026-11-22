@@ -249,6 +249,11 @@
         "icon": "$(cloud-upload)"
       },
       {
+        "command": "localLatex.chooseTool",
+        "title": "选择本机工具路径",
+        "category": "本地论文写作"
+      },
+      {
         "command": "localLatex.setupWriting",
         "title": "导入／重新应用论文写作配置",
         "category": "本地论文写作",

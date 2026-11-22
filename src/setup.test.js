@@ -80,6 +80,9 @@ test('ChkTeX adapter preserves the configured checker/flags, upgrades without ne
     await configureChktex(f.vscode, f.context, found);
     assert.equal(f.writes.length, writes, 'repeat activation makes no settings writes');
     f.values.set(':' + args, [...wrapped.slice(0, 2), path.join('/old extension version', 'chktex_filter.py'), ...wrapped.slice(3)]);
+    const old = f.context.globalState.get('writingSettings');
+    old[':' + args].applied = f.values.get(':' + args);
+    await f.context.globalState.update('writingSettings', old);
     await configureChktex(f.vscode, f.context, found);
     assert.deepEqual(f.values.get(':' + args), wrapped, 'upgrade changes only the adapter path, not checker flags');
     await restore(f.vscode, f.context);
@@ -90,6 +93,9 @@ test('ChkTeX adapter preserves the configured checker/flags, upgrades without ne
     const missing = fixture({[':' + executable]: '/native/chktex'});
     await configureChktex(missing.vscode, missing.context, {});
     assert.deepEqual(missing.writes, [], 'missing Python must not disable the native checker');
+    const unknown = fixture({[':' + executable]:'/author/python', [':' + args]:wrapped});
+    await assert.rejects(configureChktex(unknown.vscode, unknown.context, found), /插件记录不一致/);
+    assert.deepEqual(unknown.writes, [], 'unowned adapter-like command must never be replaced');
 });
 test('activating in a code-only or untrusted project applies no user settings', async () => {
     for (const trusted of [true, false]) {
@@ -107,4 +113,25 @@ test('activating in a code-only or untrusted project applies no user settings', 
         assert(!RECOMMENDED.some(([id]) => id.toLowerCase() === 'alefragnani.bookmarks'));
         assert(RECOMMENDED.some(([id]) => id.toLowerCase() === 'gruntfuggly.todo-tree'));
     }
+});
+
+test('tool selection keeps explicit scope and cancellation never writes a setting', async () => {
+    const f = fixture({':gitPath':'git'}), handlers = new Map();
+    f.context.subscriptions = [];
+    const steps = [];
+    f.vscode.window = {createOutputChannel:() => ({appendLine() {},dispose() {}}),
+        showQuickPick:async options => {const next=steps.shift(); return options.find(item => item.label === next);},
+        showInputBox:async () => process.env.LOCAL_LATEX_GIT,
+        showInformationMessage:() => {}, showErrorMessage:message => {throw Error(message);}};
+    f.vscode.commands = {registerCommand:(id,fn) => {handlers.set(id,fn); return {dispose() {}};}};
+    f.vscode.extensions = {onDidChange:() => ({dispose() {}})};
+    Object.assign(f.vscode.workspace, {isTrusted:false, workspaceFolders:[], findFiles:async () => []});
+    await activate(f.context, f.vscode);
+    steps.push('gitPath', '自定义命令或路径');
+    await handlers.get('localLatex.chooseTool')();
+    assert.deepEqual(f.writes, [], 'cancel scope leaves old choice untouched');
+    steps.push('gitPath', '自定义命令或路径', '用户');
+    await handlers.get('localLatex.chooseTool')();
+    assert.equal(f.values.get(':gitPath'), process.env.LOCAL_LATEX_GIT);
+    assert.deepEqual(f.writes, ['gitPath']);
 });

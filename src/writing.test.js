@@ -154,6 +154,44 @@ test('selected source omits machine state, preserves Unicode and rejects dirty o
     assert.throws(() => selectedScope(editor, folder), /先保存/);
 });
 
+test('task choices retain exact selection, project identity and distinct instructions', async () => {
+    const {chooseTask, taskRequest} = require('./mcp_setup');
+    const folder = {name:'paper', uri:{scheme:'file', fsPath:'/paper'}};
+    const editor = {document:{uri:{fsPath:'/paper/main.tex'}, languageId:'latex', getText:() => '原文内容', offsetAt:x => x},
+        selection:{start:0, end:2, isEmpty:false}};
+    let picks = [], preview = '';
+    const vscode = {RelativePattern:class {}, workspace:{workspaceFolders:[folder], getWorkspaceFolder:() => folder, findFiles:async () => ['main.tex']},
+        commands:{getCommands:async () => ['chatgpt.addFileToThread']},
+        window:{activeTextEditor:editor, showQuickPick:async choices => {if (choices[0].edit === false) return choices[0]; const id = picks.shift(); return choices.find(c => c.id === id);},
+            showInputBox:async () => '', showInformationMessage:async value => {preview=value; return '确认加入';}}};
+    const context = {globalState:{get:() => undefined}};
+    picks = ['polish','selection'];
+    const polish = await chooseTask(context, vscode);
+    assert.equal(polish.readRequest.scopes[0].quote, '原文');
+    assert(preview.includes('/paper/main.tex') || preview.includes('main.tex'));
+    assert(preview.includes('保留原意'));
+    picks = ['discuss','later'];
+    const discuss = await chooseTask(context, vscode);
+    assert.notEqual(discuss.goal, polish.goal);
+    assert((await taskRequest(discuss.goal, discuss.roots, false, undefined, undefined, discuss.taskKind)).includes('不自动创建候选'));
+    picks = ['custom','later']; vscode.window.showInputBox = async () => undefined;
+    assert.equal(await chooseTask(context, vscode), undefined);
+    vscode.window.showInputBox = async () => '请讨论局限';
+    for (const id of ['rewrite','response','selection','custom']) {
+        picks = id === 'selection' ? [id] : [id,'later'];
+        const value = await chooseTask(context, vscode);
+        assert(value && value.goal.length, id + ' has a real instruction');
+        if (id === 'selection') assert.equal(value.readRequest.scopes[0].quote,'原文');
+        if (id === 'response') assert(value.goal.includes('审稿意见'));
+    }
+    editor.selection.isEmpty = true;
+    picks = ['selection'];
+    await assert.rejects(chooseTask(context, vscode), /请先.*选中文字/);
+    editor.document.isDirty = true;
+    picks = ['polish','file'];
+    await assert.rejects(chooseTask(context, vscode), /未保存/);
+});
+
 test('AI setup prompt is portable, complete and reuses one configuration/shortcut authority', async () => {
     const prompt = await buildPrompt();
     assert(prompt.includes('全局 SKILL'));
@@ -230,10 +268,10 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         await require('./mcp_setup').activate(context, vscode, {scanClients: async () => ({available: true, clients: [{pid: process.pid, client: desktopClient ? 'desktop' : 'vscode'}]})}).ready;
         assert(!notices.some(text => text.includes('MCP 运行版本待核验')), 'startup without a report is a quiet pending state');
         const start = handlers.get('localLatex.startPaperTask');
-        await start();
+        await start({goal:''});
         assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), unrelated, 'cancel before connecting');
         assert.equal(calls.length, 0);
-        goal = '完善引言，保留证据'; await start();
+        goal = '完善引言，保留证据'; await start({goal});
         const attachments = calls.filter(c => c[0] === 'chatgpt.addFileToThread');
         assert.equal(attachments.length, 1, 'task and rules are a single attachment');
         const initial = await fs.readFile(attachments[0][1].fsPath, 'utf8');
@@ -243,6 +281,16 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         assert(!initial.includes('# TeXScholar 当前任务协作协议：'), 'MCP provides the actual applicable protocol once');
         assert(initial.includes('known_rules')); assert(initial.includes('ids'));
         assert(notices.at(-1).includes('首次连接需重启 Codex'));
+        const messages = vscode.window.showInformationMessage;
+        let steps = ['discuss','later','无需补充，继续','加入当前聊天'];
+        vscode.window.showQuickPick = async options => {const item=steps.shift(); return options.find(option => option.id === item || option.label === item);};
+        vscode.window.showInformationMessage = async (text, options) => options?.modal ? '确认加入' : messages(text);
+        await start();
+        const prepared = await fs.readFile(calls.filter(c => c[0] === 'chatgpt.addFileToThread').at(-1)[1].fsPath,'utf8');
+        assert(prepared.includes('先分析并讨论')); assert(prepared.includes('不自动创建候选'));
+        assert.equal(state.get('paperTaskKind'),'discuss');
+        assert(!calls.some(c => /send|submit/i.test(c[0])));
+        vscode.window.showInformationMessage = messages;
         const configured = await fs.readFile(path.join(home, 'config.toml'), 'utf8');
         assert(configured.includes(unrelated.trim())); assert(configured.includes('[mcp_servers.texscholar]'));
         const runtimeFile = path.join(storage, 'mcp-runtime.json');
@@ -301,7 +349,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         assert(!calls.some(c => c[0] === 'workbench.action.reloadWindow'), 'full-restart preparation never closes or reloads the window');
         assert(notices.at(-1).includes('正常退出所有 VS Code 窗口'));
         state.set('aiSetupConfigured', true); calls.length = 0; notices.length = 0;
-        goal = '修改回复信'; await start();
+        goal = '修改回复信'; await start({goal});
         const everyday = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
         assert(everyday.includes(goal)); assert(everyday.includes('A/B/C')); assert(!everyday.includes('\n40. '));
         assert(everyday.includes('rules_receipt'));
@@ -316,16 +364,16 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         const selected = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
         assert(selected.includes(JSON.stringify({...readRequest, expected_plugin_version: require('../package.json').version})));
         assert(!selected.includes('\\documentclass{article}'));
-        available = []; calls.length = 0; copyChoice = '复制完整任务说明'; await start();
+        available = []; calls.length = 0; copyChoice = '复制完整任务说明'; await start({goal});
         assert.equal(copied.length, 1); assert(copied[0].includes(goal)); assert(copied[0].includes('A/B/C'));
         assert.equal(calls.length, 0, 'no unavailable command or automatic sending');
         available = ['chatgpt.addFileToThread']; python = path.join(root, 'missing-python');
-        await start();
+        await start({goal});
         const repair = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
         assert(repair.includes('MCP 尚未连接成功')); assert(!repair.includes('\n40. '), 'connection repair does not request unrelated compiler installation');
         assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), configured, 'connection failure preserves configuration');
         calls.length = 0; python = process.env.LOCAL_LATEX_PYTHON;
-        goal = '配置新电脑'; await start({setup: true});
+        goal = '配置新电脑'; await start({setup: true, goal});
         const setup = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
         assert(setup.includes('\n40. '), 'explicit setup retains all approved migration groups');
         assert.equal(await fs.readFile(path.join(paper, 'paper.tex'), 'utf8'), source);

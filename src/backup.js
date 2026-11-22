@@ -294,7 +294,9 @@ async function inspectBackupUnlocked(root, options, execute = run) {
     if (!require('./tools').samePath(actual, root)) throw new Error('论文文件夹与 Git 根目录不一致，停止备份，避免提交其他项目。');
     if ((await git(['symbolic-ref','--short','HEAD'])).trim() !== 'master') throw new Error('当前不是 master；请先核对项目分支，本按钮不会自动切换。');
     if ((await git(['rev-parse','--abbrev-ref','--symbolic-full-name','@{upstream}'])).trim() !== 'origin/master') throw new Error('请先为 master 配置 origin/master 上游。');
-    if ((await git(['diff','--cached','--name-only','-z'])).length) throw new Error('暂存区已有手动选择，请先处理；本按钮不会覆盖暂存选择。');
+    const staged = (await git(['diff','--cached','--name-only','--no-renames','-z'])).split('\0').filter(Boolean);
+    if (staged.length && !options.allowOtherStaged) throw new Error('暂存区已有手动选择，请先处理；本按钮不会覆盖暂存选择。');
+    const stagedRaw = await git(['diff','--cached','--raw','--no-abbrev','-z']);
     const fetchUrls = (await git(['remote','get-url','--all','origin'])).trim().split(/\r?\n/);
     const pushUrls = (await git(['remote','get-url','--push','--all','origin'])).trim().split(/\r?\n/);
     if (fetchUrls.length !== 1 || pushUrls.length !== 1 || githubRepository(fetchUrls[0]).toLowerCase() !== githubRepository(pushUrls[0]).toLowerCase()) throw new Error('origin 的获取和推送目标不唯一或不一致，停止备份。');
@@ -327,7 +329,7 @@ async function inspectBackupUnlocked(root, options, execute = run) {
         } else bytes.set(name,null);
     }
     const remoteHead = (await git(['rev-parse','origin/master'])).trim();
-    return {root,git,execute,options,head,remoteHead,status,entries,bytes,repository:githubRepository(pushUrls[0])};
+    return {root,git,execute,options,head,remoteHead,status,entries,bytes,staged,stagedRaw,repository:githubRepository(pushUrls[0])};
 }
 function commitMessage(note, files, stat) {
     const categories = new Set(files.map(file => /\.bib$/i.test(file) ? '参考文献' : /\.(?:pdf|png|jpe?g|eps|svg|drawio)$/i.test(file) ? '图表' : /\.tex$/i.test(file) ? '手稿或回复信' : '模板与配置'));
@@ -356,6 +358,8 @@ async function backupProjectUnlocked(plan, entries, note) {
     if (!note?.trim()) throw new Error('请填写本次改动目的，便于之后检索版本。');
     if ((await git(['rev-parse','HEAD'])).trim() !== plan.head || (await git(['status','--porcelain=v1','-z','--untracked-files=all'])) !== plan.status) throw new Error('备份选择后文件或 Git 状态发生变化，请重新点备份；没有覆盖内容。');
     const files = [...new Set(entries.flatMap(row => row.files))];
+    if (files.some(name => plan.staged.includes(name))) throw new Error('所选文件已有手动暂存；请先处理该文件的暂存，未覆盖。');
+    if (await git(['diff','--cached','--raw','--no-abbrev','-z']) !== plan.stagedRaw) throw new Error('暂存区在选择后变化，未开始备份。');
     if (files.some(name => !plan.bytes.has(name))) throw new Error('备份文件不属于刚才核对的范围。');
     if (files.some(name => /\.tex$/i.test(name) && plan.bytes.get(name)?.includes(Buffer.from('% CODEX-REVIEW-DATA ')))) throw new Error('审核状态不能随整份源码提交；请使用“Git 备份已接收修改”。');
     for (const name of files) {
@@ -371,10 +375,10 @@ async function backupProjectUnlocked(plan, entries, note) {
             const expected = new Map();
             for (const name of files) if (plan.bytes.get(name) !== null) expected.set(name,(await git(['hash-object','--path='+name,'--stdin'],plan.bytes.get(name))).trim());
             await git(['add','-A','--',...files]);
-            const staged = (await git(['diff','--cached','--name-only','-z'])).split('\0').filter(Boolean);
-            if (staged.some(name => !files.includes(name))) throw new Error('暂存区出现范围外修改，停止提交，请检查暂存区。');
+            const staged = (await git(['diff','--cached','--name-only','--no-renames','-z'])).split('\0').filter(Boolean);
+            if (staged.some(name => !files.includes(name) && !plan.staged.includes(name))) throw new Error('暂存区出现新的范围外修改，停止提交，请检查暂存区。');
             const stat = await git(['diff','--cached','--stat','--',...files]);
-            if (staged.length) {
+            if (staged.some(name => files.includes(name))) {
                 for (const [name,oid] of expected) if ((await git(['rev-parse',':'+name])).trim() !== oid) throw new Error('暂存内容已变化：'+name+'；未提交。');
                 await git(['commit','--only','-m',commitMessage(note,files,stat),'--',...files]);
                 commit = (await git(['rev-parse','HEAD'])).trim();
@@ -382,6 +386,7 @@ async function backupProjectUnlocked(plan, entries, note) {
                 const changed = (await git(['diff-tree','--no-commit-id','--name-only','-r','-z','HEAD'])).split('\0').filter(Boolean);
                 if (changed.some(name => !files.includes(name))) throw new Error('提交包含备份范围外的文件，未推送；请检查 Git hook。');
                 for (const [name,oid] of expected) if ((await git(['rev-parse','HEAD:'+name])).trim() !== oid) throw new Error('提交内容与核对的源码不同：'+name+'；未推送。');
+                if (await git(['diff','--cached','--raw','--no-abbrev','-z']) !== plan.stagedRaw) throw new Error('范围外暂存发生变化，请检查暂存区；未推送。');
             }
         }
         const head = await pushPrivate(plan);
@@ -521,24 +526,57 @@ function activateAutomatic(vscode, context, enqueue = enqueueAutomatic, timers =
     }));
     context.subscriptions.push({dispose() {active = false; for (const timer of projects.values()) timers.clearInterval(timer); projects.clear();}});
 }
-function activate(context) {
-    const vscode = require('vscode');
+function activate(context, vscode = require('vscode')) {
     activateAutomatic(vscode, context);
     let busy = false;
+    async function purpose() {
+        const categories = ['正文修改','回复信修改','正文与回复共同修改','其他修改','自定义说明'];
+        const selected = await vscode.window.showQuickPick(categories, {title:'选择本次备份说明', placeHolder:'说明本次实际修改，不代表接收候选'});
+        if (!selected) return;
+        let detail = '';
+        if (selected === '自定义说明') detail = await vscode.window.showInputBox({title:'填写备份说明', validateInput:value => value.trim() ? undefined : '请填写实际修改说明。'});
+        else {
+            const extra = await vscode.window.showQuickPick(['无需补充，继续','补充说明'], {title:'是否补充本次备份内容'});
+            if (!extra) return;
+            if (extra === '补充说明') detail = await vscode.window.showInputBox({title:'补充备份说明'});
+        }
+        if (detail === undefined) return;
+        return selected === '自定义说明' ? detail.trim() : [selected, detail.trim()].filter(Boolean).join('：');
+    }
+    function dirtyIn(folder) {
+        return vscode.workspace.textDocuments.filter(doc => doc.uri.scheme === 'file' && doc.isDirty && vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.toString() === folder.uri.toString());
+    }
+    async function saveSelected(folder, names, versions) {
+        const allowed = new Set(names);
+        const documents = dirtyIn(folder).filter(doc => allowed.has(path.relative(folder.uri.fsPath, doc.uri.fsPath).split(path.sep).join('/')));
+        for (const doc of documents) {
+            const name = path.relative(folder.uri.fsPath, doc.uri.fsPath).split(path.sep).join('/');
+            if (versions.get(doc.uri.toString()) !== doc.version) throw new Error('选择后文件内容变化，请重新核对：' + name);
+        }
+        for (const doc of documents) {
+            const name = path.relative(folder.uri.fsPath, doc.uri.fsPath).split(path.sep).join('/');
+            if (!await doc.save()) throw new Error('论文文件保存失败，未开始备份；之前已保存的文件保留：' + name);
+        }
+    }
     async function finishAction() {
         const editor = vscode.window.activeTextEditor;
         if (!vscode.workspace.isTrusted || editor?.document.uri.scheme !== 'file') throw new Error('请在受信任的本地论文文件夹打开 .tex。');
         const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
         if (!folder) throw new Error('请先打开论文文件夹。');
-        for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.toString() === folder.uri.toString() && doc.isDirty && !await doc.save()) throw new Error('论文保存失败，未开始成果提交。');
         const files = await vscode.workspace.findFiles(new vscode.RelativePattern(folder.uri.fsPath,'**/*.tex'),'**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**');
         const owners = files.filter(file => /^% CODEX-REVIEW-DATA /m.test(fs.readFileSync(file.fsPath,'utf8')));
         const sidecar = path.join(folder.uri.fsPath, '.codex-review', 'state.json');
         const external = fs.existsSync(sidecar);
         if (external && owners.length || !external && owners.length !== 1) throw new Error('需先核对唯一的本地审核状态，不能猜测提交范围。');
         const state = external ? '.codex-review/state.json' : path.relative(folder.uri.fsPath,owners[0].fsPath).split(path.sep).join('/');
-        const note = await vscode.window.showInputBox({title:'Git 备份已接收修改',prompt:'备份已接收成果及当前轮源码中的手动修改；未接收候选和批注保留本地。请填写改动目的',validateInput:value => value.trim() ? undefined : '请填写成果说明。'});
+        const versions = new Map(dirtyIn(folder).map(doc => [doc.uri.toString(),doc.version]));
+        const dirty = dirtyIn(folder).map(doc => ({label:path.relative(folder.uri.fsPath,doc.uri.fsPath).split(path.sep).join('/'), picked:true})).filter(item => paperPath(item.label));
+        const selected = dirty.length ? await vscode.window.showQuickPick(dirty, {canPickMany:true, title:'选择要保存的未保存文件', placeHolder:'已保存的源码修改和已接收成果仍按项目范围备份'}) : [];
+        if (!selected) return;
+        const note = await purpose();
         if (note === undefined) return;
+        if (await vscode.window.showWarningMessage('将保存所选文件，并备份此项目已接收成果及已保存的手动修改；推送成功后精简已完结记录。', {modal:true}, '继续备份') !== '继续备份') return;
+        await saveSelected(folder, selected.map(item => item.label), versions);
         const cfg = vscode.workspace.getConfiguration('localLatex');
         const result = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'备份已接收成果及手动修改，推送成功后精简已完结记录'},() => finishReview(folder.uri.fsPath,state,
             {git:cfg.get('gitPath','git'),gh:cfg.get('ghPath','gh'),python:cfg.get('pythonPath','python')},note));
@@ -578,17 +616,36 @@ function activate(context) {
         if (!folder) return;
         busy = true;
         try {
-            for (const doc of vscode.workspace.textDocuments) if (doc.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.toString() === folder.uri.toString() && doc.isDirty && !await doc.save()) throw new Error('论文文件保存失败，未开始备份。');
             const cfg = vscode.workspace.getConfiguration('localLatex');
-            const plan = await inspectBackup(folder.uri.fsPath,{git:cfg.get('gitPath','git'),gh:cfg.get('ghPath','gh')});
-            if (fs.existsSync(path.join(folder.uri.fsPath, '.codex-review', 'state.json')) || [...plan.bytes].some(([name,raw]) => /\.tex$/i.test(name) && raw?.includes(Buffer.from('% CODEX-REVIEW-DATA ')))) return await finishAction();
-            if (!plan.entries.length && plan.head === plan.remoteHead) return vscode.window.showInformationMessage('没有符合备份范围的论文文件变更，也没有待推送提交；未创建空提交。');
-            const picked = plan.entries.length ? await vscode.window.showQuickPick(plan.entries.map(entry => ({label:entry.status+' '+entry.file,picked:true,entry})),{canPickMany:true,placeHolder:'备份整个论文项目的这些文件；可取消勾选，不包含私有审核对象与编译缓存'}) : [];
+            const root = fs.realpathSync(folder.uri.fsPath), git = cfg.get('gitPath','git');
+            const actual = fs.realpathSync((await run(git,['--no-optional-locks','rev-parse','--show-toplevel'],root)).trim());
+            if (!require('./tools').samePath(actual, root)) throw new Error('论文文件夹与 Git 根目录不一致，停止备份。');
+            const raw = await run(git,['--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=all'],root);
+            const entries = parseStatus(raw).filter(row => row.files.every(paperPath));
+            if (fs.existsSync(path.join(root, '.codex-review', 'state.json')) || entries.some(row => row.files.some(name => {
+                const file = path.join(root,name);
+                if (!/\.tex$/i.test(name) || !fs.existsSync(file)) return false;
+                if (fs.lstatSync(file).isSymbolicLink() || !fs.statSync(file).isFile()) throw new Error('备份不处理链接或特殊文件：' + name);
+                return fs.readFileSync(file).includes(Buffer.from('% CODEX-REVIEW-DATA '));
+            }))) return await finishAction();
+            for (const doc of dirtyIn(folder)) {
+                const file = path.relative(root,doc.uri.fsPath).split(path.sep).join('/');
+                if (paperPath(file) && !entries.some(row => row.files.includes(file))) entries.push({status:'未保存', file, files:[file]});
+            }
+            const versions = new Map(dirtyIn(folder).map(doc => [doc.uri.toString(),doc.version]));
+            const picked = entries.length ? await vscode.window.showQuickPick(entries.map(entry => ({label:entry.status+' '+entry.file,picked:true,entry})),{canPickMany:true,placeHolder:'选择备份文件；所选未保存文件将在确认后保存'}) : [];
             if (!picked) return;
-            if (!picked.length && plan.head === plan.remoteHead) return vscode.window.showInformationMessage('未选择文件，也没有待推送提交；没有创建提交。');
-            const note = await vscode.window.showInputBox({title:'Git 备份说明',prompt:'概括本轮修改的目的和内容，写入提交标题和正文供 AI 检索；不会自动接收修订',placeHolder:'例如：澄清伪标签筛选流程，并同步审稿人 1 的回复',validateInput:value => value.trim() ? undefined : '请填写本轮改动说明。'});
+            if (picked.some(item => item.entry.status !== '未保存' && ![' ', '?'].includes(item.entry.status[0]))) throw new Error('所选文件已有手动暂存；请先处理该文件的暂存，未保存或覆盖。');
+            const note = await purpose();
             if (note === undefined) return;
-            const result = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'提交并备份到已配置的私有 GitHub'},() => backupProject(plan,picked.map(x=>x.entry),note));
+            if (await vscode.window.showWarningMessage('将保存并备份所选文件，并推送已有本地提交到已配置的私有 GitHub。', {modal:true}, '继续备份') !== '继续备份') return;
+            if (await run(git,['--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=all'],root) !== raw) throw new Error('选择后 Git 状态变化，请重新核对；未保存文件。');
+            await saveSelected(folder, picked.flatMap(x => x.entry.files), versions);
+            const plan = await inspectBackup(root,{git,gh:cfg.get('ghPath','gh'),allowOtherStaged:true});
+            const names = new Set(picked.flatMap(x => x.entry.files));
+            const chosen = plan.entries.filter(entry => entry.files.every(name => names.has(name)));
+            if (!chosen.length && plan.head === plan.remoteHead) return vscode.window.showInformationMessage('所选文件没有已保存的变更，也没有待推送提交。');
+            const result = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'提交并备份到已配置的私有 GitHub'},() => backupProject(plan,chosen,note));
             vscode.window.showInformationMessage(`已备份所选 ${result.files.length} 个论文文件或同步已有提交：${result.head.slice(0,8)} → ${result.repository}（私有）；未选中的修改未上传，未接收任何修订。`);
         } catch (error) {vscode.window.showErrorMessage(error.message);}
         finally {busy = false;}

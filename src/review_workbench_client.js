@@ -763,6 +763,7 @@ document.addEventListener('click', event => {
     localFeedback = feedbackFor(button);
     const menu = button.closest('.more'); if (menu) menu.open = false;
     if (type === 'appearance') {style(appearance); $('appearanceDialog').showModal(); return;}
+    if (type === 'followFont') {style({...appearance, fontFamily:''}); saveAppearance({values:{fontFamily:''}}); return;}
     if (type === 'resetAppearance') {saveAppearance({reset: true}); return;}
     if (type === 'selectAll') {for (const row of $('directoryResults').children) {const input=row.querySelector('input'); if(input && !input.checked) {input.checked=true; input.dispatchEvent(new Event('change'));}} return;}
     if (type === 'clearSelection') {batchSelection.clear(); filterDirectory(); return;}

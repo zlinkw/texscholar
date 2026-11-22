@@ -155,7 +155,7 @@ function activate(context, vscode) {
                     : (result.writingReady ? '写作连接配置已就绪；编译配置不完整（不阻塞候选撰写）：' : '配置不完整：') + result.issues.join('；');
                 // Activation never waits for a notification decision.
                 vscode.window.showInformationMessage(message, ...(result.ready ? [] : result.mcpRuntime?.state === 'mismatch' ? ['检查 MCP 运行版本'] : ['补齐配置'])).then(choice => {
-                    if (choice === '补齐配置') return vscode.commands.executeCommand('localLatex.startPaperTask', {setup: true});
+                    if (choice === '补齐配置') return vscode.commands.executeCommand('localLatex.aiSetupGuide');
                     if (choice === '检查 MCP 运行版本') return vscode.commands.executeCommand('localLatex.checkMCPVersion');
                 }).catch(error => vscode.window.showErrorMessage(error.message));
             }
@@ -163,8 +163,27 @@ function activate(context, vscode) {
         });
         chain = task.catch(error => vscode.window.showErrorMessage('配置检查失败：' + error.message)); return task;
     };
+    async function guide() {
+        const selected = await vscode.window.showQuickPick([
+            {label:'查看当前配置与连接状态', action:'check'},
+            {label:'修改工具或外观设置', action:'settings'},
+            {label:'修复缺失的连接', action:'connect'},
+            {label:'完整安装或迁移', action:'setup'}
+        ], {title:'AI 协作配置引导', placeHolder:'选择需要处理的项目；不会自动发送 AI 消息'});
+        if (!selected) return;
+        if (selected.action === 'check') return check(true);
+        if (selected.action === 'settings') {
+            const item = await vscode.window.showQuickPick([{label:'选择工具路径', command:'localLatex.chooseTool'},
+                {label:'打开插件设置（含外观及作用域）', command:'workbench.action.openSettings'}], {title:'修改哪项配置'});
+            if (item) return vscode.commands.executeCommand(item.command, ...(item.command === 'workbench.action.openSettings' ? ['localLatex'] : []));
+            return;
+        }
+        if (selected.action === 'connect') return vscode.commands.executeCommand('localLatex.connectCodex');
+        return vscode.commands.executeCommand('localLatex.startPaperTask', {setup:true,
+            goal:'检查本机 TeXScholar 配置并按需准备安装或迁移；按现有权限执行，不对论文进行写作或接收。'});
+    }
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.checkAIConfiguration', () => check(true)),
-        vscode.commands.registerCommand('localLatex.aiSetupGuide', () => check(true)),
+        vscode.commands.registerCommand('localLatex.aiSetupGuide', guide),
         vscode.commands.registerCommand('localLatex.copyAISetupPrompt', async () => vscode.env.clipboard.writeText(await buildPrompt())));
     context.subscriptions.push(require('./mcp_version').subscribe(() => check(false)));
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.tex');
