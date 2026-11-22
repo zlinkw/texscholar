@@ -79,11 +79,11 @@ AI协作配置入口单独提供查看当前配置、修改某项、修复缺失
 
 ## 连续阶段、验证分工与完成条件
 
-- [ ] C1 Terra：A1任务类别、范围/可选补充、不同提示词和真实上下文、预览/加入输入区语义、旧入口兼容及局部回归。
-- [ ] C2 Terra：A2配置引导分流、成功偏好记忆、旧自定义/键/自有版本路径承接、作用域与失效原因；完成局部配置/迁移/取消/失败回归。
-- [ ] C3 Terra：B组Git说明与确认后保存事务、实际文件范围和取消零写、旧调用方及受影响消费者回归。
-- [ ] C4 Terra：B组工具候选/文件挑选、自定义及作用域持久化、外观常用选项；确认已选择入口的真实空态/取消，不扩大重构。
-- [ ] C5 Terra：最终本轮规定测试/阶段小验收与使用说明，审新增判断/抽象/依赖实际用途；冻结提交与完整交包，明确移交测试/UI/产品冻结租约。不得提前做总控同场景最终大验收。
+- [x] C1 Terra：A1任务类别、范围/可选补充、不同提示词和真实上下文、预览/加入输入区语义、旧入口兼容及局部回归。C6发现预览可读性缺口，见R1。
+- [x] C2 Terra：A2配置引导分流、成功偏好记忆、旧自定义/键/自有版本路径承接、作用域与失效原因；完成局部配置/迁移/取消/失败回归。
+- [x] C3 Terra：B组Git说明与确认后保存事务、实际文件范围和取消零写、旧调用方及受影响消费者回归。
+- [x] C4 Terra：B组工具候选/文件挑选、自定义及作用域持久化、外观常用选项；确认已选择入口的真实空态/取消，不扩大重构。C6发现工具名可读性缺口，见R1。
+- [x] C5 Terra：最终本轮规定测试/阶段小验收与使用说明，审新增判断/抽象/依赖实际用途；冻结提交与完整交包，明确移交测试/UI/产品冻结租约。冻结8766af4a，规定editor及增量证据有效；不得提前做总控同场景最终大验收。
 - [ ] C6 总控：审实际diff和原证据，仅做未覆盖的正常Development跨入口、跨进程及版本路径变更组合大验收；失败真实消息返原Terra，明确通过才交C7。
 - [ ] C7 Terra：核预计0.9.57唯一性，必要版本/MCP/发行工具检查，一次构建；源码普通push/fetch、附注tag双摘要、正式Release/API附件digest核对、安装同一VSIX、执行尾提交/远端一致。总控最终核元数据并维护plan/index结案，不包后冒烟、不自动reload。
 
@@ -99,4 +99,19 @@ Terra小验收负责各任务生成文本/上下文归属、所有选择分支/�
 
 ## 当前归属与下一动作
 
-完整计划由总控建立，原只读盘点无写入/测试/UI/在途动作。下一动作通过真实消息一次交给原Terra连续C1–C5，产品/测试/UI/隔离配置租约随派单移交；plan/index仍归总控。原Terra实核设置与既有上下文可复用，不要求普通启动回执。派发成功且无独立待办后总控角色空闲，由完整交包或必要决定消息接续，遵守全局事件协调规则；发送成功不冒称已实际开工。预计版号不是发布事实。
+C1–C5冻结交包8766af4a95efeab2f0828dcd5dfd0265905d7714，普通push/fetch一致、clean。总控已审实际diff和execution证据；C6组合功能与持久化有效，但用户可见文案未达本轮目标，R1返原Terra。总控全部隔离宿主/observer/命令均已退出；R1派发后产品、测试/UI/隔离配置租约交Terra，plan/index仍归总控。C6未整体通过，不得C7。派发成功且无独立待办后按全局事件协调规则角色空闲，等待完整冻结交包，不索取普通回执。
+
+## C6实际证据与R1
+
+证据根`D:/latex-writing-checks/choice-settings-20261122/controller-c6b`，全新Paper A普通项目+本地bare Git、Paper B六项真实审核状态（含既有延期批注），隔离user-data/extensions/CODEX_HOME。正常Development、非extensionTests，同一扩展身份controller-validation.choice-c6-fixture，manifest由0.9.56到0.9.57、lib从extension-v1换到extension-v2，代码均冻结8766af4a。此为版本安装路径仿真，不冒称已在用户原环境复现升级重配原因。完整argv/cwd/env/CLI与observer真实退出在run-phase*.json、logs；原图/原始生成附件和RPC结果保留。
+
+有效组合事实：
+
+- 真实原生命令菜单完成润色、讨论、仅选区三种任务，选择Paper A，捕获实际请求文件，指令确实不同、仅A项目、精确选区quote/left/right或main.tex定位，未发送/接收；自定义目标取消无附件。工具Python真实选择保存及取消保留旧值；配置完整安装入口无需填写作目标。六种提示词及其余局部分支复用Terra c1-integration-1等有效证据。
+- 原生普通备份先取消，磁盘/两个脏缓冲/外部stage均未变；再只选main.tex确认，实际保存与本地bare推送成功，HEAD=origin/master=bare HEAD=c9f73c540f2e8fc3b82979634d3a974080488985，other.tex仍dirty、外部stage逐字保留。GitHub私有元数据由任务内exe夹具返回，实际Git操作委托真实Git及本地remote；不声称实网上传。仅手动命令受测，夹具隔离自动定时入口，未测真实五分钟。审核项目finishReview仅真实菜单取消，状态/notes/counters逐字不变，未运行cleanup后段；其旧有非空暂存区安全拒绝不改成支持带stage推送。
+- 真实审核页字号常用值20保存；字体Georgia, serif、工具自定义值和关闭自动翻译保留。此字号现有schema为window范围，Paper B文件夹19值不是该键可用的folder覆盖，VSCode忽略它；实际按钮保存用户层20，不能据此宣称同多根窗口的字号可按folder隔离。原有window/机器级作用域未削弱，项目隔离以任务A范围及B审核/草稿正对照验证。
+- 正常Development页面创建C6_PRIVATE_DRAFT并暂存，1finish和2retry两个完整进程退出重开、不同session后，真实globalState/workspaceState与工具/字号/自定义字体完整保留，菜单首项显示“仅加入当前选区上下文 上次使用”，B草稿精确快照保留。自有ChkTeX记录的路径从v1变v2，author-owned-chktex及-q/-n8原参数不变；MCP稳定登记换到v2，隔离Codex其他服务/模型哨兵保留。迁移helper操作真实配置和Memento，未使用假的内存Memento。
+
+实际失败与续测不改写：初始controller-c6的observer只找HTML button而VSCode用role=button的a，等待失败，原生预览取消后CLI0/observer1，host false；新c6b原生链已成功，但首段observer1/CLI0因夹具误期望提交说明不带既有backup(paper):前缀，实际推送成功，后续1finish只核结果、完成未执行UI步骤，未重放备份，host/UI true且CLI/observer均0。phase2在自有路径迁移后，夹具events.before引用本数组造成JSON循环错误，observer1/CLI0，不能报整轮通过；修正只读日志快照后2retry只核落盘和未执行菜单/页面，host/UI true且两exit0。原错误、RPC、stdout/stderr/截图保留。外置补丁一次因行匹配错误未应用，后用完整行补丁，无产品写入。两次失败均为已查明夹具问题，未发现功能链产品反例。
+
+R1（首次产品返修）：实际截图phase1-dialog-9.png把read_context、expected_plugin_version和原始JSON整段作为用户确认预览；工具列表实际使用pythonPath/gitPath等内部键名。用户当前要求是看清功能、选择完成，且产品流程不应暴露无助于决定的实现细节，因此C6未通过。仅返修这两处：预览改为可读任务/目标聊天/真实项目/选中文件与原文范围/可选要求/不自动发送和接受/确认后可能连接登记的简洁说明，完整协议继续保留实际附件；原文不任意截断，不引入第二套任务状态。八工具使用中文用途+工具名，内部键可作次要说明，值/来源/机器级约束不变。保留全部旧入口、取消/失败、原校验及成功记忆。Terra做受影响局部回归、精确commit/push/fetch再冻结；总控只补实际预览与工具菜单的新证据，复用上述完整功能/持久化与Git证据，不重复全链或全editor。未整体通过前不得发行。
