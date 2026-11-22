@@ -84,7 +84,7 @@ AI协作配置入口单独提供查看当前配置、修改某项、修复缺失
 - [x] C3 Terra：B组Git说明与确认后保存事务、实际文件范围和取消零写、旧调用方及受影响消费者回归。
 - [x] C4 Terra：B组工具候选/文件挑选、自定义及作用域持久化、外观常用选项；确认已选择入口的真实空态/取消，不扩大重构。C6发现工具名可读性缺口，见R1。
 - [x] C5 Terra：最终本轮规定测试/阶段小验收与使用说明，审新增判断/抽象/依赖实际用途；冻结提交与完整交包，明确移交测试/UI/产品冻结租约。冻结8766af4a，规定editor及增量证据有效；不得提前做总控同场景最终大验收。
-- [ ] C6 总控：审实际diff和原证据，仅做未覆盖的正常Development跨入口、跨进程及版本路径变更组合大验收；失败真实消息返原Terra，明确通过才交C7。
+- [x] C6 总控：审实际diff和原证据，仅做未覆盖的正常Development跨入口、跨进程及版本路径变更组合大验收；首次R1返修已完成，788e8f9的可读性/入口补验通过，结合既有功能/持久化/Git证据整体通过，现交C7。
 - [ ] C7 Terra：核预计0.9.57唯一性，必要版本/MCP/发行工具检查，一次构建；源码普通push/fetch、附注tag双摘要、正式Release/API附件digest核对、安装同一VSIX、执行尾提交/远端一致。总控最终核元数据并维护plan/index结案，不包后冒烟、不自动reload。
 
 C1–C4沿上述A/B两组连续实施，按实际内聚调用链组织提交，不为每个按钮换会话或分别冷启动。Terra在execution登记实际改动文件、阶段、返修次数、套件及命令；覆盖所有批准项，不能只做截图菜单或仅记一个内存变量。
@@ -99,7 +99,7 @@ Terra小验收负责各任务生成文本/上下文归属、所有选择分支/�
 
 ## 当前归属与下一动作
 
-C1–C5冻结交包8766af4a95efeab2f0828dcd5dfd0265905d7714，普通push/fetch一致、clean。总控已审实际diff和execution证据；C6组合功能与持久化有效，但用户可见文案未达本轮目标，R1返原Terra。总控全部隔离宿主/observer/命令均已退出；R1派发后产品、测试/UI/隔离配置租约交Terra，plan/index仍归总控。C6未整体通过，不得C7。派发成功且无独立待办后按全局事件协调规则角色空闲，等待完整冻结交包，不索取普通回执。
+C1–C5冻结8766af4a，R1冻结788e8f94f5cd2a4a84a029297dd129da7f343881，普通push/fetch一致、clean。总控已审实际diff、execution和局部证据；R1补验及C6组合整体通过，见下文。总控所有隔离宿主/observer/命令已退出，现将产品冻结后发行、测试/安装租约交原Terra连续C7，plan/index仍归总控。沿已授权预计0.9.57正式发行和同包安装；总控无独立待办后角色空闲，待完整交付再核发行元数据结案，不做包后冒烟。
 
 ## C6实际证据与R1
 
@@ -119,3 +119,17 @@ R1（首次产品返修）：实际截图phase1-dialog-9.png把read_context、ex
 用户追加截图后的R1范围修订：已只读核实VSCode安装登记仍为local-research.latex-writing-tools 0.9.56；本轮尚未发布安装，新增工具命令等不会出现在当前环境。用户指出命令面板仍有过时和重叠入口，纳入同一可读性返修：原Terra按实际命令/菜单及必要调用链核对入口归属，修正“连接、配置与任务合一”等已不准确的标题，日常任务/审核/配置清楚区分，重复及高级操作收进可发现的“更多”或现有相应菜单，旧命令ID、快捷键及程序调用保持兼容；每个隐藏入口必须有明确可达替代，不能凭截图断定死代码或直接删完整文件。疑似不可达定义按调用证据区别处理，不扩成全仓清理。总控补验可发现性和旧命令兼容，复用已有效业务证据。
 
 旧档位阻断已解除：R1此前未开始产品写入，仅因原规则把priority当作不匹配而只读待命。用户通过规则维护会话明确通知：Standard仅默认，界面选择Fast/Ultrafast无需文字确认；service_tier只记录实际值，不作为模型/强度门槛，保留用户选择。统一caveman及脚本已更新，总控本次实核Sol6.1/high/default、原Terra6.1/high/priority均match/continue，分别1次/4次压缩，均未触发接替。无需用户调档、不操作桌面设置。当前HEAD与origin/master为9b581d3、clean，无在途产品/测试/UI；沿既有租约一次交齐R1及追加命令入口修订，原Terra连续返修、小验收及冻结，总控补验后按授权C7完成，不新建角色、不重放已知结果或重做有效全组。
+
+## R1补验通过与C7交付边界
+
+R1已按范围完成：任务确认预览为可读任务/说明、聊天、项目、文件与实际原文前后文、补充要求及不发送/不接收提示，协议仍在附件；八工具为用途+工具名、键作次要信息。任务/配置命令标题分开，inlineEditCandidate/inlineTranslate/inlineQuestions三个重复命令仅从面板隐藏，原注册/调用保持；prepareReviewBlock/resolveReviewHost/migrateReviewState/recoverReviewMigration四项移至编辑器右键“原文审核与批注 → 审核高级操作”，README给出明确入口。未删源文件或改业务事务/存储/校验。Terra r1-local-2定向writing/setup/menu_commands/inline_review 56项exit0（完整argv/cwd/env在execution及对应外置目录），首次mock错误保留。
+
+总控最终补验新根`D:/latex-writing-checks/choice-settings-20261122/controller-r1d`，正常Development、独立profile/extensions/CODEX_HOME、全新LaTeX样例，保留冻结788e8f9完整真实菜单贡献。`C:/Python314/python.exe -B -X utf8 <root>/run.py`启动实际Code CLI与Node/Playwright observer，真实argv/cwd/关键env/退出见run-result.json，stdout/stderr见logs；CLI0、observer0、host-result.passed=true、observed.passed=true。readable-preview.png/tool-labels.png/advanced-menu.png均已实际看图，确认原生任务选择后预览无read_context/expected_plugin_version/JSON，实际附件仍有完整协议及精确quote/left/right、无选区截断；八项工具用途/路径/来源可读且取消不改设置。命令面板可搜索新任务/配置名，迁移项不在面板；原生右键三级菜单真实展开包含四项高级操作，全部旧ID仍注册，原调用方通过Terra定向测试。样例正文和隔离用户设置前后逐字不变，无发送/接收或迁移操作。
+
+外置失败完整保留，不伪造整轮通过：controller-r1首次宿主夹具漏加载review_host_bridge，初始化断言resolveReviewHost未注册，hostfalse/CLI0；其observer一直等ready无UI动作，核实PID与命令行后仅终止该自有observer，真实exit4294967295。r1b补齐真实模块后，预览/工具有效，但夹具误假定隐藏命令搜索一定显示No matching，实际VSCode提供similar commands，60秒原预算到期，observer1/CLI0、hostfalse。r1c修判据后又在hover返回、子菜单尚未展开时即取文本断言，observer1/CLI0、hostfalse。r1d按真实菜单项目出现等待后全通过，未改产品/原超时，未重放任何迁移/保存/备份；各新样例、原日志和首败保留。既有controller-c6b真实功能、跨进程与版本路径存储/Git保护证据仍有效，不机械重跑全editor或整链。
+
+据此C1–C6功能整体通过，无本轮必需产品失败。未测/限制维持：真实用户环境升级重复配置原因为未知，隔离版本路径仿真不等于原环境复现；无实网AI/论文上传、cleanup后段、完整独立PDF/translation、冷启动/复杂真实论文、Mac/强杀/五分钟定时或AI质量对照。所有真实论文/批注/草稿/范围外暂存与全局配置保持保护。用户随后明确恢复silent-ui-screenshot对完整宿主流程的无感要求，旧直接Code.exe/cli.js --new-window夹具未证明隐藏或不抢焦，保留其有效产品证据，停止旧启动方式，单独补下述宿主行为核验，不重放业务链。
+
+无感补核新根`D:/latex-writing-checks/choice-settings-20261122/controller-hidden`：仅外置夹具，以Windows现有CreateDesktopW创建未切换的独立桌面，CreateProcessW显式lpDesktop=winsta0\\TeXScholarHidden93e697f2a6594f8797610aeb52478602启动正常Development宿主，无SwitchDesktop、不改变用户活动工具/剪贴板/键鼠。实际EnumDesktopWindows确认Chrome_WidgetWin_1在该私有桌面、不在Default；输入桌面始终Default，启动前、ready时、退出后前台HWND均86837022（同pid/thread），CDP只在隐藏宿主内查看真实八项工具菜单并取消，未保存配置/正文。CLI/observer均0、host/observed true、样例正文不变；结束后无Chrome_WidgetWin_1，桌面handle已正常关闭，随后核此宿主主进程及crashpad PID均已退出。argv/env/cwd和窗口/焦点实测见run-result.json、desktop-observation.json、logs。截图`C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-a6e8debf7c5142a4b5d935d3bf5450bc.png`非空并已逐图查看（CSS视口1440×900，真实菜单渲染正常），未删除任何旧图或失败证据。完整启动/交互/截图无感不以隐藏控制台或独立profile替代证明；本次无需重复全部产品链，C6含此补核最终通过。
+
+C7继续由原Terra执行：核实际下一版0.9.57的版本/tag/Release/输出目录唯一性；仅必要版本/MCP/发行工具检查，一次构建，源码普通push/fetch；附注tag关联源码提交及VSIX/源码包双摘要，正式Release并API核附件digest，真实CLI安装同一VSIX，execution尾提交普通push/fetch clean。不得自动reload真实VSCode/MCP，不包后冒烟；用户需再次重载对应窗口及重启MCP启用新版。总控仅最终核元数据/日志与计划索引结案。
