@@ -177,6 +177,12 @@ function draftWarning() {
     $('oldBaseline').hidden = !oldOriginal || !candidateDraftStale && !sourceDraftStale && !$('note').value.trim();
     $('oldBaselineText').textContent = oldOriginal || '';
 }
+function cardButtonDisabled(button) {
+    const targetCurrent = current && button.dataset.target === current.id && button.dataset.targetVersion === current.version;
+    const mismatch = button.dataset.targetMismatch === 'true' || targetCurrent && data?.source_match === false;
+    return !!waiting || button.dataset.intent === 'accept' && (coordinating || mismatch || targetCurrent && (unavailable || conflict)) ||
+        button.dataset.intent === 'preview' && mismatch;
+}
 function buttons() {
     $('note').readOnly = !!waiting;
     $('blockSource').readOnly = !!waiting;
@@ -189,6 +195,7 @@ function buttons() {
         if (coordinating && coordinatedWrites.has(button.dataset.action)) button.disabled = true;
     }
     if (data?.source_match === false) for (const b of document.querySelectorAll('[data-action="accept"],[data-action="saveAccept"],[data-action="preview"],[data-action="pdf"]')) b.disabled = true;
+    for (const button of document.querySelectorAll('[data-action="questionCard"]')) button.disabled = cardButtonDisabled(button);
     document.querySelector('[data-action="restoreStash"]').disabled ||= !stashes.find(item => item.id === $('stashChoice').value)?.exact;
     $('operationStatus').textContent = waiting ? current.id + ' · ' + (actionNames[waiting] || '审核操作') + '…' : coordinating ? '正在协调已保存的正文，完成后可继续写入。' : '';
     for (const node of document.querySelectorAll('textarea.edit')) node.readOnly = !!waiting;
@@ -475,7 +482,9 @@ function renderQuestionMode() {
                     for (const [intent,label] of [['preview','预览'],['editToggle','编辑'],['optionNote','批注'],['accept','接收']]) {
                         const button=document.createElement('button'); button.dataset.action='questionCard'; button.dataset.intent=intent;
                         button.dataset.target=entry.id; button.dataset.targetVersion=entry.version; button.dataset.questionKey=selectedQuestion; button.dataset.option=option.label;
+                        button.dataset.targetMismatch=String(!!entry.conflict || entry.source_match===false);
                         button.textContent=label; if (intent!=='accept') button.className='secondary'; actions.appendChild(button);
+                        button.disabled=cardButtonDisabled(button);
                     }
                     node.append(heading,actions,text); comparison.appendChild(node); return {option,node,text};
                 });

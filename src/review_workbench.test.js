@@ -2,6 +2,22 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html, filterItems, staleBatchSelections} = require('./review_workbench');
 
+test('question card controls reflect coordination and their own target state', () => {
+    const fs=require('node:fs'),vm=require('node:vm');
+    const source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
+    const context={current:{id:'1',version:'v1'},data:{source_match:false},waiting:false,coordinating:false,unavailable:true,conflict:true};
+    const disabled=vm.runInNewContext('('+source.slice(source.indexOf('function cardButtonDisabled('),source.indexOf('\nfunction buttons()',source.indexOf('function cardButtonDisabled(')))+')',context);
+    const button=(id,intent,mismatch=false)=>({dataset:{target:id,targetVersion:'v1',intent,targetMismatch:String(mismatch)}});
+    assert(disabled(button('1','accept')));assert(disabled(button('1','preview')));
+    assert(!disabled(button('2','accept')));assert(!disabled(button('2','preview')));
+    context.data.source_match=true;assert(disabled(button('1','accept')));assert(!disabled(button('1','preview')));assert(!disabled(button('2','accept')));
+    assert(disabled(button('2','accept',true)));assert(disabled(button('2','preview',true)));
+    assert(!disabled(button('2','editToggle',true)));assert(!disabled(button('2','optionNote',true)));
+    context.coordinating=true;assert(disabled(button('2','accept')));assert(!disabled(button('2','preview')));assert(!disabled(button('2','editToggle')));assert(!disabled(button('2','optionNote')));
+    context.waiting=true;for(const intent of ['accept','preview','editToggle','optionNote']) assert(disabled(button('2',intent)));
+    context.waiting=false;context.coordinating=false;assert(!disabled(button('2','accept')));
+});
+
 test('question card actions route only to the exact linked item, version and session', async () => {
     let receive, session='batch', gate;
     const messages=[], calls=[];
