@@ -139,7 +139,7 @@ UI整个启动/交互/捕获无感。复用`choice-settings-20261122/controller-
 - [x] E5T Terra：按已批准T限制实际翻译范围，行内公式内部英文先原样、行间数学与结构ABC不送、真实正文/标题/列表正确送译及恢复、纯公式无需翻译显示；完成定向translation/调用方及必要隔离UI小验收，保留原T调查未复现/未测边界。
 - [x] E6 Terra：本轮规定检查、必要消费者、实际diff与新增判断/抽象用途简查；完成全部实现与小验收，精确push/fetch clean，完整冻结交包并移交产品/测试/UI租约。不得提前做总控E7完整组合场景。
 - [x] E7 总控：核实际diff、原证据适用性，仅执行未覆盖的正常Development跨入口组合大验收；失败真实工具交回原Terra具体返修，复用有效证据。明确通过后才交E8。
-- [ ] E8 Terra→总控：核实际下一版预计0.9.58唯一性及必要版本/MCP/发行工具检查，一次构建、源码普通push/fetch、附注tag双摘要、正式Release/API附件digest、同一VSIX真实安装、execution尾提交一致。总控只核交付元数据并结案；不自动reload、不包后冒烟。
+- [x] E8 Terra→总控：核实际下一版预计0.9.58唯一性及必要版本/MCP/发行工具检查，一次构建、源码普通push/fetch、附注tag双摘要、正式Release/API附件digest、同一VSIX真实安装、execution尾提交一致。总控只核交付元数据并结案；不自动reload、不包后冒烟。
 
 Terra按强关联调用链组织小批提交，不为每按钮换人/冷启动，不用一个无边界巨型修改跳过阶段验证。持续完成E1–E6所有可执行项再一次交包，不逐条发消息；真实阻塞/需决定/严重数据风险及时升级。总控plan/index不由Terra覆盖或顺手纳入未授权修改；本次初始计划已由总控单独提交，后续如需合并计划修改，先按真实消息授权精确文本。
 
@@ -187,3 +187,7 @@ E7最终明确通过，候选264859429418d95c644ff07adf2e7a1a9e626a31；采用�
 以上各有效轮host/observer/外层均0，实际截图已逐一查看：q为ui-718e2ab33dfe45b3a63ae35170b9c7eb.png，restart2为ui-edf305dc4ea9445f9519dc4cd06b24c4.png，newprofile为ui-8803df11097f459ca35ee8a03ad007c8.png，consumer为ui-ba1a5a61dc204cbd8788894e21c9715c.png，均位于%TEMP%/CodexUiCaptures。成功轮使用未切换私有桌面且前中后前台一致；所有自有Code/Node/Python已结束，未删除文件/截图。完整argv/env/cwd/日志、run-result、host/done/milestones及消费者结果在同名外置目录。只读核真实用户论文、全局资料和安装未发生写入。
 
 T的纯/混合公式、标题、自动/手动及修后译文选区复用Terra最终有效局部UI和真实参数捕获，S具体批准边界复用skill-boundary-first隔离副本，F2复用ui-busy-first真实事务暂停/释放后可写；不把无网络夹具或指南断言称AI语义质量通过。未测范围继续为实网AI/翻译供应商质量、人工吞吐收益、原用户升级反复配置根因、cleanup后段、独立PDF/translation全组合、复杂论文/冷启动、Mac、强杀及真实五分钟；没有新增性能门槛或包后冒烟。现将产品/测试/UI/隔离配置及Git租约交回原Terra执行已授权E8；仅版本及交付必要改动可变，功能保持冻结，预计0.9.58仍须实际核唯一性。总控等待完整发行安装交包后只核元数据结案。
+
+E8完成并结案：0.9.58正式发布且同一VSIX已真实安装。总控独立只读核源码提交08d91ffdcff873620ddbfe1ee0bf9815af1ac6ba仅package版本变化；执行尾提交f68e528fcd789153602c894c1caf023802b7f866与origin/master一致、clean。附注tag v0.9.58对象fad58ff6faebd1ba9a81ca85472e7adf92d22391，本地及远端解引用均为该源码提交，注释含双摘要。版本/MCP 2项和发行工具12项exit0，一次构建exit0，发布exit0，真实同包CLI安装exit0；完整原始记录见execution及外置e8-*。安装的Node DEP0169弃用警告、发行工具注入EOF测试输出据实保留。
+
+总控再请求GitHub Release API核非draft/非prerelease、三附件uploaded；本地相关文件SHA256实际计算后逐项与API digest比较一致：VSIX a75c6007470933b9a7a6d8d4f31da82fad634447288f1fbe25f85cdd6967bc56，source.zip 596ffca10a896e1b1b35a80066afdfb44c68937059d6fd040349a1351f59c03d，SHA256SUMS fa8b87aa9a4835e4c60ee69fd038ba9f8b8c637bb656f9b90f875b4c6161fab5。实际只读安装登记唯一local-research.latex-writing-tools 0.9.58、source=vsix、pinned=true，安装manifest也是0.9.58。正式发布https://github.com/zlinkw/texscholar/releases/tag/v0.9.58 。没有重新构建、包后冒烟或自动reload；用户需重载对应VSCode窗口并重启MCP连接启用。全部租约已释放，无在途操作。真实论文、批注、未保存草稿、范围外暂存、真实SKILL/全局配置未操作；保留所有首败、未知和上述未测边界，具体SKILL改动仍待未来作者逐案确认。
