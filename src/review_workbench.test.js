@@ -2,6 +2,39 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html, filterItems, staleBatchSelections} = require('./review_workbench');
 
+test('question card actions route only to the exact linked item, version and session', async () => {
+    let receive, session='batch', gate;
+    const messages=[], calls=[];
+    const one={repo:'/fixture',owner:'owner',id:'1',version:'v1'}, two={...one,id:'2',version:'v2'};
+    const data=id=>({id,version:id==='1'?'v1':'v2',original:'old '+id,source_match:true,edit:{file:id+'.tex',kind:'manuscript',versions:[id==='1'?'v1':'v2'],requests:[],questions:[{id:'Q',file:'r',quote:'same'}]},options:[{label:'A',after:'new '+id,reason:'A',changes:[]}]});
+    const records=new Map([['1',{c:one,data:data('1')}],['2',{c:two,data:data('2')}]]);
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{showWarningMessage:async()=>undefined,createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const state={get:(_k,fallback)=>fallback,update:async()=>{}};
+    const services={session:()=>session,read:async c=>{if(gate && c.id==='2') await gate;return structuredClone(records.get(c.id).data);},style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[],questions:()=>[{key:'q',snapshot:'[]',entries:[{id:'1',version:'v1'},{id:'2',version:'v2'}]}],preview:async (...args)=>calls.push(args)};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState:state},services);view.setRecords(records);await view.show(one);await receive({type:'ready',instance:'page'});
+    const action={type:'questionCard',instance:'page',repo:one.repo,owner:one.owner,id:'1',version:'v1',session:'batch',questionKey:'q',target:'2',targetVersion:'v2',option:'A',intent:'preview'};
+    await receive({...action,targetVersion:'old'});assert.equal(view.active.id,'1');assert(messages.some(m=>m.error));
+    await receive({...action,session:'old'});assert.equal(view.active.id,'1');
+    await receive({...action,option:'B'});assert.equal(view.active.id,'1');
+    const draft={c:one,drafts:{A:'unsaved candidate'},blockDraft:'unsaved source',note:'unsaved note',purpose:'personal'};
+    await receive({type:'dirty',instance:'page',id:'1',version:'v1',dirty:true,noteDirty:true,state:draft});
+    await receive(action);assert.equal(view.active.id,'1');assert.equal(calls.length,0);
+    await receive({type:'dirty',instance:'page',id:'1',version:'v1',dirty:false,noteDirty:false,state:draft});
+    await receive(action);assert.equal(view.active.id,'2');
+    const intent=messages.findLast(m=>m.pendingCardAction)?.pendingCardAction;
+    assert.equal(intent.c.id,'2');assert.equal(intent.c.version,'v2');assert.equal(intent.option,'A');assert.equal(calls.length,0);
+    session='new batch';await receive({type:'cardActionClaim',instance:'page',token:intent.token});assert(!messages.some(m=>m.type==='cardActionGrant'));
+    session='batch';await receive({type:'cardActionClaim',instance:'other',token:intent.token});assert(!messages.some(m=>m.type==='cardActionGrant'));
+    await receive({type:'cardActionClaim',instance:'page',token:intent.token});
+    await receive({type:'cardActionClaim',instance:'page',token:intent.token});
+    assert.equal(messages.filter(m=>m.type==='cardActionGrant').length,1);
+    await receive({type:'preview',instance:'page',repo:two.repo,owner:two.owner,id:'2',version:'v2',option:'A'});
+    assert.equal(calls.length,1);assert.equal(calls[0][0].id,'2');
+    await view.show(one);let release;gate=new Promise(resolve=>{release=resolve;});
+    const pending=receive(action);await Promise.resolve();await view.show(one);release();await pending;
+    assert.equal(view.active.id,'1');assert.equal(calls.length,1);assert(messages.some(m=>m.error && m.message.includes('取消')));
+});
+
 test('translation keeps candidate identity separate and reports a pure display formula', async () => {
     let receive; const calls=[],messages=[];
     const c={repo:'/translation',owner:'state',id:'1',version:'v1'};

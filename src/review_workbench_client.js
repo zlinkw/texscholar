@@ -3,7 +3,7 @@
 const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
 const feedbackNode = $('status');
 let current, data, options = [], preview = 'A', selected, waiting = false, coordinating = false, unavailable = false, conflict = false, focused, chinese = true;
-let currentSession;
+let currentSession, pendingCardAction, consumedCardAction;
 let reviewMode = 'paragraph', selectedQuestion = '';
 let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSelection, selectionStale = false;
 let navigationFilter = {query: '', kind: '', notes: false};
@@ -27,20 +27,16 @@ $('currentBlock').addEventListener('keyup', () => {selectedBlockRevision = data?
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'paperBackground', 'personalPrompts', 'start', 'checkUpdates', 'sourcePDF']);
 const sideBusy = new Set();
 const actionNames = {save: '保存候选', saveSource: '保存当前原文', syncBlock: '同步候选', repairBlock: '修复审核块', manualRebase: '人工更新候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
-    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', readHistory:'读取历史', adoptHistory:'采用历史草稿', checkQuestion:'核对问题', questionEntry:'查看关联项', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
+    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', readHistory:'读取历史', adoptHistory:'采用历史草稿', checkQuestion:'核对问题', questionEntry:'查看关联项', questionCard:'打开问题卡操作', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', checkUpdates: '检查插件更新', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', sourcePDF: '编译正式 PDF', related: '定位关联改动'};
 function fitToolbar() {
-    const header = document.querySelector('header'), home = $('toolbarExtras');
+    const header = document.querySelector('header');
     document.documentElement.style.setProperty('--toolbar-height', header.offsetHeight + 'px');
     const size = JSON.stringify([header.clientWidth, appearance?.controlFontSize, $('mathMode').textContent, $('progress').textContent, $('pdfStatus').textContent, $('backRelated').hidden, $('backRelated').textContent]);
     if (toolbarSize === size) return;
     toolbarSize = size;
     const nodes = ['sourceLocation', 'mathMode', 'pdfActions', 'pdfStatus'].map($);
-    for (const node of nodes) home.appendChild(node);
-    for (const id of ['mathMode', 'pdfStatus', 'pdfActions', 'sourceLocation']) {
-        if (header.scrollWidth <= header.clientWidth) break;
-        $('overflowActions').appendChild($(id));
-    }
+    for (const node of nodes) $('overflowActions').appendChild(node);
 }
 new ResizeObserver(fitToolbar).observe(document.documentElement);
 new ResizeObserver(fitToolbar).observe(document.querySelector('header'));
@@ -475,7 +471,13 @@ function renderQuestionMode() {
                 const optionNodes=entry.card.options.map(option=>{
                     const node=document.createElement('div'), heading=document.createElement('strong'), text=document.createElement('pre');
                     node.className='questionOption'; heading.textContent='方案 '+option.label; text.className='review-text';
-                    node.append(heading,text); comparison.appendChild(node); return {option,node,text};
+                    const actions=document.createElement('div'); actions.className='optionActions';
+                    for (const [intent,label] of [['preview','预览'],['editToggle','编辑'],['optionNote','批注'],['accept','接收']]) {
+                        const button=document.createElement('button'); button.dataset.action='questionCard'; button.dataset.intent=intent;
+                        button.dataset.target=entry.id; button.dataset.targetVersion=entry.version; button.dataset.questionKey=selectedQuestion; button.dataset.option=option.label;
+                        button.textContent=label; if (intent!=='accept') button.className='secondary'; actions.appendChild(button);
+                    }
+                    node.append(heading,actions,text); comparison.appendChild(node); return {option,node,text};
                 });
                 const updateExcerpt=()=>{
                     const activeDraft=entry.id===current?.id && entry.version===current.version;
@@ -505,7 +507,7 @@ function renderQuestionMode() {
         }
         root.appendChild(column);
     }
-    $('questionModeScope').textContent='仅显示本轮明确关联；未绑定不代表没有修改。没有标记不代表低风险；接收不代表科学问题解决。';
+    $('questionModeScope').textContent='未绑定不代表没有修改；接收不代表问题解决。';
     $('questionModeView').hidden=reviewMode!=='question'; $('review').hidden=reviewMode==='question' || unavailable;
     document.querySelector('[data-action="paragraphMode"]').setAttribute('aria-pressed',String(reviewMode==='paragraph'));
     document.querySelector('[data-action="questionMode"]').setAttribute('aria-pressed',String(reviewMode==='question'));
@@ -941,6 +943,7 @@ document.addEventListener('click', event => {
     localFeedback = feedbackFor(button);
     const menu = button.closest('.more'); if (menu) menu.open = false;
     if (type === 'paragraphMode' || type === 'questionMode') {reviewMode=type === 'questionMode' ? 'question' : 'paragraph';renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);return;}
+    if (type === 'questionCard') {send(type,{session:currentSession,questionKey:button.dataset.questionKey,target:button.dataset.target,targetVersion:button.dataset.targetVersion,option,intent:button.dataset.intent});return;}
     if (type === 'questionSelectAll') {for (const check of $('questionModeCards').querySelectorAll('input[data-question-item]:not(:disabled)')) if (!check.checked) {check.checked=true;check.dispatchEvent(new Event('change'));}return;}
     if (type === 'questionAccept' || type === 'questionAcceptAll') {
         const ids=new Set(questionEntries().map(entry=>entry.id));
@@ -1019,7 +1022,24 @@ document.addEventListener('click', event => {
     send(type, {...(clicked ? {id:clicked.dataset.reviewId,version:clicked.dataset.reviewVersion} : {}), option, target: button.dataset.target, index: Number(button.dataset.index),
         compare: $('compare').checked, ...(['save', 'saveAccept'].includes(type) ? {value: $('edit-' + option).value} : {})});
 });
+function activateCardAction() {
+    const action=pendingCardAction;
+    if (!action || waiting || action.token===consumedCardAction) return;
+    pendingCardAction=undefined;
+    if (!current || current.repo!==action.c.repo || current.owner!==action.c.owner || current.id!==action.c.id || current.version!==action.c.version || currentSession!==action.session) return;
+    consumedCardAction=action.token;
+    send('cardActionClaim',{token:action.token},false);
+}
+function executeCardAction(action) {
+    if (!action || waiting || action.token!==consumedCardAction || !current || current.repo!==action.c.repo || current.owner!==action.c.owner || current.id!==action.c.id || current.version!==action.c.version || currentSession!==action.session) return;
+    consumedCardAction=undefined;
+    if (action.intent==='editToggle' || action.intent==='optionNote') {reviewMode='paragraph';renderQuestionMode();}
+    const target=$('option-'+action.option)?.querySelector('[data-action="'+action.intent+'"]');
+    if (!target || target.disabled) {status('目标方案当前不可操作，请核对状态。',true);return;}
+    target.click();
+}
 window.addEventListener('message', ({data: message}) => {
+    if (message.type === 'cardActionGrant') {executeCardAction(message.action); return;}
     if (message.type === 'relatedReturn') {showRelatedReturn(message.id); return;}
     if (message.type === 'questionRows') {renderQuestionTable(message.questions); return;}
     if (message.type === 'history') {
@@ -1035,7 +1055,7 @@ window.addEventListener('message', ({data: message}) => {
         status('已放入当前方案草稿；尚未保存或接收。'); return;
     }
     if (message.type === 'handoffRetry') {$('retryHandoff').hidden = !message.available; return;}
-    if (message.type === 'busy') {waiting = message.action; buttons(); return;}
+    if (message.type === 'busy') {waiting = message.action; buttons(); activateCardAction(); return;}
     if (message.type === 'coordinating') {coordinating = message.busy; buttons(); return;}
     if (message.type === 'batchAccepted') {
         if (current?.repo === message.repo && current.owner === message.owner && currentSession === message.session) {
@@ -1215,8 +1235,9 @@ window.addEventListener('message', ({data: message}) => {
         highlightSelection();
         dirty();
     }
-    if (message.type === 'content') {waiting = message.busy; coordinating = message.coordinating; reviewMode=message.mode || 'paragraph'; $('questionViewStyle').value=message.questionViewStyle || 'snippets'; selectedQuestion=message.questionPosition || selectedQuestion; renderQuestionMode();}
+    if (message.type === 'content') {waiting = message.busy; coordinating = message.coordinating; reviewMode=message.mode || 'paragraph'; $('questionViewStyle').value=message.questionViewStyle || 'snippets'; selectedQuestion=message.questionPosition || selectedQuestion; pendingCardAction=message.pendingCardAction; renderQuestionMode();}
     if (message.message) status(message.message, message.error, message.action);
     buttons();
+    activateCardAction();
 });
 api.postMessage({type: 'ready', instance, state: api.getState()});

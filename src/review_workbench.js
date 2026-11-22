@@ -90,7 +90,7 @@ function createWorkbench(vscode, context, services) {
     let appearanceWork = Promise.resolve(), draftWork = Promise.resolve();
     const observedDraftSessions = new Map();
     let navigationFilter = {query: '', kind: '', notes: false};
-    let relatedReturn, showRequest = 0, coordinatingScope;
+    let relatedReturn, showRequest = 0, coordinatingScope, pendingCardAction;
     let history;
     // Reading preferences only: never revive drafts, notes or old review decisions.
     function readingState(state) {
@@ -255,7 +255,7 @@ function createWorkbench(vscode, context, services) {
             sourceSelection, resume: uiState, reading, mode: context.globalState?.get('reviewMode', 'paragraph') || 'paragraph', questionViewStyle:context.globalState?.get('reviewQuestionViewStyle','snippets') || 'snippets',
             questionPosition: services.session?.(active) && services.session(active) === context.workspaceState?.get('reviewQuestionPosition', {})[JSON.stringify([active.repo,active.owner])]?.session
                 ? context.workspaceState.get('reviewQuestionPosition', {})[JSON.stringify([active.repo,active.owner])].key : '',
-            busy: handling, coordinating: !!coordinatingScope && active.repo === coordinatingScope.repo && active.owner === coordinatingScope.owner, relatedReturn: relatedReturn?.c.id,
+            busy: handling, coordinating: !!coordinatingScope && active.repo === coordinatingScope.repo && active.owner === coordinatingScope.owner, relatedReturn: relatedReturn?.c.id, pendingCardAction,
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }
     const valid = c => active && key(active) === key(c);
@@ -389,6 +389,7 @@ function createWorkbench(vscode, context, services) {
         }
     }
     async function show(c, restore, advance = false, switchApproved = false) {
+        pendingCardAction = undefined;
         const request = ++showRequest;
         if (active && key(active) === key(c) && panel && !restore) {panel.reveal(); sendContent(false); await services.activeChanged?.(active); return;}
         if (!switchApproved && !await allowSwitch()) {if (active) await services.activeChanged?.(active); return;}
@@ -410,7 +411,7 @@ function createWorkbench(vscode, context, services) {
             panel.onDidChangeViewState(({webviewPanel}) => {if (!webviewPanel.visible) {ready = false; translationRequested = retryTranslation = false;}});
             panel.onDidDispose(() => {panel = undefined; active = loaded = pending = sourceSelection = undefined;
                 lastRecords = new Map(); hasPending = dirty = noteDirty = ready = handling = false; pendingSynchronized.clear(); showRequest++;
-                uiState = notice = client = reading = relatedReturn = restoredDraft = batchScope = undefined; batchItems = []; translationEpoch++; translations.clear();});
+                uiState = notice = client = reading = relatedReturn = restoredDraft = batchScope = pendingCardAction = undefined; batchItems = []; translationEpoch++; translations.clear();});
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
@@ -523,6 +524,15 @@ function createWorkbench(vscode, context, services) {
             client = message.instance; ready = true; sendContent(); return;
         }
         if (!active || !panel) return;
+        if (message.type === 'cardActionClaim') {
+            const action = pendingCardAction, latest = action && lastRecords.get(action.c.id);
+            if (message.instance === client && action?.token === message.token && !handling && valid(action.c) &&
+                services.session(active) === action.session && latest && key(latest.c) === key(action.c)) {
+                pendingCardAction = undefined;
+                post({type:'cardActionGrant', action});
+            }
+            return;
+        }
         if (message.type === 'batchSelection') {
             if (message.instance !== client || message.repo !== active.repo || message.owner !== active.owner || message.session !== services.session?.(active) || batchScope !== selectionScope(active, message.session)) return;
             if (!Array.isArray(message.items) || message.items.some(i => !i || typeof i.id !== 'string' || typeof i.option !== 'string' || i.version === undefined) || new Set(message.items.map(i => i.id)).size !== message.items.length) return;
@@ -618,6 +628,27 @@ function createWorkbench(vscode, context, services) {
             if (message.type === 'finish') {await services.finish(); return post({type: 'result', message: '结束审核操作已返回，请核对备份结果。'});}
             if (client !== undefined && message.instance !== client || message.repo !== undefined && message.repo !== active.repo || message.owner !== undefined && message.owner !== active.owner || message.version !== active.version || message.id !== active.id) throw new Error('当前项已更新，旧操作已停止；请核对新版。');
             const c = {...active};
+            if (message.type === 'questionCard') {
+                const session = services.session(c);
+                const row = message.questionKey === '__unbound__'
+                    ? {entries:directory().filter(item => item.card)}
+                    : questionTable(c).find(item => item.key === message.questionKey);
+                const entry = row?.entries.find(item => item.id === message.target && item.version === message.targetVersion);
+                const record = entry && lastRecords.get(entry.id);
+                if (!session || message.session !== session || !['preview','editToggle','optionNote','accept'].includes(message.intent) ||
+                    !entry?.card || !entry.card.options.some(option => option.label === message.option) || !record ||
+                    record.c.repo !== c.repo || record.c.owner !== c.owner || record.c.version !== entry.version)
+                    throw new Error('问题卡片身份或版本已变化，请重新核对。');
+                const target = {...record.c}, request = showRequest, originClient = client;
+                await show(target);
+                const latest = lastRecords.get(target.id);
+                if (showRequest !== request + 1 || panel !== operationPanel || client !== originClient || !valid(target) ||
+                    services.session(target) !== session || !latest || key(latest.c) !== key(target))
+                    throw new Error('切换已取消或问题卡片已变化；未执行操作。');
+                pendingCardAction = {token:crypto.randomBytes(16).toString('hex'), c:target, session, option:message.option, intent:message.intent};
+                sendContent(false);
+                return;
+            }
             if (message.type === 'handoffSelected') {
                 const session = services.session(c);
                 if (!session || message.session !== session || !Array.isArray(message.items) || !message.items.length || message.items.some(item => {
