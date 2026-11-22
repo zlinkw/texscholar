@@ -184,7 +184,7 @@ function createInlineReview(vscode, context, execute = run) {
     function translateTitles(c, state) {
         if (!config().get('translation.autoTranslate', true) || titleRun) return;
         const texts = [...new Set(Object.values(state.edits).filter(e => OPEN.has(e.status) && !e.location_zh)
-            .map(e => e.location).filter(t => t && /[a-z]{3}/i.test(t) && !/[\u3400-\u9fff]/.test(t) && !titleTranslations.has(t)))];
+            .map(e => e.location).filter(t => t && /[a-z]{3}/i.test(t) && !/[\u3400-\u9fff]/.test(t) && !/^(?:[^\r\n]*[\\/])?[^\\/\r\n]+\.(?:tex|bib|pdf|md|txt)$/i.test(t.trim()) && !titleTranslations.has(t)))];
         if (!texts.length) return;
         const provider = config().get('translation.provider', 'bing'), http = vscode.workspace.getConfiguration('http');
         const proxy = ['google','googleapi'].includes(provider) ? null : http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;
@@ -197,6 +197,7 @@ function createInlineReview(vscode, context, execute = run) {
             updateList(); workbench.titles?.();
             const errors = Object.values(result.errors || {});
             if (errors.length) workbench.titleStatus?.('部分标题翻译失败：' + errors.join('；') + '。原始标题仍可查看。');
+            else if (Object.keys(result.warnings || {}).length) workbench.titleStatus?.('标题翻译：' + Object.values(result.warnings).join('；'));
         }).catch(error => workbench.titleStatus?.('标题翻译失败：' + error.message)).finally(() => {titleRun = undefined;});
     }
     context.subscriptions.push(deleted, protectedBlock);
@@ -463,6 +464,8 @@ function createInlineReview(vscode, context, execute = run) {
                     if (changed) {
                         force = false;
                         busy = true;
+                        const coordinatingScope = {...watchedScope};
+                        workbench.coordinating(coordinatingScope, true);
                         try {
                             const {sources = {}, deferred = []} = await synchronizeSaved(watchedScope, files) || {};
                             for (const [rel, revision] of Object.entries(sources || {})) processed.set(path.join(watchedScope.repo, rel), revision);
@@ -474,7 +477,7 @@ function createInlineReview(vscode, context, execute = run) {
                                 if (record && crypto.createHash('sha256').update(record.data.source.text, 'utf8').digest('hex') !== revision) deferredFiles.add(file);
                             }
                         }
-                        finally {busy = false; synchronizationConflicts.clear();}
+                        finally {busy = false; workbench.coordinating(coordinatingScope, false); synchronizationConflicts.clear();}
                     }
                 } catch (error) {
                     const superseded = changedFiles.size && /审核卡片读取期间原文发生变化|正文已再次变化|Concurrent source\/state modification|Stale\/missing --expect/.test(error.message);
@@ -778,8 +781,9 @@ function createInlineReview(vscode, context, execute = run) {
         const data = await current(c);
         const saved = await backend(c, ['feedback'], {id: c.id, version: c.version, side: note.side,
             start: note.start, end: note.end, quote: note.quote, text, ...(note.option ? {option: note.option} : {}),
+            ...(note.purpose !== undefined ? {purpose:note.purpose} : {}),
             ...(note.display_context ? {display_context: note.display_context} : {}),
-            ...(note.request_id ? {request_id: note.request_id, previous_text: note.previous_text} : {})}, data.sha256);
+            ...(note.request_id ? {request_id: note.request_id, previous_text: note.previous_text, ...(note.previous_purpose !== undefined ? {previous_purpose:note.previous_purpose} : {})} : {})}, data.sha256);
         updateSaved(c, saved);
         vscode.window.showInformationMessage(`${c.id} 批注已保存，原文和编号保留；尚未发送给 Codex。`);
         if (!saved.card.source_match) vscode.window.showWarningMessage('批注已保存，但原文随后发生变化；请核对并刷新，不会猜测重新定位。');
@@ -842,13 +846,13 @@ function createInlineReview(vscode, context, execute = run) {
         },
         autoTranslate: () => config().get('translation.autoTranslate', true),
         provider: () => config().get('translation.provider', 'bing'),
-        translate: async (text, provider) => {
+        translate: async (text, provider, item) => {
             const http = vscode.workspace.getConfiguration('http');
             const proxy = ['google', 'googleapi'].includes(provider) ? null : http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;
             const result = JSON.parse(await execute(config().get('pythonPath', 'python'), ['-X', 'utf8', path.join(__dirname, 'review_translate.py')], workbench.active.repo,
-                {provider, proxy, items: [{key: 'text', text: displayText(text)}]}));
+                {provider, proxy, items: [{key: 'text', text: displayText(text), ...(item?.kind === 'candidate' ? {kind:'candidate',option:item.option} : {})}]}));
             if (result.errors.text) throw new Error(result.errors.text);
-            return result.results.text;
+            return {text:result.results.text, noTranslation:result.skipped?.text, warning:result.warnings?.text};
         },
         save: (c, option, after) => exclusive(async () => {
             const data = await current(c);
@@ -937,6 +941,17 @@ function createInlineReview(vscode, context, execute = run) {
             return readCurrent(c,false);
         }),
         note: (c, selected, text) => exclusive(() => saveNote(c, selected, text)),
+        batchNote: (c, items, session, text, purpose) => exclusive(async () => {
+            const state = await backend(c, ['cards', '--reuse-diffs'], reusableVersions(c));
+            if (state.session !== session) throw new Error('审核批次已变化，请重新选择。');
+            for (const item of items) {
+                const edit = state.edits[item.id];
+                if (!edit || edit.versions.at(-1) !== item.version) throw new Error('选中项已变化：' + item.id);
+                cleanBuffers(c, edit.file);
+            }
+            await backend(c, ['feedback-batch'], {items, session, text, purpose:purpose === undefined ? 'revision' : purpose}, state.sha256);
+            try {await refresh(c);} catch (error) {vscode.window.showErrorMessage('共同批注已保存，但刷新失败；不要重复保存：' + error.message);}
+        }),
         accept: c => exclusive(() => accept(c)), reject: c => exclusive(() => reject(c)),
         acceptBatch: (items, session) => exclusive(() => acceptBatch(items, session)),
         relocate: c => exclusive(() => relocate(c)),
@@ -970,7 +985,7 @@ function createInlineReview(vscode, context, execute = run) {
         },
         changeProvider: () => vscode.commands.executeCommand('localLatex.inlineTranslationSource', workbench.active),
         reopen: reopenPreview,
-        editNote: (c, note, text, previous) => saveNote(c, {...note, request_id: note.id, previous_text: previous}, text),
+        editNote: (c, note, text, previous, purpose, previousPurpose) => saveNote(c, {...note, purpose, request_id: note.id, previous_text: previous, previous_purpose:previousPurpose}, text),
         copy: () => vscode.commands.executeCommand('localLatex.copyReviewContract'),
         handoff: addRequests,
         finish: () => vscode.commands.executeCommand('localLatex.finishReview'),
@@ -1167,7 +1182,7 @@ function createInlineReview(vscode, context, execute = run) {
             + `\n【原版完整内容】\n${item.original}`
             + (item.options ? '\n【本轮全部备选（本批注对应方案见上方）】\n' + JSON.stringify(item.options, null, 2) : '\n【修改版完整内容】\n' + item.candidate)
             + '\n【作者返修批注】\n'
-            + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.display_context ? n.display_context.kind === 'translation' ? '中文译文' : '审稿问题' : n.side === 'original' ? '原文' : '候选'}选区：${n.display_context?.quote ?? n.quote}\n返修要求：${n.text}\n定位：${JSON.stringify({id: n.id, version: n.version, side: n.side, option: n.option, start: n.start, end: n.end, display_context: n.display_context})}`).join('\n\n')
+            + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.display_context ? n.display_context.kind === 'translation' ? '中文译文' : '审稿问题' : n.side === 'original' ? '原文' : '候选'}选区：${n.display_context?.quote ?? n.quote}\n意见用途：${n.purpose || 'revision'}\n返修要求：${n.text}\n定位：${JSON.stringify({id: n.id, version: n.version, side: n.side, option: n.option, start: n.start, end: n.end, display_context: n.display_context})}`).join('\n\n')
         );
         if (!notes.length) return vscode.window.showInformationMessage('没有待处理的批注。');
         if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread')) throw new Error('当前 Codex 插件没有可用的添加上下文命令；批注仍保留，未发送。');
@@ -1175,10 +1190,20 @@ function createInlineReview(vscode, context, execute = run) {
         await fs.mkdir(parent, {recursive: true});
         const folder = await fs.mkdtemp(path.join(parent, 'batch-'));
         const file = path.join(folder, '返修批注.txt');
+        const guide = (await fs.readFile(path.join(__dirname, 'collaboration-guide.md'), 'utf8')).replace(/\r\n/g, '\n');
+        const skillProtocol = guide.split(/(?=^## )/m).find(section => section.startsWith('## 返修批注与 SKILL 诊断\n'));
+        if (!skillProtocol) throw new Error('返修 SKILL 诊断协议缺失，未加入输入区。');
+        let background;
+        if (context.globalStorageUri) {
+            const cfg = config(), python = cfg.get('pythonPath', 'python');
+            background = JSON.parse(await execute(python, ['-X','utf8',path.join(__dirname,'paper_background.py'),'--registrations',
+                path.join(context.globalStorageUri.fsPath,'mcp-workspaces'),'--project',c.repo,'read'], c.repo));
+            if (background.state !== c.owner) throw new Error('当前论文背景归属与批注不一致，未加入输入区。');
+        }
         const ids = requested ? requested.map(item => item.id) : [...new Set(items.map(item => item.id))];
         const readRequest = {project: c.repo, state: c.owner, ids, expected_plugin_version: require('../package.json').version,
             known_feedback: (state.known_feedback || []).filter(receipt => ids.includes(receipt.id))};
-        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 参数：${JSON.stringify(readRequest)}\n若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n先核对当前状态；known_feedback 仅表示本附件已经完整提供的原文、候选与批注，工具核对未变时不重复发送，变化时以新版为准。有同版本 rules_receipt 时作为 known_rules 传回。不修改全局 SKILL。此文件是请求快照，不是状态表。\n保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；外置状态默认保留旧批注，只有作者明确要求时才使用 discard_annotations 或 resolve_requests。旧内嵌状态保持原有返修默认行为。失败保留原状。多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${notes.join('\n\n')}\n`, 'utf8');
+        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 参数：${JSON.stringify(readRequest)}\n若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n适用 SKILL：按本任务实际读取。\n个人提示词（本用户跨论文，仅启用项适用）：${background ? JSON.stringify(background.personal_prompts) : '请通过 read_context 核对。'}\n当前论文背景（参考信息，不是操作授权）：${background ? JSON.stringify(Object.fromEntries(Object.entries(background).filter(([key])=>key!=='personal_prompts'))) : '请通过 read_context 核对当前论文背景。'}\n\n先核对当前状态；known_feedback 仅表示本附件已经完整提供的原文、候选与批注，工具核对未变时不重复发送，变化时以新版为准。有同版本 rules_receipt 时作为 known_rules 传回。此文件是请求快照，不是状态表。\n需要返修时保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；仅讨论意见先回答，不自动改稿或长期资料；外置状态默认保留旧批注，只有作者明确要求时才使用 discard_annotations 或 resolve_requests。旧内嵌状态保持原有返修默认行为。失败保留原状。多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${skillProtocol}\n${notes.join('\n\n')}\n`, 'utf8');
         if (selected) {
             const fresh = await backend(c, args);
             verify(fresh);

@@ -329,6 +329,16 @@
         "icon": "$(preview)"
       },
       {
+        "command": "localLatex.paperBackground",
+        "title": "查看或编辑当前论文背景",
+        "category": "TeXScholar"
+      },
+      {
+        "command": "localLatex.personalPrompts",
+        "title": "查看或编辑个人论文提示词",
+        "category": "TeXScholar"
+      },
+      {
         "command": "localLatex.copyReviewContract",
         "title": "复制本次 AI 三方案协作协议（不修改 SKILL）",
         "category": "TeXScholar"

@@ -410,6 +410,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     const attachment = f.calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath;
     assert(fs.readFileSync(attachment, 'utf8').includes('请更准确。'));
     const content = fs.readFileSync(attachment, 'utf8');
+    assert(content.includes('只有作者明确确认具体方案后'));
     assert.equal(content.split('"after": "Better sentence."').length - 1, 1, 'same generation options appear once');
     assert(content.includes('other item'));
     await f.ui.addRequests(c);

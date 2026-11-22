@@ -16,7 +16,7 @@ RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', '
            'review_blocks.py', 'review_migration.py', 'review_host_client.py', 'review_host_bridge.js', 'review_host_registry.js',
            'review_host_transaction.js', 'review_host_legacy.js', 'review_host_migration.js', 'review_host_edit.js',
            'review.svg', 'review_math.js', 'review_workbench.js', 'review_workbench_client.js', 'collaboration-guide.md', 'mcp_server.py', 'mcp_config.py', 'mcp_setup.js',
-           'mcp_runtime.py', 'mcp_clients.py', 'mcp_version.js', 'updates.js', 'update_check.py', 'ai_context.py', 'reference_context.py')
+           'mcp_runtime.py', 'mcp_clients.py', 'mcp_version.js', 'updates.js', 'update_check.py', 'ai_context.py', 'reference_context.py', 'paper_background.py')
 
 
 def archive_bytes(files):

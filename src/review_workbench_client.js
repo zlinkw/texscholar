@@ -2,14 +2,16 @@
 'use strict';
 const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
 const feedbackNode = $('status');
-let current, data, options = [], preview = 'A', selected, waiting = false, unavailable = false, conflict = false, focused, chinese = true;
+let current, data, options = [], preview = 'A', selected, waiting = false, coordinating = false, unavailable = false, conflict = false, focused, chinese = true;
 let currentSession;
+let reviewMode = 'paragraph', selectedQuestion = '';
 let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSelection, selectionStale = false;
 let navigationFilter = {query: '', kind: '', notes: false};
 let changeCursor;
 let directoryCursor, localFeedback;
 let stashes = [], historyData, questionRows = [];
 const batchSelection = new Map();
+const coordinatedWrites = new Set(['save', 'saveAccept', 'accept', 'acceptBatch', 'reject', 'note', 'noteHandoff', 'editNote', 'batchNote', 'saveSource', 'manualRebase', 'syncBlock', 'repairBlock', 'relocate']);
 const feedbackTargets = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap(), differences = new WeakMap();
 const displayedChanges = new WeakMap();
@@ -22,7 +24,7 @@ let sourceDraftStale = false, candidateDraftStale = false, oldOriginal;
 let selectedBlockRevision;
 $('currentBlock').addEventListener('pointerup', () => {selectedBlockRevision = data?.block?.source_revision;});
 $('currentBlock').addEventListener('keyup', () => {selectedBlockRevision = data?.block?.source_revision;});
-const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'start', 'checkUpdates', 'sourcePDF']);
+const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'paperBackground', 'personalPrompts', 'start', 'checkUpdates', 'sourcePDF']);
 const sideBusy = new Set();
 const actionNames = {save: '保存候选', saveSource: '保存当前原文', syncBlock: '同步候选', repairBlock: '修复审核块', manualRebase: '人工更新候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
     next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', readHistory:'读取历史', adoptHistory:'采用历史草稿', checkQuestion:'核对问题', questionEntry:'查看关联项', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
@@ -80,7 +82,7 @@ function readingAnchor() {
     return node ? {id: node.id, top: node.getBoundingClientRect().top} : undefined;
 }
 function snapshot() {
-    return {c: {...current}, drafts: Object.fromEntries(drafts), blockDraft: data?.block || sourceDraftStale ? $('blockSource').value : undefined, sourceDraftStale, candidateDraftStale, oldOriginal, note: $('note').value, selected, editingNote,
+    return {c: {...current}, drafts: Object.fromEntries(drafts), blockDraft: data?.block || sourceDraftStale ? $('blockSource').value : undefined, sourceDraftStale, candidateDraftStale, oldOriginal, note: $('note').value, purpose:$('notePurpose').value, batchNote:$('batchNote').value, batchPurpose:$('batchPurpose').value, batchScope:$('batchNoteScope').value, batchItems:$('batchNote').value.trim() ? [...batchSelection.values()].map(item=>({...item})) : undefined, selected, editingNote,
         composer: !$('noteComposer').hidden, scope: $('scopeChoice').value, selectionStale, sourceMode, chinese, focused, comparison,
         compare: $('compare').checked, scrollTop: restoration?.scrollTop ?? window.scrollY, anchor: restoration?.anchor ?? readingAnchor(), focus: document.activeElement?.id,
         editors: options.filter(o => !$('editor-' + o.label).hidden).map(o => o.label),
@@ -105,7 +107,8 @@ function queueRemember() {
 }
 function restoreInputs(state) {
     selected = state.selected; editingNote = state.editingNote; selectionStale = !!state.selectionStale;
-    $('note').value = state.note; $('noteComposer').hidden = !state.composer; $('scopeChoice').value = state.scope;
+    $('note').value = state.note; $('notePurpose').value=state.purpose || 'revision'; $('batchNote').value=state.batchNote || ''; $('batchPurpose').value=state.batchPurpose || 'revision'; $('batchNoteScope').value=state.batchScope || 'whole'; $('noteComposer').hidden = !state.composer; $('scopeChoice').value = state.scope;
+    if (state.batchNote?.trim() && Array.isArray(state.batchItems)) {batchSelection.clear(); for (const item of state.batchItems) batchSelection.set(item.id,item); selectedCount();}
     $('noteScopeControls').hidden = !!editingNote;
     $('noteMode').textContent = editingNote ? '编辑返修批注' : '新增返修批注';
     $('saveNote').textContent = editingNote ? '保存修改' : '保存返修批注';
@@ -165,7 +168,9 @@ function dirty() {
     draftWarning();
     const changed = candidateDirty || sourceDraftStale ||
         !!data?.block && $('blockSource').value !== data.block.text.replace(/\r\n/g, '\n');
-    send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim() || !!editingNote, state: remember(false)}, false); buttons(); return changed;
+    send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim() || !!editingNote || !!$('batchNote').value.trim(), state: remember(false)}, false);
+    if (historyData) renderHistory();
+    buttons(); return changed;
 }
 function draftWarning() {
     $('draftStale').hidden = !sourceDraftStale && !candidateDraftStale;
@@ -178,15 +183,16 @@ function buttons() {
     $('note').readOnly = !!waiting;
     $('blockSource').readOnly = !!waiting;
     for (const b of document.querySelectorAll('[data-action="newNote"],[data-action="cancelNote"],[data-action="editNoteOpen"]')) b.disabled = waiting;
-    for (const button of document.querySelectorAll('button[data-write]')) button.disabled = waiting || unavailable || conflict;
+    for (const button of document.querySelectorAll('button[data-write]')) button.disabled = waiting || coordinating || unavailable || conflict;
     for (const button of document.querySelectorAll('button[data-action]')) {
         if (actionNames[button.dataset.action] || button.dataset.action === 'directory') button.disabled =
-            !!(waiting && !passiveActions.has(button.dataset.action) && button.dataset.action !== 'directory') || !!(button.hasAttribute('data-write') && (unavailable || conflict));
+            !!(waiting && !passiveActions.has(button.dataset.action) && button.dataset.action !== 'directory') || !!(button.hasAttribute('data-write') && (coordinating || unavailable || conflict));
         if (passiveActions.has(button.dataset.action)) button.disabled = sideBusy.has(button.dataset.action);
+        if (coordinating && coordinatedWrites.has(button.dataset.action)) button.disabled = true;
     }
     if (data?.source_match === false) for (const b of document.querySelectorAll('[data-action="accept"],[data-action="saveAccept"],[data-action="preview"],[data-action="pdf"]')) b.disabled = true;
     document.querySelector('[data-action="restoreStash"]').disabled ||= !stashes.find(item => item.id === $('stashChoice').value)?.exact;
-    $('operationStatus').textContent = waiting ? current.id + ' · ' + (actionNames[waiting] || '审核操作') + '…' : '';
+    $('operationStatus').textContent = waiting ? current.id + ' · ' + (actionNames[waiting] || '审核操作') + '…' : coordinating ? '正在协调已保存的正文，完成后可继续写入。' : '';
     for (const node of document.querySelectorAll('textarea.edit')) node.readOnly = !!waiting;
     for (const button of document.querySelectorAll('[data-action="save"]')) {
         const o = options.find(o => o.label === button.dataset.option);
@@ -196,10 +202,11 @@ function buttons() {
     }
     const staleNote = editingNote && !data?.edit.requests?.some(n => n.id === editingNote.id && n.status === 'open' && n.version === current.version);
     const noteReason = selectionStale ? '请重新选择已变化的文字，或明确改为整项批注。' : staleNote ? '原批注版本已变化；请取消编辑后重新填写。'
-        : !$('note').value.trim() ? '请先填写返修要求。' : editingNote && $('note').value === editingNote.previousText ? '批注未修改，无需保存。' : '';
+        : !$('note').value.trim() ? '请先填写返修要求。' : editingNote && $('note').value === editingNote.previousText && $('notePurpose').value === (editingNote.previousPurpose || 'revision') ? '批注未修改，无需保存。' : '';
     for (const button of document.querySelectorAll('[data-action="note"],[data-action="noteHandoff"]')) {
         button.disabled ||= !!noteReason; button.title = noteReason || (button.dataset.action === 'note' ? '保存当前批注（Ctrl/Cmd+Enter）' : '保存后加入 Codex 输入区，不自动发送');
     }
+    selectedCount();
 }
 function style(value) {
     appearance = value;
@@ -239,7 +246,7 @@ function translationComparison(key, entry, node) {
     const newKey = paired ? pair[1] : key === 'original' ? preview : key;
     if (paired && !pair.includes(key)) return {changes: [], side: 'readonly'};
     const before = translatedText.get(oldKey), after = translatedText.get(newKey);
-    const valid = (k, value) => value && !value.error && typeof value.text === 'string'
+    const valid = (k, value) => value && !value.error && !value.noTranslation && typeof value.text === 'string'
         && value.source === translationSource(k) && value.provider === entry.provider
         && !options.some(o => o.label === k && hasDraft(o));
     if (!valid(oldKey, before) || !valid(newKey, after)) return {changes: [], side: 'readonly'};
@@ -250,14 +257,15 @@ function renderTranslation(key, entry) {
     if (!node || entry.source !== translationSource(key)) return;
     if (options.some(o => o.label === key && hasDraft(o))) {node.hidden = true; return;}
     const {changes, side} = translationComparison(key, entry, node);
-    const signature = JSON.stringify([entry.error, entry.text, sourceMode, changes, side]);
+    const signature = JSON.stringify([entry.error, entry.text, entry.noTranslation, entry.warning, sourceMode, changes, side]);
     if (rendered.get(node) === signature) {node.hidden = !chinese; return;}
     keepReading(() => {
         if (entry.error) {node.textContent = '翻译未完成：' + entry.error; models.delete(node);}
+        else if (entry.noTranslation) {node.textContent = entry.noTranslation; models.delete(node);}
         else models.set(node, math.render(node, entry.text, changes, side, sourceMode ? 'source' : 'preview', globalThis.katex, models.get(node)));
         node.dataset.translation = key;
-        node.title = side === 'readonly' ? '中文阅读译文；对照译文尚未就绪时不标差异。'
-            : '中文译文之间的文字差异；翻译措辞变化也可能被标记，请结合原文审核。';
+        node.title = entry.warning || (side === 'readonly' ? '中文阅读译文；对照译文尚未就绪时不标差异。'
+            : '中文译文之间的文字差异；翻译措辞变化也可能被标记，请结合原文审核。');
         node.hidden = !chinese;
     });
     rendered.set(node, signature);
@@ -277,12 +285,13 @@ function renderDirectory(items) {
     directoryItems = items;
     const postponed = items.some(item => item.id === current?.id && item.postponed);
     $('postpone').hidden = postponed; $('restorePostponed').hidden = !postponed;
-    for (const id of batchSelection.keys()) if (!items.some(i => i.id === id)) batchSelection.delete(id);
     const pending = items.filter(i => ['pending', 'rework'].includes(i.status));
     $('progress').textContent = current ? current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · v' + data.edit.versions.length
         + (navigationFilter.query || navigationFilter.kind || navigationFilter.notes ? ' · 已筛选' : '') : '审核项';
     $('progress').title = '本批可操作 ' + items.length + ' 项 · 待处理 ' + pending.length + ' · 暂缓 ' + items.filter(i => i.postponed).length + ' · 定位冲突 ' + items.filter(i => i.source_match === false).length + '；点击搜索编号、位置或关联问题';
     if ($('directoryDialog').open) filterDirectory();
+    else selectedCount();
+    if (reviewMode === 'question') renderQuestionMode();
     fitToolbar();
 }
 function filterDirectory() {
@@ -301,13 +310,13 @@ function filterDirectory() {
         const row = document.createElement('div'), check = document.createElement('input'), choice = document.createElement('select');
         check.type = 'checkbox'; check.setAttribute('aria-label', '选择 ' + item.id);
         const saved = batchSelection.get(item.id);
-        if (saved && saved.version !== item.version) batchSelection.delete(item.id);
+        if (saved && saved.version !== item.version) node.textContent += ' · 已选旧版，需重核';
         check.checked = batchSelection.has(item.id);
         for (const label of (item.options || ['A','B','C'])) {const option = document.createElement('option'); option.value = label; option.textContent = label + (item.manual_options?.includes(label) ? '（已手改）' : ''); choice.appendChild(option);}
         choice.value = batchSelection.get(item.id)?.option || (item.id === current.id ? preview : item.option) || 'A';
         choice.setAttribute('aria-label', item.id + ' 接收方案');
         check.addEventListener('change', () => {if (check.checked) batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); else batchSelection.delete(item.id); selectedCount();});
-        choice.addEventListener('change', () => {if (check.checked) {batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); selectedCount();}});
+        choice.addEventListener('change', () => {if (check.checked && batchSelection.get(item.id)?.version === item.version) {batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); selectedCount();}});
         row.append(check, choice, node); $('directoryResults').appendChild(row);
     }
     selectedCount();
@@ -316,7 +325,35 @@ function filterDirectory() {
     markDirectoryCursor();
     $('directoryHint').textContent = found.length + ' 项；↑↓ 选择，Enter 打开，Esc 关闭。';
 }
-function selectedCount() {$('selectedCount').textContent = '已选 ' + batchSelection.size + ' 项' + (batchSelection.size ? '；接收顺序（同点插入依此排列）：' + [...batchSelection.values()].map(i => i.id + '(' + i.option + ')').join(' → ') : '');}
+function selectedCount() {
+    const stale = staleBatchSelections(batchSelection, directoryItems);
+    $('selectedCount').textContent = '已选 ' + batchSelection.size + ' 项' + (stale.length ? '；' + stale.length + ' 项需重核，整批不能接收' : '') + (batchSelection.size ? '；接收顺序（同点插入依此排列）：' + [...batchSelection.values()].map(i => i.id + '(' + i.option + ')').join(' → ') : '');
+    $('staleSelections').replaceChildren();
+    for (const selected of batchSelection.values()) {
+        const item = directoryItems.find(i => i.id === selected.id);
+        const invalid = stale.some(value=>value.id===selected.id);
+        const origins = questionRows.filter(row=>row.entries.some(entry=>entry.id===selected.id)).map(row=>[row.question.id,row.question.file,row.question.quote].join(' · '));
+        const row = document.createElement('div');
+        const button = document.createElement('button'); button.className = 'secondary'; button.dataset.action = 'switch'; button.dataset.target = selected.id;
+        button.textContent = selected.id + ' · ' + (item?.file || '位置不可用') + ' · ' + (origins.join(' / ') || '未绑定问题') + (invalid ? ' · 已选旧版，需重核' : ' · 有效'); button.disabled = !item || !!waiting;
+        const choice = document.createElement('select'); choice.setAttribute('aria-label', selected.id + ' 已选方案');
+        for (const label of item?.options || [selected.option]) {const option=document.createElement('option');option.value=label;option.textContent=label;choice.appendChild(option);}
+        choice.value=selected.option;choice.disabled=invalid || !!waiting || coordinating;
+        choice.addEventListener('change',()=>{batchSelection.set(selected.id,{...selected,option:choice.value});selectedCount();});
+        row.append(button,choice);$('staleSelections').appendChild(row);
+    }
+    const accept = document.querySelector('[data-action="acceptBatch"]');
+    accept.disabled = !!stale.length || !!waiting || coordinating || unavailable || conflict;
+    accept.title = stale.length ? '请定位并重新选择所有失效项，或明确取消选择。' : '';
+    const inQuestion = new Set(questionEntries().map(entry=>entry.id));
+    const scoped = [...batchSelection.values()].filter(item=>inQuestion.has(item.id));
+    const currentButton = document.querySelector('[data-action="questionAccept"]'), allButton = document.querySelector('[data-action="questionAcceptAll"]');
+    currentButton.textContent = '接收当前问题已选 ' + scoped.length + ' 项';
+    allButton.textContent = '接收全部已选 ' + batchSelection.size + ' 项（范围外 ' + (batchSelection.size-scoped.length) + ' 项）';
+    currentButton.disabled = !scoped.length || stale.some(item=>inQuestion.has(item.id)) || !!waiting || coordinating || unavailable || conflict;
+    allButton.disabled = !batchSelection.size || !!stale.length || !!waiting || coordinating || unavailable || conflict;
+    if ($('batchNote').value.trim()) remember();
+}
 function renderStash() {
     const d = stashes.find(item => item.id === $('stashChoice').value);
     if (!d) return;
@@ -324,7 +361,7 @@ function renderStash() {
     $('stashOriginal').textContent = d.state.oldOriginal ?? d.block?.text ?? d.original;
     $('stashCurrent').textContent = data.block?.text ?? data.original;
     $('stashContents').textContent = [...Object.entries(d.state.drafts || {}).map(([label,value]) => '候选 ' + label + '\n' + value),
-        ...(d.state.blockDraft === undefined ? [] : ['原文草稿\n' + d.state.blockDraft]), ...(d.state.note ? ['未提交批注\n' + d.state.note] : [])].join('\n\n');
+        ...(d.state.blockDraft === undefined ? [] : ['原文草稿\n' + d.state.blockDraft]), ...(d.state.note ? ['未提交批注\n' + d.state.note] : []), ...(d.state.batchNote ? ['未提交共同意见\n' + d.state.batchNote] : [])].join('\n\n');
     document.querySelector('[data-action="restoreStash"]').disabled = !d.exact || !!waiting;
 }
 function renderHistory() {
@@ -333,9 +370,25 @@ function renderHistory() {
     const changes = math.wordChanges(historyData.original, option.after);
     renderText($('historyOriginal'), historyData.original, changes, 'original');
     renderText($('historyCandidate'), option.after, changes, 'candidate');
+    let increment=$('historyIncrement');
+    if (!increment) {
+        increment=document.createElement('section');increment.id='historyIncrement';
+        const heading=document.createElement('h4');heading.id='historyIncrementTitle';
+        const old=document.createElement('div');old.id='historyIncrementOld';old.className='review-text';
+        const now=document.createElement('div');now.id='historyIncrementNew';now.className='review-text';
+        increment.append(heading,old,now);$('historyContent').appendChild(increment);
+    }
+    const target=options.find(o=>o.label===$('historyTarget').value);
+    if (!target) {increment.hidden=true;return;}
+    increment.hidden=false;
+    $('historyIncrementTitle').textContent='旧版本 '+historyData.version+' · '+option.label+' → 当前版本 '+current.version+' · '+target.label;
+    const delta=math.wordChanges(option.after,displayed(target));
+    renderText($('historyIncrementOld'),option.after,delta,'original');
+    renderText($('historyIncrementNew'),displayed(target),delta,'candidate');
 }
 function renderQuestionTable(rows) {
     questionRows = rows;
+    renderQuestionMode();
     const root = $('questionTableRows'); root.replaceChildren();
     if (!rows.length) {root.textContent='本轮尚无明确关联的问题；未关联不等于没有修改。'; return;}
     for (const row of rows) {
@@ -356,6 +409,88 @@ function renderQuestionTable(rows) {
         const check=document.createElement('button'); check.className='secondary'; check.dataset.action='checkQuestion'; check.dataset.questionKey=row.key; check.textContent='本轮已核对';
         section.append(columns,check); root.appendChild(section);
     }
+}
+function questionEntries() {
+    if (selectedQuestion === '__unbound__') {
+        const linked = new Set(questionRows.flatMap(row => row.entries.map(entry => entry.id)));
+        return directoryItems.filter(item => !linked.has(item.id)).map(item => ({...item}));
+    }
+    return questionRows.find(row => row.key === selectedQuestion)?.entries || [];
+}
+function questionEntryDraft(entry) {
+    return entry.id===current?.id && entry.version===current.version && (sourceDraftStale || candidateDraftStale || options.some(hasDraft) || !!data?.block && $('blockSource').value!==data.block.text.replace(/\r\n/g,'\n'));
+}
+function changedLines(text, changes, side) {
+    const points=Array.from(text), ranges=[], breaks=[0];
+    points.forEach((ch,i)=>{if(ch==='\n') breaks.push(i+1);}); breaks.push(points.length);
+    for (const change of changes) {
+        const start=change[side+'_start'], end=change[side+'_end'];
+        for (let i=0;i<breaks.length-1;i++) if (start <= breaks[i+1] && end >= breaks[i]) {ranges.push(i-1,i,i+1);}
+    }
+    for (const segment of math.segments(text).filter(segment=>segment.math)) {
+        const start=Array.from(text.slice(0,segment.start)).length, end=start+Array.from(text.slice(segment.start,segment.end)).length;
+        const lines=[];
+        for (let i=0;i<breaks.length-1;i++) if (start < breaks[i+1] && end > breaks[i]) lines.push(i);
+        if (lines.some(line=>ranges.includes(line))) ranges.push(...lines);
+    }
+    return [...new Set(ranges.filter(i=>i>=0&&i<breaks.length-1))].sort((a,b)=>a-b).map(i=>points.slice(breaks[i],breaks[i+1]).join('')).join('');
+}
+function renderQuestionMode() {
+    const choice = $('questionModeChoice'), previous = selectedQuestion;
+    choice.replaceChildren();
+    for (const row of questionRows) {
+        const option=document.createElement('option'); option.value=row.key;
+        option.textContent=row.question.id + ' · ' + row.question.file + ' · ' + row.question.quote;
+        choice.appendChild(option);
+    }
+    const unbound=document.createElement('option'); unbound.value='__unbound__'; unbound.textContent='未绑定问题的修改'; choice.appendChild(unbound);
+    selectedQuestion = [...choice.options].some(option => option.value === previous) ? previous : choice.options[0].value;
+    choice.value = selectedQuestion;
+    const kindFilter=$('questionType').value;
+    const entries=questionEntries().filter(entry=>!kindFilter || kindFilter==='rework' && entry.status==='rework' || kindFilter==='conflict' && (entry.conflict || entry.source_match===false) ||
+        ['number','citation','math','term'].includes(kindFilter) && questionEntryDraft(entry) ||
+        entry.card?.options.some(option=>(option.fact_changes || []).some(change=>change.kind===kindFilter))), root=$('questionModeCards'); root.replaceChildren();
+    for (const [kind,label] of [['manuscript','正文'],['response','回复信']]) {
+        const column=document.createElement('section'), heading=document.createElement('h4'); heading.textContent=label; column.appendChild(heading);
+        for (const entry of entries.filter(e=>e.kind===kind)) {
+            const card=document.createElement('article'), title=document.createElement('h4');
+            const activeDraft=questionEntryDraft(entry);
+            title.textContent=entry.id + ' · ' + entry.file + (entry.location ? ' · ' + (entry.location.heading || '') : '') + (entry.conflict ? ' · 定位冲突' : '') + (entry.card?.postponed ? ' · 暂缓' : '') + (entry.status==='rework' ? ' · 返修' : '') + (activeDraft ? ' · 未保存草稿，变化标记待保存后重算' : '') + ((entry.requests || []).some(note=>note.status==='open') ? ' · 有待处理批注' : '') + (!entry.card ? ' · 已处理或历史不可用' : '');
+            card.appendChild(title);
+            if (entry.card) {
+                const check=document.createElement('input'), select=document.createElement('select'); check.type='checkbox'; check.setAttribute('aria-label','选择 '+entry.id);
+                check.checked=batchSelection.has(entry.id); check.dataset.questionItem=entry.id;
+                for (const o of entry.card.options) {const option=document.createElement('option');option.value=o.label;option.textContent=o.label;select.appendChild(option);}
+                select.value=batchSelection.get(entry.id)?.option || entry.card.options[0]?.label;
+                select.setAttribute('aria-label',entry.id+' 接收方案');
+                check.disabled = entry.conflict || entry.card.postponed;
+                check.addEventListener('change',()=>{if(check.checked) batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value}); else batchSelection.delete(entry.id); selectedCount();});
+                const excerpt=document.createElement('pre'); excerpt.className='review-text';
+                const updateExcerpt=()=>{
+                    const chosen=entry.card.options.find(option=>option.label===select.value);
+                    const activeDraft=entry.id===current?.id && entry.version===current.version;
+                    const sourceEdited=activeDraft && (sourceDraftStale || data?.block && $('blockSource').value!==data.block.text.replace(/\r\n/g,'\n'));
+                    const candidate=activeDraft ? displayed(options.find(option=>option.label===chosen.label) || chosen) : chosen.after;
+                    const changes=math.wordChanges(entry.card.original,candidate);
+                    excerpt.textContent=sourceEdited ? '原文草稿尚未保存，变更片段暂不可用；请回到本项核对。' : changes.length ? '原文：\n'+changedLines(entry.card.original,changes,'old')+'\n方案 '+chosen.label+(activeDraft && candidate!==chosen.after ? '（未保存草稿）' : '')+'：\n'+changedLines(candidate,changes,'new') : '方案与原文没有文字变化。';
+                    excerpt.hidden=$('questionViewStyle').value==='full';
+                };
+                select.addEventListener('change',()=>{if(check.checked && batchSelection.get(entry.id)?.version===entry.version) {batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value});selectedCount();}updateExcerpt();});
+                card.append(check,select);
+                const details=document.createElement('details'), summary=document.createElement('summary');summary.textContent='展开原文与方案';details.appendChild(summary);
+                const original=document.createElement('pre');original.className='review-text';original.textContent='已保存原文：\n'+entry.card.original;details.appendChild(original);
+                for (const option of entry.card.options) {const text=document.createElement('pre');text.className='review-text';const active=entry.id===current?.id && entry.version===current.version;const value=active ? displayed(options.find(item=>item.label===option.label) || option) : option.after;text.textContent=option.label+(active && value!==option.after ? '（未保存草稿）' : '')+'：\n'+value;details.appendChild(text);}
+                details.open=$('questionViewStyle').value==='full'; updateExcerpt(); card.append(excerpt,details);
+            }
+            const open=document.createElement('button');open.className='secondary';open.dataset.action='questionEntry';open.dataset.questionKey=selectedQuestion;open.dataset.target=entry.id;open.textContent='打开本项';
+            if (selectedQuestion==='__unbound__') {open.dataset.action='switch';open.dataset.target=entry.id;}
+            card.appendChild(open);column.appendChild(card);
+        }
+        root.appendChild(column);
+    }
+    $('questionModeScope').textContent='仅显示本轮明确关联；未绑定不代表没有修改。没有标记不代表低风险；接收不代表科学问题解决。';
+    $('questionModeView').hidden=reviewMode!=='question'; $('review').hidden=reviewMode==='question' || unavailable;
+    selectedCount();
 }
 function markDirectoryCursor() {
     for (const node of $('directoryResults').querySelectorAll('button')) {
@@ -479,12 +614,12 @@ function noteOrigin(n) {
     const context = n.display_context;
     const origin = context ? (context.question ? context.question.id : n.option ? '方案 ' + n.option : '原文') + (context.kind === 'translation' ? '译文' : '审稿问题') : n.option || '整项';
     const generation = data.edit.versions.indexOf(n.version) + 1;
-    return origin + (generation ? ' · v' + generation : '');
+    return origin + ' · ' + ({revision:'普通返修',skill:'完善通用 SKILL',personal:'完善我的习惯',paper_requirements:'完善本论文要求',paper_background:'论文背景',discussion:'仅提问或讨论'}[n.purpose || 'revision']) + (generation ? ' · v' + generation : '');
 }
 function fulfillmentText(n) {
     if (data.source_match === false || n.source_stale) return '<p>原文或批注基准已变化，请重新核对返修说明。</p>';
     const mappings = (data.fulfillment || []).filter(m => m.request === n.id && m.request_version === n.version && m.request_text === n.text);
-    return mappings.length ? mappings.map(m => '<p>返修说明（已保存本版） · 方案 ' + esc(m.option) + ' · ' + esc(({attempted:'已尝试',partial:'部分',author:'待作者',evidence:'待证据'})[m.status]) + '：' + esc(m.explanation) + '（' + esc(m.quote) + '）</p>').join('') : '<p>本版未说明此要求的处理情况。</p>';
+    return mappings.length ? mappings.map(m => '<p>返修说明（已保存本版） · 方案 ' + esc(m.option) + ' · ' + esc(({attempted:'已尝试',partial:'部分',author:'待作者',evidence:'待证据'})[m.status]) + '：' + esc(m.explanation) + ' <button class="secondary" data-action="locateFulfillment" data-mapping="' + data.fulfillment.indexOf(m) + '">查看对应文字：' + esc(m.quote) + '</button></p>').join('') : '<p>本版未说明此要求的处理情况。</p>';
 }
 function renderPreviousNotes() {
     const container = $('previousNotes');
@@ -541,7 +676,7 @@ function placeComposer() {
 }
 function closeComposer() {
     status('');
-    editingNote = undefined; selected = pendingSelection = undefined; selectionStale = false; highlightSelection(); $('note').value = ''; $('noteComposer').hidden = true; $('noteMode').textContent = '新增返修批注';
+    editingNote = undefined; selected = pendingSelection = undefined; selectionStale = false; highlightSelection(); $('note').value = ''; $('notePurpose').value='revision'; $('noteComposer').hidden = true; $('noteMode').textContent = '新增返修批注';
     $('noteScopeControls').hidden = false; $('saveNote').textContent = '保存返修批注'; placeComposer(); dirty();
 }
 function openComposer() {$('noteComposer').hidden = false; placeComposer();}
@@ -620,6 +755,16 @@ function locateNote(id) {
     const model = models.get($(label ? 'text-' + label : 'original'));
     const offset = n => Array.from(raw).slice(0, n).join('').replace(/\r\n/g, '\n').length;
     locateRanges(math.selectionRanges(model, offset(note.start), offset(note.end)));
+}
+function locateFulfillment(index) {
+    const mapping=data.fulfillment?.[index], option=options.find(o=>o.label===mapping?.option);
+    if (!mapping || !option || data.source_match===false || hasDraft(option) || Array.from(option.after).slice(mapping.start,mapping.end).join('')!==mapping.quote) {
+        status('返修落点已变化或有未保存编辑；请重新核对，未猜测位置。',true);return;
+    }
+    revealCandidate(option.label);
+    const model=models.get($('text-'+option.label));
+    const offset=n=>Array.from(option.after).slice(0,n).join('').replace(/\r\n/g,'\n').length;
+    locateRanges(math.selectionRanges(model,offset(mapping.start),offset(mapping.end)));
 }
 function jumpChange(direction) {
     const targets = [];
@@ -704,6 +849,7 @@ $('scopeChoice').addEventListener('change', scope);
 for (const id of ['directoryKind', 'directoryNotes', 'directoryQueue']) $(id).addEventListener('change', filterDirectory);
 $('stashChoice').addEventListener('change', renderStash);
 $('historyOption').addEventListener('change', renderHistory);
+$('historyTarget').addEventListener('change', renderHistory);
 $('directoryDialog').addEventListener('keydown', event => {
     if (event.isComposing || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.target.id !== 'directoryQuery' && !event.target.closest('#directoryResults')) return;
@@ -756,30 +902,44 @@ document.addEventListener('visibilitychange', () => {
     else api.postMessage({type: 'ready', instance, state: api.getState()});
 });
 $('compare').addEventListener('change', () => send('preview', {option: preview, compare: $('compare').checked}));
+$('questionModeChoice').addEventListener('change', () => {selectedQuestion=$('questionModeChoice').value; renderQuestionMode(); send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);});
+$('questionViewStyle').addEventListener('change', () => {renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);});
+$('questionType').addEventListener('change', renderQuestionMode);
+for (const id of ['notePurpose','batchPurpose','batchNoteScope']) $(id).addEventListener('change', dirty);
 document.addEventListener('click', event => {
     const button = event.target.closest('button[data-action]');
     if (!button) return;
     const type = button.dataset.action, option = button.dataset.option;
     localFeedback = feedbackFor(button);
     const menu = button.closest('.more'); if (menu) menu.open = false;
+    if (type === 'paragraphMode' || type === 'questionMode') {reviewMode=type === 'questionMode' ? 'question' : 'paragraph';renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);return;}
+    if (type === 'questionSelectAll') {for (const check of $('questionModeCards').querySelectorAll('input[data-question-item]:not(:disabled)')) if (!check.checked) {check.checked=true;check.dispatchEvent(new Event('change'));}return;}
+    if (type === 'questionAccept' || type === 'questionAcceptAll') {
+        const ids=new Set(questionEntries().map(entry=>entry.id));
+        const items=[...batchSelection.values()].filter(item=>type==='questionAcceptAll'||ids.has(item.id));
+        send('acceptBatch',{items,session:currentSession,questionKey:selectedQuestion,questionOnly:type==='questionAccept'});return;
+    }
     if (type === 'appearance') {style(appearance); $('appearanceDialog').showModal(); return;}
     if (type === 'followFont') {style({...appearance, fontFamily:''}); saveAppearance({values:{fontFamily:''}}); return;}
     if (type === 'resetAppearance') {saveAppearance({reset: true}); return;}
     if (type === 'selectAll') {for (const row of $('directoryResults').children) {const input=row.querySelector('input'); if(input && !input.checked) {input.checked=true; input.dispatchEvent(new Event('change'));}} return;}
     if (type === 'clearSelection') {batchSelection.clear(); filterDirectory(); return;}
     if (type === 'acceptBatch' || type === 'handoffSelected') {send(type,{items:[...batchSelection.values()], session:currentSession}); return;}
+    if (type === 'batchNote') {send(type,{items:[...batchSelection.values()].map(item => $('batchNoteScope').value === 'chosen' ? item : {id:item.id,version:item.version}),session:currentSession,text:$('batchNote').value,purpose:$('batchPurpose').value,scope:$('batchNoteScope').value}); return;}
     if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
     if (type === 'questionTable') {$('questionTable').open=true; $('questionTable').scrollIntoView({block:'nearest'}); return;}
     if (type === 'history') {
         const versions = data.edit.versions.slice(0,-1);
         $('historyVersion').replaceChildren();
         versions.forEach((version,index) => {const option=document.createElement('option'); option.value=version; option.textContent='版本 ' + (index+1); $('historyVersion').appendChild(option);});
+        if (versions.length) $('historyVersion').value=versions.at(-1);
         $('historyStatus').textContent=versions.length ? '选择仍保留的历史版本。' : '本项没有可用历史；精简或开始新批次后不保证保留。';
         $('historyContent').hidden=true; $('historyDialog').open=true; $('historyDialog').scrollIntoView({block:'nearest'}); return;
     }
     if (type === 'clearFilter') {$('directoryQuery').value = ''; $('directoryKind').value = ''; $('directoryNotes').checked = false; $('directoryQueue').value = 'active'; filterDirectory(); return;}
     if (type === 'nextChange' || type === 'previousChange') {jumpChange(type === 'nextChange' ? 1 : -1); return;}
     if (type === 'locateNote') {locateNote(button.closest('.note').dataset.noteId); return;}
+    if (type === 'locateFulfillment') {locateFulfillment(Number(button.dataset.mapping)); return;}
     if (type === 'switch') $('directoryDialog').close();
     if (type === 'newNote') {if (!canChangeNote()) return; scope(); $('noteMode').textContent = '新增返修批注'; openComposer(); $('note').focus(); return;}
     if (type === 'cancelNote') {closeComposer(); return;}
@@ -789,8 +949,8 @@ document.addEventListener('click', event => {
         if (editingNote?.id === id) {$('note').focus(); return;}
         if (!canChangeNote()) return;
         const note = data.edit.requests.find(n => n.id === id);
-        editingNote = {id, previousText: note.text}; selected = undefined;
-        $('note').value = note.text; $('noteMode').textContent = '编辑返修批注';
+        editingNote = {id, previousText: note.text, previousPurpose:note.purpose || 'revision'}; selected = undefined;
+        $('note').value = note.text; $('notePurpose').value=note.purpose || 'revision'; $('noteMode').textContent = '编辑返修批注';
         $('noteScopeControls').hidden = true; $('scope').textContent = '原批注范围保持不变：' + (note.option || '整项');
         $('saveNote').textContent = '保存修改'; placeComposer(); openComposer(); $('note').focus(); dirty(); return;
     }
@@ -823,9 +983,9 @@ document.addEventListener('click', event => {
     }
     if (type === 'note' || type === 'noteHandoff') {
         const handoff = type === 'noteHandoff';
-        if (editingNote) {send('editNote', {request: editingNote.id, text: $('note').value, previousText: editingNote.previousText, handoff}); return;}
+        if (editingNote) {send('editNote', {request: editingNote.id, text: $('note').value, purpose:$('notePurpose').value, previousText: editingNote.previousText, previousPurpose:editingNote.previousPurpose || 'revision', handoff}); return;}
         const value = $('scopeChoice').value;
-        send('note', {...(selected || {side: 'original', option: 'ABC'.includes(value) && value.length === 1 ? value : undefined}), text: $('note').value, handoff}); return;
+        send('note', {...(selected || {side: 'original', option: 'ABC'.includes(value) && value.length === 1 ? value : undefined}), text: $('note').value, purpose:$('notePurpose').value, handoff}); return;
     }
     const clicked = button.closest('article');
     send(type, {...(clicked ? {id:clicked.dataset.reviewId,version:clicked.dataset.reviewVersion} : {}), option, target: button.dataset.target, index: Number(button.dataset.index),
@@ -848,6 +1008,22 @@ window.addEventListener('message', ({data: message}) => {
     }
     if (message.type === 'handoffRetry') {$('retryHandoff').hidden = !message.available; return;}
     if (message.type === 'busy') {waiting = message.action; buttons(); return;}
+    if (message.type === 'coordinating') {coordinating = message.busy; buttons(); return;}
+    if (message.type === 'batchAccepted') {
+        if (current?.repo === message.repo && current.owner === message.owner && currentSession === message.session) {
+            for (const item of message.items) {
+                const selected = batchSelection.get(item.id);
+                if (selected?.version === item.version && selected.option === item.option) batchSelection.delete(item.id);
+            }
+            selectedCount();
+        }
+        return;
+    }
+    if (message.type === 'batchNoteSaved') {
+        const items=[...batchSelection.values()].map(item=>message.scope==='chosen' ? item : {id:item.id,version:item.version});
+        if ($('batchNote').value === message.text && $('batchPurpose').value === message.purpose && $('batchNoteScope').value===message.scope && JSON.stringify(items)===JSON.stringify(message.items)) {$('batchNote').value = ''; $('batchPurpose').value='revision'; $('batchNoteScope').value='whole';}
+        dirty(); status(message.message); return;
+    }
     if (message.type === 'actionResult') {sideBusy.delete(message.action); buttons(); if (message.message) status(message.message, message.error, message.action); return;}
     if (message.type === 'appearanceResult') {
         if (message.request !== appearanceRequest) return;
@@ -923,7 +1099,9 @@ window.addEventListener('message', ({data: message}) => {
         rendering = true; restoration = undefined;
         const saved = message.type === 'saved';
         const refresh = !saved && current && current.repo === message.c.repo && current.owner === message.c.owner && current.id === message.c.id;
+        if (!saved && (!refresh || current.version !== message.c.version)) {historyData=undefined; $('historyContent').hidden=true;}
         const oldOptions = options;
+        if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) selectedQuestion = message.questionPosition || '';
         if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) batchSelection.clear();
         if (message.session !== undefined) currentSession = message.session;
         current = message.c; data = message.data; options = message.options;
@@ -964,7 +1142,7 @@ window.addEventListener('message', ({data: message}) => {
         if (!saved) {
             editingNote = undefined; $('noteComposer').hidden = true; placeComposer(); $('noteScopeControls').hidden = false;
             $('saveNote').textContent = '保存返修批注'; drafts.clear(); selected = pendingSelection = undefined; selectionStale = false;
-            focused = undefined; changeCursor = undefined; $('compare').checked = false; $('note').value = '';
+            focused = undefined; changeCursor = undefined; $('compare').checked = false; $('note').value = ''; $('notePurpose').value='revision'; $('batchNote').value=''; $('batchPurpose').value='revision';
             if (!refresh) {
                 $('pageFeedback').appendChild(feedbackNode); status(''); feedbackTargets.clear(); localFeedback = undefined;
                 translatedText.clear(); $('options').replaceChildren(); models.delete($('original')); rendered.delete($('original'));
@@ -1008,7 +1186,7 @@ window.addEventListener('message', ({data: message}) => {
         highlightSelection();
         dirty();
     }
-    if (message.type === 'content') waiting = message.busy;
+    if (message.type === 'content') {waiting = message.busy; coordinating = message.coordinating; reviewMode=message.mode || 'paragraph'; $('questionViewStyle').value=message.questionViewStyle || 'snippets'; selectedQuestion=message.questionPosition || selectedQuestion; renderQuestionMode();}
     if (message.message) status(message.message, message.error, message.action);
     buttons();
 });

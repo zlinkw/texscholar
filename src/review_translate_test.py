@@ -11,6 +11,36 @@ from review_translate import Provider, chunks, protect_tex, restore_tex, transla
 
 
 class Translation(unittest.TestCase):
+    def test_math_lists_and_structured_candidate_prefix_use_exact_request_boundary(self):
+        calls = []
+        class Engine:
+            def translate(self, value):
+                calls.append(value)
+                return value.replace('Useful text', '有用文字').replace('Candidate prose', '候选正文')
+        items = [
+            {'key':'pure', 'text':r'\begin{align}x &= 1\\ y &= 2\end{align}'},
+            {'key':'pure_candidate', 'kind':'candidate', 'option':'A', 'text':r'Option A: $$x=1$$'},
+            {'key':'mixed', 'text':r'Useful text $x+\text{mean}$ before \[y=2\] after $$z=3$$.'},
+            {'key':'list', 'text':r'\begin{itemize}\item Useful text $x$.\begin{enumerate}\item More text.\end{enumerate}\end{itemize}'},
+            {'key':'candidate', 'kind':'candidate', 'option':'A', 'text':'Option A: Candidate prose.'},
+            {'key':'ordinary', 'kind':'candidate', 'option':'A', 'text':'A is a variable.'},
+            {'key':'title', 'kind':'title', 'text':'R2-Q1 Useful text'},
+        ]
+        result = translate_many('bing',items,provider=Engine())
+        self.assertEqual(result['errors'], {})
+        self.assertIn('无需翻译',result['skipped']['pure'])
+        self.assertIn('无需翻译',result['skipped']['pure_candidate'])
+        self.assertEqual(len(calls),5)
+        self.assertNotIn('mean', calls[0]); self.assertNotIn('y=2',calls[0]);self.assertNotIn('z=3',calls[0])
+        self.assertIn('Useful text',calls[0]);self.assertIn(r'$x+\text{mean}$',result['results']['mixed'])
+        self.assertIn(r'\[y=2\]',result['results']['mixed']);self.assertIn('$$z=3$$',result['results']['mixed'])
+        self.assertIn('Useful text',calls[1]);self.assertIn('More text',calls[1]);self.assertNotIn('itemize',calls[1])
+        self.assertIn(r'\begin{itemize}',result['results']['list']);self.assertIn(r'\end{enumerate}',result['results']['list'])
+        self.assertIn(r'$x$',result['results']['list']);self.assertNotIn('Option A:',calls[2])
+        self.assertEqual(result['results']['candidate'],'Option A: 候选正文.')
+        self.assertIn('A is a variable',calls[3]);self.assertNotIn('R2-Q1',calls[4])
+        self.assertIn('Useful text',calls[4]);self.assertIn('R2-Q1',result['results']['title'])
+
     def test_chinese_titles_preserve_reviewer_section_and_model_terms(self):
         class Engine:
             def translate(self, text):

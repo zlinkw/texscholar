@@ -18,6 +18,47 @@ ROOT.mkdir(parents=True)
 
 
 class Flow(unittest.TestCase):
+    def test_feedback_purposes_persist_and_reject_unknown_values(self):
+        id_ = self.edit('main.tex', 'The model improves performance.', 'The model reliably improves performance.', deferred=True)
+        review = self.review()
+        version = review.state['edits'][id_]['versions'][-1]
+        base = {'id':id_, 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'作者意见'}
+        for purpose in ('revision', 'skill', 'personal', 'paper_requirements', 'paper_background', 'discussion'):
+            self.runop('feedback', {**base, 'purpose':purpose})
+        self.runop('feedback', base)
+        review = self.review()
+        self.assertEqual([n['purpose'] for n in review.state['edits'][id_]['requests']],
+                         ['revision', 'skill', 'personal', 'paper_requirements', 'paper_background', 'discussion', 'revision'])
+        before = review.raw
+        with self.assertRaisesRegex(m.Conflict, 'Unknown feedback purpose'):
+            self.runop('feedback', {**base, 'purpose':'unknown'})
+        self.assertEqual(self.review().raw, before)
+        note = review.state['edits'][id_]['requests'][0]
+        with self.assertRaisesRegex(m.Conflict, 'purpose changed concurrently'):
+            self.runop('feedback', {**base, 'request_id':note['id'], 'previous_text':note['text'],
+                                    'previous_purpose':'personal', 'purpose':'discussion'})
+        self.assertEqual(self.review().raw, before)
+
+    def test_feedback_batch_is_atomic_and_preserves_existing_notes_and_sources(self):
+        first = self.edit('main.tex', 'The model improves performance.', 'The model reliably improves performance.', deferred=True)
+        second = self.edit('reply.tex', 'Thank you for the comment.', 'Thank you for this helpful comment.', deferred=True)
+        review = self.review()
+        ids = [first, second]
+        items = [{'id': id_, 'version': review.state['edits'][id_]['versions'][-1]} for id_ in ids]
+        before = review.raw
+        original = {file: m.body(self.read(file)) for file in ('main.tex', 'reply.tex')}
+        spec = {'session': review.state['session'], 'items': items, 'text': '共同要求'}
+        for bad in [{**spec, 'session':'old'}, {**spec, 'items':[items[0], {**items[1], 'version':'stale'}]},
+                    {**spec, 'items':[items[0], items[0]]}]:
+            with self.assertRaises(m.Conflict): self.runop('feedback_batch', bad)
+            self.assertEqual(self.review().raw, before)
+        result = self.runop('feedback_batch', spec)
+        self.assertEqual([item['id'] for item in result['items']], ids)
+        for id_ in ids:
+            self.assertEqual([note['text'] for note in self.review().state['edits'][id_]['requests']], ['共同要求'])
+        self.assertEqual({file:m.body(self.read(file)) for file in original}, original)
+        self.check_index()
+
     def test_revision_intent_and_tradeoffs_are_metadata_only(self):
         source = self.read('main.tex')
         intent = {'goal': '限定性能结论', 'preserve': '效率句和实验数值保持原样'}

@@ -1665,6 +1665,9 @@ class Review:
         text = spec["text"]
         if not isinstance(text, str) or not text.strip():
             raise Conflict("A nonempty revision request is required")
+        purpose = spec.get('purpose', 'revision')
+        if purpose not in ('revision', 'skill', 'personal', 'paper_requirements', 'paper_background', 'discussion'):
+            raise Conflict('Unknown feedback purpose')
         # Validate live source too: notes must not silently target a manually changed proposal.
         obj = self.payload(edit)
         self.locate_edit(self.read(edit["file"]), edit, obj)
@@ -1677,12 +1680,16 @@ class Review:
                 raise Conflict('Only open feedback on the current candidate can be edited')
             if request['text'] != spec.get('previous_text'):
                 raise Conflict('Feedback changed concurrently; reread before editing')
+            if 'previous_purpose' in spec and request.get('purpose', 'revision') != spec['previous_purpose']:
+                raise Conflict('Feedback purpose changed concurrently; reread before editing')
             if any(request.get(key) != spec.get(key) for key in ('side', 'start', 'end', 'quote', 'option', 'display_context')):
                 raise Conflict('Editing feedback must preserve its exact selection')
             request['text'] = text.strip()
+            if 'purpose' in spec:
+                request['purpose'] = purpose
             return {}, {'id': id_, 'request': request, 'rewritten': False}
         request = {"id": uuid.uuid4().hex[:12], "text": text.strip(), "status": "open", "side": side,
-                   "version": spec["version"], "start": start, "end": end, "quote": spec["quote"]}
+                   "version": spec["version"], "start": start, "end": end, "quote": spec["quote"], 'purpose': purpose}
         if option:
             self.option(payload, option)
             request['option'] = option
@@ -1691,6 +1698,37 @@ class Review:
         edit.setdefault("requests", []).append(request)
         edit["status"] = "rework"
         return {}, {"id": id_, "request": request, "rewritten": False}
+
+    def feedback_batch(self, spec):
+        """Validate all selected generations and persist their independent notes together."""
+        self.assert_ready()
+        items = spec.get('items')
+        if not isinstance(items, list) or not items or any(not isinstance(item, dict) or
+                not all(isinstance(item.get(k), str) and item[k] for k in ('id', 'version')) for item in items):
+            raise Conflict('Provide exact selected item identities and versions')
+        if len({item['id'] for item in items}) != len(items):
+            raise Conflict('A review item may occur only once')
+        if not spec.get('session') or spec['session'] != self.state.get('session'):
+            raise Conflict('Review batch changed; select again')
+        text = spec.get('text')
+        if not isinstance(text, str) or not text.strip():
+            raise Conflict('A nonempty revision request is required')
+        purpose = spec.get('purpose', 'revision')
+        if purpose not in ('revision', 'skill', 'personal', 'paper_requirements', 'paper_background', 'discussion'):
+            raise Conflict('Unknown feedback purpose')
+        results = []
+        for item in items:
+            edit = self.state['edits'].get(item['id'])
+            if not edit or not edit['versions'] or edit['versions'][-1] != item['version']:
+                raise Conflict('Selected item is stale: ' + item['id'])
+            payload = self.payload(edit)
+            option = item.get('option')
+            side = 'candidate' if option else 'original'
+            anchor = self.option(payload, option)['after'] if option else payload['before']
+            _, result = self.feedback({'id': item['id'], 'version': item['version'], 'side': side,
+                'option': option, 'start': 0, 'end': len(anchor), 'quote': anchor, 'text': text, 'purpose': purpose})
+            results.append(result)
+        return {}, {'items': results}
 
     def embedded(self, content=None):
         a, block, b = split_state(self.text)
@@ -1956,7 +1994,7 @@ class Review:
                                    'candidate': self.option(json.loads(self.contents(version, 'span.json')), option or 'A')['after'],
                                    'option': option, 'requests': []}
                     groups[key]['options'] = json.loads(self.contents(version, 'span.json')).get('options')
-                groups[key]['requests'].append(copy.deepcopy(note))
+                groups[key]['requests'].append({**copy.deepcopy(note), 'purpose': note.get('purpose', 'revision')})
         if self.state_path.read_bytes() != self.raw:
             raise Conflict('Concurrent review modification while reading feedback context')
         current_ids = {id_ for id_, edit in self.state['edits'].items() if (selected is None or id_ in selected) and edit['status'] in PENDING
@@ -2054,6 +2092,7 @@ def main():
     p = sub.add_parser('feedback-context', help='Read open notes with their exact original/candidate generation; no writes')
     p.add_argument('--id', dest='ids', action='append')
     sub.add_parser("feedback", help="UTF-8 JSON anchored author annotation on stdin")
+    sub.add_parser('feedback-batch', help='Atomically add independent whole-item or explicit-option notes')
     p = sub.add_parser("inspect")
     p.add_argument("--id", required=True)
     p.add_argument("--version")
@@ -2159,6 +2198,8 @@ def dispatch(r, args):
             updated, result = r.propose(spec, args.id) if args.command == 'edit-option' else r.propose_options(spec, getattr(args, 'id', None), getattr(args, 'version', None))
         elif args.command == "feedback":
             updated, result = r.feedback(json.loads(sys.stdin.read()))
+        elif args.command == 'feedback-batch':
+            updated, result = r.feedback_batch(json.loads(sys.stdin.read()))
         elif args.command == 'link-questions':
             spec = json.loads(sys.stdin.read())
             updated, result = r.update_questions(args.id, args.version, spec['questions'], replace=args.replace)

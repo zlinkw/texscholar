@@ -1,6 +1,69 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
-const {createWorkbench, html, filterItems} = require('./review_workbench');
+const {createWorkbench, html, filterItems, staleBatchSelections} = require('./review_workbench');
+
+test('translation keeps candidate identity separate and reports a pure display formula', async () => {
+    let receive; const calls=[],messages=[];
+    const c={repo:'/translation',owner:'state',id:'1',version:'v1'};
+    const data={version:'v1',original:'Option A: prose',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Option A: prose',reason:'A',changes:[]},{label:'B',after:'$$x=1$$',reason:'B',changes:[]}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={read:async()=>data,style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,provider:()=> 'fixture',directory:()=>[],translate:async(text,provider,item)=>{calls.push({text,kind:item.kind,option:item.option});return {text,noTranslation:item.option==='B'?'纯行间公式无需翻译。':undefined};}};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    await receive({type:'translate',instance:'page',id:'1',version:'v1'});await view.whenTranslationIdle();
+    assert.equal(calls.length,3);assert.equal(calls[0].kind,undefined);assert.equal(calls[1].option,'A');
+    assert(messages.some(message=>message.key==='B' && message.noTranslation==='纯行间公式无需翻译。'));
+    await receive({type:'translate',instance:'page',id:'1',version:'v1'});await view.whenTranslationIdle();assert.equal(calls.length,3);
+});
+
+test('translation shows restoration warnings and supplier failure', async () => {
+    let receive;const messages=[];
+    const c={repo:'/translation',owner:'state',id:'1',version:'v1'},data={version:'v1',original:'Old text',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'New text',reason:'A',changes:[]}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={read:async()=>data,style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,provider:()=> 'fixture',directory:()=>[],translate:async text=>{if(text==='Old text')return {text:'旧文',warning:'部分公式未完整还原'};throw Error('供应商不可用');}};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    await receive({type:'translate',instance:'page',id:'1',version:'v1'});await view.whenTranslationIdle();
+    assert(messages.some(m=>m.type==='translationStatus'&&m.message.includes('部分公式未完整还原')));
+    assert(messages.some(m=>m.type==='translation'&&m.key==='A'&&m.error==='供应商不可用'));
+});
+
+test('question excerpts retain complete multiline math and Unicode change coordinates', () => {
+    const fs=require('node:fs'),vm=require('node:vm'),math=require('./review_math');
+    const client=fs.readFileSync(require.resolve('./review_workbench_client'), 'utf8');
+    const excerpt=vm.runInNewContext('('+client.slice(client.indexOf('function changedLines('),client.indexOf('\nfunction renderQuestionMode()',client.indexOf('function changedLines(')))+')',{math});
+    const old='远处 😀\nunchanged\n\\begin{alignat*}{2}\nx &= 1 \\\\\n+y &= 2\n\\end{alignat*}\nnear end\nfar end\n';
+    const now=old.replace('y &= 2','y &= 3');
+    const changes=math.wordChanges(old,now);
+    for (const [text,side,number] of [[old,'old','2'],[now,'new','3']]) {
+        const value=excerpt(text,changes,side);
+        assert(value.includes('\\begin{alignat*}{2}'));
+        assert(value.includes('y &= '+number));
+        assert(value.includes('\\end{alignat*}'));
+        assert(!value.includes('远处 😀'));
+    }
+    const inserted='one\ntwo\nthree\nfour\nfive\n', modified=inserted.replace('three','three plus');
+    assert(excerpt(modified,math.wordChanges(inserted,modified),'new').includes('three plus'));
+});
+
+test('hidden stale batch choices remain selected until explicitly reconsidered', () => {
+    const selection=new Map([['3',{id:'3',version:'v1',option:'B'}],['a',{id:'a',version:'v1',option:'C'}]]);
+    const directory=[{id:'3',version:'v2',options:['A','B']},{id:'a',version:'v1',options:['A','B','C']}];
+    assert.deepEqual(staleBatchSelections(selection,directory).map(item=>item.id),['3']);
+    assert.equal(selection.get('3').version,'v1');
+    assert.deepEqual(staleBatchSelections(selection,directory.filter(item=>item.id!=='a')).map(item=>item.id),['3','a']);
+});
+
+test('coordination follows the active scope and old completion cannot release a newer operation', async () => {
+    let receive; const messages=[];
+    const c={repo:'/fixture',owner:'state',id:'1',version:'v1'};
+    const data={version:'v1',original:'Old',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'New',reason:'A',changes:[]}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={read:async()=>data,style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[]};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    const first={repo:c.repo,owner:c.owner}, second={...first};
+    view.coordinating(first,true); view.coordinating(second,true); view.coordinating(first,false);
+    assert.equal(messages.findLast(m=>m.type==='coordinating').busy,true);
+    view.coordinating(second,false); assert.equal(messages.findLast(m=>m.type==='coordinating').busy,false);
+});
 
 test('selected feedback handoff uses the displayed batch and exact selected identities', async () => {
     let receive, session = 'batch1'; const calls = [], messages = [];
@@ -322,7 +385,7 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     await send('handoff'); assert.equal(events.pop().type, 'handoff');
     assert(html('test').includes('data-action="reopen"'));
     await send('note', {option: 'B', side: 'candidate', value: 'The model is compact.', start: 13, end: 20, text: '限定这个词'});
-    assert.deepEqual(events[0].selection, {side: 'candidate', option: 'B', start: 13, end: 20, quote: 'compact'});
+    assert.deepEqual(events[0].selection, {side: 'candidate', option: 'B', start: 13, end: 20, quote: 'compact', purpose:'revision'});
     assert(messages.some(m => m.type === 'notes'));
     await send('editNote', {request: 'note-1', text: '修正后的要求', previousText: '限定这个词'});
     assert.equal(records.get('1').data.edit.requests.length, 1);
@@ -806,7 +869,7 @@ test('an old note save does not consume a newer identical stash or clear its pag
     const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
     const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{showWarningMessage:async(_m,_o,a)=>a,showErrorMessage:m=>messages.push({error:true,message:m}),createWebviewPanel:()=>({visible:true,reveal(){},dispose(){dispose();},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
     const services={session:()=> 's',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],note:async()=>{started();await gate;}};
-    const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services),records=new Map([['1',{c,data}]]),state={c,drafts:{},note:'same',scope:'group',editors:[],textareas:{}};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services),records=new Map([['1',{c,data}]]),state={c,drafts:{},note:'same',purpose:'skill',scope:'group',editors:[],textareas:{}};
     const open=async instance=>{view.setRecords(records);await view.show(c);await receive({type:'ready',instance});};
     await open('p');await receive({type:'stashClose',instance:'p',id:'1',version:'v1',state});await open('q');
     const draft=messages.findLast(m=>m.type==='content').stashes[0];await receive({type:'restoreStash',instance:'q',id:'1',version:'v1',stash:draft.id});
@@ -816,6 +879,19 @@ test('an old note save does not consume a newer identical stash or clear its pag
     await open('s');await receive({type:'restoreStash',instance:'s',id:'1',version:'v1',stash:draft.id});
     release();await saving;assert.deepEqual(values.reviewDrafts[draft.id],replacement);
     assert.equal(messages.findLast(m=>m.type==='content').resume.note,'same');
+    assert.equal(messages.findLast(m=>m.type==='content').resume.purpose,'skill');
+});
+
+test('a changed purpose during note save remains in the draft', async () => {
+    let receive,release,start;const begun=new Promise(r=>start=r),gate=new Promise(r=>release=r),messages=[],saved=[];
+    const c={repo:'/purpose-race',owner:'state',id:'1',version:'v1'},data={id:'1',version:'v1',original:'Original',source_match:true,edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+    const services={session:()=> 's',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],note:async(_c,selected)=>{saved.push(selected.purpose);start();await gate;}};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'p'});
+    await receive({type:'dirty',instance:'p',id:'1',version:'v1',dirty:false,noteDirty:true,state:{c,drafts:{},note:'same',purpose:'personal'}});
+    const saving=receive({type:'note',instance:'p',id:'1',version:'v1',side:'original',text:'same',purpose:'personal'});await begun;
+    await receive({type:'dirty',instance:'p',id:'1',version:'v1',dirty:false,noteDirty:true,state:{c,drafts:{},note:'same',purpose:'discussion'}});
+    release();await saving;assert.deepEqual(saved,['personal']);assert.equal(messages.findLast(m=>m.type==='noteSaved').preserveInput,true);
 });
 
 test('saving the only restored note removes a record containing just an unchanged block', async () => {

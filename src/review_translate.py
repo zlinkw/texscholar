@@ -12,12 +12,14 @@ from review_pdf import _command, _environment_end
 
 PROVIDERS = {'google': 'Google', 'googleapi': 'Google（googleapis）', 'bing': 'Bing',
              'deepl': 'DeepL 网页版', 'transmart': '腾讯 TranSmart'}
+TEXT_ENVIRONMENTS = {'abstract', 'quote', 'quotation', 'itemize', 'enumerate', 'description'}
+DISPLAY_ENVIRONMENTS = {'equation', 'align', 'alignat', 'gather', 'multline', 'flalign', 'eqnarray', 'displaymath'}
 # Retain the standalone chunk helper for callers; service requests use complete
 # text like Translate for Zotero, not automatic 500-character fragments.
 REQUEST_CHARS = 500
 
 
-def protect_tex(text, title=False):
+def protect_tex(text, title=False, option=None):
     prefix = 'TEXSCHOLARX'
     while prefix in text:
         prefix += 'X'
@@ -25,8 +27,17 @@ def protect_tex(text, title=False):
     references = {r'\cite', r'\citep', r'\citet', r'\ref', r'\eqref', r'\cref', r'\Cref', r'\label', r'\url', r'\autoref'}
     while cursor < len(text):
         end = cursor
-        if text.startswith(r'\begin{', cursor):
-            end = _environment_end(text, cursor)
+        prefix_match = re.match(r'(?:方案\s*([ABC])|Option\s+([ABC]))\s*[:：]\s*', text[cursor:], re.I) if cursor == 0 and option in ('A','B','C') else None
+        if prefix_match and (prefix_match[1] or prefix_match[2]).upper() == option:
+            end = prefix_match.end()
+        elif text.startswith(r'\begin{', cursor):
+            full_end = _environment_end(text, cursor)
+            opening = re.match(r'\\begin\{([^{}]+)\}(?:\[[^]\n]*\])?', text[cursor:])
+            end = cursor + opening.end() if opening[1] in TEXT_ENVIRONMENTS else full_end
+        elif text.startswith(r'\end{', cursor):
+            closing = re.match(r'\\end\{([^{}]+)\}', text[cursor:])
+            if closing and closing[1] in TEXT_ENVIRONMENTS:
+                end = cursor + closing.end()
         elif text.startswith((r'\(', r'\['), cursor):
             closing = r'\)' if text[cursor + 1] == '(' else r'\]'
             stop = text.find(closing, cursor + 2)
@@ -43,6 +54,11 @@ def protect_tex(text, title=False):
             end += len(delimiter)
         elif text[cursor] == '\\':
             token, end = _command(text, cursor)
+            if token == r'\item' and end < len(text) and text[end] == '[':
+                stop = text.find(']', end + 1)
+                if stop < 0:
+                    raise ValueError('列表标签未闭合；未发送该项。')
+                end = stop + 1
             if token.rstrip('*') in references:
                 while end < len(text):
                     argument = end
@@ -79,6 +95,20 @@ def protect_tex(text, title=False):
             cursor += 1
     pattern = re.compile(re.escape(prefix) + r'\s*(\d+)\s*XEND', re.I)
     return ''.join(output), kept, pattern
+
+
+def display_math_only(text, option=None):
+    prepared, kept, pattern = protect_tex(text, option=option)
+    if not kept or pattern.sub('', prepared).strip():
+        return False
+    if option and re.fullmatch(r'(?:方案\s*'+option+r'|Option\s+'+option+r')\s*[:：]\s*', kept[0], re.I):
+        kept = kept[1:]
+    def display(value):
+        if value.startswith('$$') and value.endswith('$$') or value.startswith(r'\[') and value.endswith(r'\]'):
+            return True
+        match = re.match(r'\\begin\{([^{}]+)\}', value)
+        return bool(match and match[1].rstrip('*') in DISPLAY_ENVIRONMENTS)
+    return bool(kept) and all(display(value) for value in kept)
 
 
 def restore_tex(text, kept, pattern, warnings=None):
@@ -204,8 +234,8 @@ class Provider:
         return value
 
 
-def translate_text(text, provider, warnings=None, title=False):
-    prepared, kept, pattern = protect_tex(text, title)
+def translate_text(text, provider, warnings=None, title=False, option=None):
+    prepared, kept, pattern = protect_tex(text, title, option)
     if not re.search(r'[A-Za-z]', pattern.sub('', prepared)):
         return text
     leading = re.match(r'^\s*', prepared)[0]
@@ -230,15 +260,20 @@ def translate_many(provider_name, items, proxy=None, provider=None):
     if len({item['key'] for item in items}) != len(items):
         raise ValueError('翻译位置标识不能重复。')
     engine = provider or Provider(provider_name, proxy)
-    results, errors, warnings, translated = {}, {}, {}, {}
+    results, errors, warnings, skipped, translated = {}, {}, {}, {}, {}
     for index, item in enumerate(items):
         try:
             text = item['text']
-            key = (text, item.get('kind') == 'title')
+            option = item.get('option') if item.get('kind') == 'candidate' else None
+            if option is not None and option not in ('A','B','C'):
+                raise ValueError('候选方案标识无效。')
+            key = (text, item.get('kind') == 'title', option)
             if key not in translated:
                 notes = []
-                translated[key] = (translate_text(text, engine, notes, title=key[1]), ' '.join(notes))
+                translated[key] = (translate_text(text, engine, notes, title=key[1], option=option), ' '.join(notes))
             results[item['key']], note = translated[key]
+            if display_math_only(text, option):
+                skipped[item['key']] = '纯行间公式无需翻译。'
             if note:
                 warnings[item['key']] = note
         except (ValueError, OSError) as error:
@@ -249,7 +284,7 @@ def translate_many(provider_name, items, proxy=None, provider=None):
             # the same unavailable service and no switch to another recipient.
             errors.update({remaining['key']: message for remaining in items[index:]})
             break
-    return {'provider': provider_name, 'results': results, 'errors': errors, 'warnings': warnings}
+    return {'provider': provider_name, 'results': results, 'errors': errors, 'warnings': warnings, 'skipped': skipped}
 
 
 if __name__ == '__main__':

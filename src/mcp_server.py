@@ -16,7 +16,7 @@ INSTRUCTIONS = (
     'TeXScholar manages local LaTeX manuscript and reviewer-response drafting/revision. '
     'First call read_context; use author-confirmed file_roles, never guess filenames or overwrite templates. '
     'Submit ranked A/B/C together per source location; use submit_options for multiple locations, or propose_options/rework_options for one; '
-    'never overwrite formal prose before author acceptance. No global SKILL edits. '
+    'never overwrite formal prose before author acceptance. No global SKILL edits without explicit author approval of the specific proposal. '
     'Read exact author notes, current versions and feedback; no guessed question links. '
     'Acceptance, Git checkpoint and scientific closure are separate; AI tools do not accept candidates. '
     'Scope reads with ids/scopes/files; request relevant rule modules and reuse rules_receipt as known_rules. Do not reread CLI help or run setup for ordinary revisions. '
@@ -48,6 +48,9 @@ FULFILLMENT = schema({'request': STRING, 'request_version': STRING, 'request_tex
     'explanation': STRING, 'status': {'type':'string', 'enum':['attempted','partial','author','evidence']}},
     ['request','request_version','request_text','option','start','end','quote','explanation','status'])
 EVIDENCE_SCOPES = {'type':'array', 'items':schema({'file':STRING, 'start':{'type':'integer'}, 'end':{'type':'integer'}}, ['file','start','end'])}
+BACKGROUND_ENTRY = schema({'kind':{'type':'string','enum':['background','method','data','constraints','other']}, 'text':STRING,
+    'evidence':{'type':'string','enum':['author','source','unconfirmed']}, 'source':STRING}, ['kind','text','evidence','source'])
+PERSONAL_ENTRY = schema({'category':{'type':'string','enum':['writing','response','review','other']}, 'text':STRING, 'enabled':{'type':'boolean'}}, ['category','text','enabled'])
 READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS, 'scopes': SCOPES, 'known_feedback': FEEDBACK_RECEIPTS, 'references': REFERENCES, 'evidence_scopes':EVIDENCE_SCOPES}
 FACT_EVIDENCE = schema({'option':{'type':'string','enum':['A','B','C']}, 'change_index':{'type':'integer'},
     'kind':{'type':'string','enum':['number','citation','math','term']}, 'change_old':{'type':'array','items':{'type':'array'}},
@@ -65,9 +68,13 @@ SPEC = {'file': STRING, 'kind': {'type': 'string', 'enum': ['manuscript', 'respo
         'protected_terms': {'type':'array', 'items':STRING, 'description':'Only exact terms the author explicitly requires to preserve.'},
         'fact_evidence': {'type':'array', 'items':FACT_EVIDENCE}}
 TOOLS = [
-    ('get_instructions', 'Read requested rule modules; pass known_rules from an earlier receipt to omit unchanged modules. Core is always required. No SKILL edits.', schema(RULES), True),
+    ('get_instructions', 'Read requested rule modules; pass known_rules from an earlier receipt to omit unchanged modules. Core is always required. Specific SKILL changes require author approval.', schema(RULES), True),
     ('read_context', 'FIRST: ids for revisions, scopes for exact source/cursor/section, files only for full files. Default all pending items with local context. Pass known_feedback only from an attachment still in context; unchanged prose/notes are reused, source and state are checked. references reads explicit label/citation/macro keys. Reuse rules receipt.', schema(READ, ['project']), True),
     ('read_feedback', 'Read missing feedback generations, grouped once per ID/version; every note retains its exact option/selection. Optional ids scope.', schema({**BASE, 'ids': STRINGS}, ['project', 'state']), True),
+    ('read_paper_background', 'Read only this registered paper and exact review owner background; not an authorization or scientific verification.', schema(BASE, ['project','state']), True),
+    ('write_paper_background', 'Replace this paper background only with the last read revision; record author/source/unconfirmed and never copy a paper, secrets or review state.', schema({**BASE, 'revision':{'type':'integer','minimum':0}, 'entries':{'type':'array','items':BACKGROUND_ENTRY}}, ['project','state','revision','entries']), False),
+    ('read_personal_prompts', 'Read this VS Code profile’s personal cross-paper preferences; inherit general SKILL rules rather than copying them.', schema(BASE, ['project']), True),
+    ('write_personal_prompts', 'Update this profile only when the author explicitly requests a cross-paper preference; pass exact profile_id and revision, preserve other entries.', schema({**BASE, 'profile_id':{'type':['string','null']}, 'revision':{'type':'integer','minimum':0}, 'entries':{'type':'array','items':PERSONAL_ENTRY}}, ['project','profile_id','revision','entries']), False),
     ('begin_review', 'Explicit new batch only, after protecting unbacked accepted results. Reuses an existing author-approved state header; never silently starts a batch.',
      schema({**WRITE, 'round': STRING, 'files': {'type': 'array', 'items': STRING}, 'submission': STRING}, ['project', 'state', 'expected_sha256', 'round', 'files']), False),
     ('prepare_block', 'Preview fixed block boundaries first. Apply only after explicit author confirmation using the returned block_id and unchanged source/state revisions.',
@@ -104,6 +111,11 @@ TOOLS = [
          'questions': {'type': 'array', 'items': QUESTION}, 'question_refs': STRINGS, 'replace': {'type': 'boolean'}}, ['operation'])}},
          ['project', 'state', 'expected_sha256', 'operations']), False),
 ]
+
+def feedback_skill_protocol():
+    text = (HERE / 'collaboration-guide.md').read_text(encoding='utf-8')
+    return next(section for section in re.split(r'(?m)(?=^## )', text) if section.startswith('## 返修批注与 SKILL 诊断\n'))
+
 
 def rule_packet(args):
     if not isinstance(args.get('modules', []), list) or not isinstance(args.get('known_rules', {}), dict):
@@ -217,7 +229,7 @@ def feedback_packet(review, ids=None):
                 groups[key] = {'id': id_, 'file': edit['file'], 'version': version, 'current_version': edit['versions'][-1],
                     'original': review.contents(version, 'original.tex'),
                     'options': payload.get('options', [{'label': 'A', 'after': payload['after'], 'reason': '已有单方案'}]), 'requests': []}
-            groups[key]['requests'].append(note)
+            groups[key]['requests'].append({**note, 'purpose': note.get('purpose', 'revision')})
     verify_read(review)
     return {'items': list(groups.values()), 'sha256': digest(review.raw)}
 
@@ -316,7 +328,7 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
             continue
         edit = edits[id_]
         item = {key: value for key, value in edit.items() if key not in ('versions', 'requests', 'questions', 'previous_feedback')}
-        item.update(id=id_, requests=[note for note in edit.get('requests', []) if note['status'] == 'open'])
+        item.update(id=id_, requests=[{**note, 'purpose':note.get('purpose', 'revision')} for note in edit.get('requests', []) if note['status'] == 'open'])
         item['question_refs'] = []
         for question in edit.get('questions', []):
             key = tuple(question[k] for k in ('id', 'file', 'quote'))
@@ -408,6 +420,22 @@ class Server:
         if name == 'submit_options':
             return self.submit(args)
         root, git = self.project(args['project'])
+        if name in ('read_personal_prompts', 'write_personal_prompts'):
+            from paper_background import read_personal, write_personal
+            if name == 'read_personal_prompts':
+                return {**read_personal(self.registrations.parent), 'plugin_version':VERSION}
+            if 'profile_id' not in args:
+                raise Conflict('请先读取并提供当前个人资料身份。')
+            return {**write_personal(self.registrations.parent, args.get('profile_id'), args.get('revision'), args.get('entries')), 'plugin_version':VERSION}
+        if name in ('read_paper_background', 'write_paper_background'):
+            state = args.get('state')
+            if not isinstance(state, str) or not state:
+                raise Conflict('请明确选择当前论文的审核状态归属。')
+            Review(root, state, git, initialize=state == '.codex-review/state.json' and not (root / state).exists())
+            from paper_background import read, write
+            if name == 'read_paper_background':
+                return {**read(self.registrations.parent, root, state), 'plugin_version': VERSION}
+            return {**write(self.registrations.parent, root, state, args.get('revision'), args.get('entries')), 'plugin_version': VERSION}
         if name in ('migrate_state', 'recover_migration'):
             from review_migration import preview as migration_preview, apply as migration_apply, recovery_preview, recover as migration_recover
             from source_review import writer_lock_at
@@ -465,7 +493,11 @@ class Server:
             elif not owners:
                 context = initial_source_context(root, roles, args)
                 context.update(Review(root, '.codex-review/state.json', git, initialize=True).backup_packet())
+                from paper_background import read as read_background
+                from paper_background import read_personal
                 return {'initialized': False, 'plugin_version': VERSION, 'files': sources, 'file_roles': role_packet(roles), **rule_packet({**args, 'modules': [*args.get('modules', []), 'writing']}),
+                        'paper_background': read_background(self.registrations.parent, root, '.codex-review/state.json'),
+                        'personal_prompts': read_personal(self.registrations.parent),
                         'context': context,
                         **self.references(root, args),
                         'state': '.codex-review/state.json', 'sha256': digest(b''),
@@ -485,9 +517,20 @@ class Server:
             rules = args if review.state else {**args, 'modules': [*args.get('modules', []), 'writing']}
             references = self.references(root, args)
             verify_read(review)
-            return {'owner': state, 'context': result, 'file_roles': role_packet(roles), **rule_packet(rules), 'plugin_version': VERSION, **references}
+            packet = {'owner': state, 'context': result, 'file_roles': role_packet(roles), **rule_packet(rules), 'plugin_version': VERSION, **references}
+            from paper_background import read as read_background
+            from paper_background import read_personal
+            packet['paper_background'] = read_background(self.registrations.parent, root, state)
+            packet['personal_prompts'] = read_personal(self.registrations.parent)
+            if review.state and any(any(note.get('status') == 'open' for note in review.state['edits'][id_].get('requests', [])) for id_ in result.get('items', {})):
+                packet['feedback_skill_protocol'] = feedback_skill_protocol()
+            return packet
         if name == 'read_feedback':
-            return {**feedback_packet(review, args.get('ids')), 'plugin_version': VERSION}
+            packet = feedback_packet(review, args.get('ids'))
+            from paper_background import read as read_background
+            from paper_background import read_personal
+            return {**packet, **({'feedback_skill_protocol': feedback_skill_protocol()} if packet['items'] else {}),
+                    'paper_background': read_background(self.registrations.parent, root, state), 'personal_prompts':read_personal(self.registrations.parent), 'plugin_version': VERSION}
         if name not in {'begin_review', 'prepare_block', 'reassociate_block', 'sync_block', 'propose_options', 'rework_options', 'link_questions', 'relocate_options', 'reject_options'}:
             raise Conflict('Unknown or unavailable AI tool; decisions remain author actions')
         for key in ['expected_sha256', *(['id', 'version'] if name in ('rework_options', 'link_questions', 'relocate_options', 'reject_options', 'sync_block') else []),

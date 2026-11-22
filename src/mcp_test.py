@@ -15,6 +15,69 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_personal_prompts_are_shared_across_papers_and_revision_protected(self):
+        server = self.server()
+        base = {'project':str(self.root), 'state':'reply.tex'}
+        empty = server.call('read_personal_prompts', base)
+        self.assertEqual(empty['entries'], [])
+        first = {'category':'response','text':'先给可用文本','enabled':True}
+        saved = server.call('write_personal_prompts', {**base,'profile_id':None,'revision':0,'entries':[first]})
+        second = {'category':'writing','text':'解释简明','enabled':True}
+        with self.assertRaisesRegex(ValueError, '个人提示词已变化'):
+            server.call('write_personal_prompts', {**base,'profile_id':None,'revision':0,'entries':[second]})
+        current = server.call('write_personal_prompts', {**base,'profile_id':saved['profile_id'],'revision':1,'entries':[first,second]})
+        self.assertEqual(current['revision'], 2)
+        packet = server.call('read_context', {**base,'ids':[]})
+        self.assertEqual(packet['personal_prompts']['entries'], [first,second])
+        other = Path(tempfile.mkdtemp(prefix='other-profile-',dir=fixtures.ROOT)) / 'registrations'
+        other.mkdir()
+        (other/'workspace.json').write_text(json.dumps({'roots':[str(self.root)]}),encoding='utf-8')
+        self.assertEqual(Server(other).call('read_personal_prompts',base)['entries'], [])
+
+    def test_paper_background_is_scoped_and_rejects_old_revision(self):
+        server = self.server()
+        base = {'project':str(self.root), 'state':'reply.tex'}
+        empty = server.call('read_paper_background', base)
+        self.assertEqual(empty['revision'], 0)
+        entry = {'kind':'method','text':'本论文术语甲','evidence':'author','source':'作者说明'}
+        saved = server.call('write_paper_background', {**base,'revision':0,'entries':[entry]})
+        self.assertEqual(saved['revision'], 1)
+        with self.assertRaisesRegex(ValueError, '背景已变化'):
+            server.call('write_paper_background', {**base,'revision':0,'entries':[]})
+        self.assertEqual(server.call('read_context', {**base,'ids':[]})['paper_background']['entries'], [entry])
+        with self.assertRaisesRegex(ValueError, 'source'):
+            server.call('write_paper_background', {**base,'revision':1,'entries':[{**entry,'evidence':'source','source':''}]})
+        self.assertEqual(server.call('read_paper_background', base)['entries'], [entry])
+        with self.assertRaises(ValueError):
+            server.call('read_paper_background', {**base,'state':'../outside.tex'})
+
+    def test_paper_background_distinguishes_same_named_registered_roots(self):
+        server = self.server()
+        roots = [self.root / 'a' / 'paper', self.root / 'b' / 'paper']
+        for root in roots:
+            root.mkdir(parents=True)
+            (root / 'reply.tex').write_bytes((self.root / 'reply.tex').read_bytes())
+        (server.registrations / 'two-papers.json').write_text(json.dumps({'roots':[str(root) for root in roots]}), encoding='utf-8')
+        entries = [{'kind':'method','text':term,'evidence':'unconfirmed','source':''} for term in ('术语甲','术语乙')]
+        for root, entry in zip(roots, entries):
+            server.call('write_paper_background', {'project':str(root),'state':'reply.tex','revision':0,'entries':[entry]})
+        for root, entry in zip(roots, entries):
+            again=Server(server.registrations).call('read_paper_background', {'project':str(root),'state':'reply.tex'})
+            self.assertEqual(again['entries'], [entry])
+
+    def test_explicit_background_link_shares_one_revision_without_overwriting_target(self):
+        from paper_background import link, read, write
+        server=self.server(); storage=server.registrations.parent
+        other=self.root/'moved'; other.mkdir()
+        entry={'kind':'constraints','text':'本稿术语','evidence':'author','source':'作者'}
+        saved=write(storage,self.root,'reply.tex',0,[entry])
+        linked=link(storage,other,'reply.tex',{'project':saved['project'],'state':saved['state']},saved['revision'])
+        self.assertEqual(linked['entries'],[entry])
+        updated=write(storage,other,'reply.tex',1,[{**entry,'text':'新术语'}])
+        self.assertEqual(read(storage,self.root,'reply.tex')['revision'],updated['revision'])
+        with self.assertRaisesRegex(ValueError,'已有背景'):
+            link(storage,other,'reply.tex',{'project':saved['project'],'state':saved['state']},1)
+
     def test_sidecar_sync_preview_apply_and_unchanged_receipt(self):
         from source_review import Review
         state = '.codex-review/state.json'
@@ -203,7 +266,9 @@ class MCP(unittest.TestCase):
         server = self.server()
         args = {'project': str(self.root), 'state': 'reply.tex', 'ids': [id_], 'known_feedback': receipts}
         before = self.review().raw
-        data = server.call('read_context', args)['context']
+        response = server.call('read_context', args)
+        self.assertIn('只有作者明确确认具体方案后', response['feedback_skill_protocol'])
+        data = response['context']
         self.assertTrue(data['items'][id_]['feedback_reused'])
         self.assertTrue(data['items'][id_]['source_match'])
         for field in ('original', 'options', 'requests'):
@@ -1009,20 +1074,28 @@ class MCP(unittest.TestCase):
         version = self.review().state['edits'][id_]['versions'][-1]
         for option in 'AB':
             self.apply('feedback', {'id': id_, 'version': version, 'side': 'candidate', 'option': option,
-                'start': 0, 'end': 3, 'quote': 'The', 'text': '要求 ' + option})
+                'start': 0, 'end': 3, 'quote': 'The', 'text': '要求 ' + option, 'purpose':'personal' if option == 'B' else 'revision'})
+        legacy = self.review()
+        del legacy.state['edits'][id_]['requests'][0]['purpose']
+        legacy.persist({}, digest(legacy.raw))
         self.apply('propose_options', {'options': [{**o, 'after': o['after'].replace('.', ' here.')} for o in options]}, id_, version)
         new_version = self.review().state['edits'][id_]['versions'][-1]
         self.apply('feedback', {'id': id_, 'version': new_version, 'side': 'candidate', 'option': 'C',
             'start': 0, 'end': 3, 'quote': 'The', 'text': '新要求'})
         server = self.server()
         base = {'project': str(self.root), 'state': 'reply.tex'}
-        groups = server.call('read_feedback', {**base, 'ids': [id_]})['items']
+        packet = server.call('read_feedback', {**base, 'ids': [id_]})
+        self.assertIn('只有作者明确确认具体方案后', packet['feedback_skill_protocol'])
+        groups = packet['items']
         self.assertEqual(len(groups), 2)
         self.assertEqual(groups[0]['options'], options)
         self.assertEqual([n['option'] for n in groups[0]['requests']], ['A', 'B'])
+        self.assertEqual([n['purpose'] for n in groups[0]['requests']], ['revision', 'personal'])
         self.assertEqual(groups[0]['current_version'], new_version)
         self.assertEqual(groups[1]['requests'][0]['quote'], 'The')
-        self.assertEqual(server.call('read_feedback', {**base, 'ids': []})['items'], [])
+        empty = server.call('read_feedback', {**base, 'ids': []})
+        self.assertEqual(empty['items'], [])
+        self.assertNotIn('feedback_skill_protocol', empty)
 
     def test_batch_saves_ordered_successes_stops_on_failure_and_resumes_remaining_only(self):
         server = self.server()
