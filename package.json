@@ -48,7 +48,7 @@
       },
       {
         "command": "localLatex.aiSetupGuide",
-        "title": "打开 AI 协作配置引导（可重新启用提示）",
+        "title": "AI 协作配置：检查、修复与迁移",
         "category": "TeXScholar"
       },
       {
@@ -356,7 +356,7 @@
       },
       {
         "command": "localLatex.startPaperTask",
-        "title": "AI 论文助手（连接、配置与任务合一，不自动发送）",
+        "title": "AI 论文助手：选择写作任务（不自动发送）",
         "category": "TeXScholar",
         "icon": "$(sparkle)"
       },
@@ -382,6 +382,10 @@
       {
         "id": "localLatex.reviewActions",
         "label": "LaTeX：原文审核与批注"
+      },
+      {
+        "id": "localLatex.reviewAdvanced",
+        "label": "审核高级操作"
       }
     ],
     "menus": {
@@ -527,7 +531,14 @@
         {
           "command": "localLatex.copyAISetupPrompt",
           "when": "false"
-        }
+        },
+        { "command": "localLatex.inlineEditCandidate", "when": "false" },
+        { "command": "localLatex.inlineTranslate", "when": "false" },
+        { "command": "localLatex.inlineQuestions", "when": "false" },
+        { "command": "localLatex.prepareReviewBlock", "when": "false" },
+        { "command": "localLatex.resolveReviewHost", "when": "false" },
+        { "command": "localLatex.migrateReviewState", "when": "false" },
+        { "command": "localLatex.recoverReviewMigration", "when": "false" }
       ],
       "localLatex.editActions": [
         {
@@ -616,7 +627,17 @@
         {
           "command": "localLatex.startPaperTask",
           "group": "3_codex@1"
+        },
+        {
+          "submenu": "localLatex.reviewAdvanced",
+          "group": "9_advanced@10"
         }
+      ],
+      "localLatex.reviewAdvanced": [
+        { "command": "localLatex.prepareReviewBlock", "group": "1_blocks@10" },
+        { "command": "localLatex.resolveReviewHost", "group": "2_recovery@10" },
+        { "command": "localLatex.migrateReviewState", "group": "2_recovery@20" },
+        { "command": "localLatex.recoverReviewMigration", "group": "2_recovery@30" }
       ]
     },
     "configuration": {

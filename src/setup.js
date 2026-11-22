@@ -178,13 +178,15 @@ async function activate(context, vscode = require('vscode')) {
         output.show(true);
     });
     command('localLatex.chooseTool', async () => {
-        const keys = ['texFmtPath','gitPath','pythonPath','checkcitesPath','latexdiffPath','latexmkPath','ghPath','ripgrepPath'];
+        const keys = {texFmtPath:'整理 LaTeX 缩进 · tex-fmt', gitPath:'版本备份 · Git', pythonPath:'本地协作与审核 · Python',
+            checkcitesPath:'检查未引用文献 · checkcites', latexdiffPath:'生成差异文档 · latexdiff',
+            latexmkPath:'编译 LaTeX · latexmk', ghPath:'核对私有仓库 · GitHub CLI', ripgrepPath:'搜索写作标记 · ripgrep'};
         const cfg = vscode.workspace.getConfiguration('localLatex');
         const found = tools.discover(key => cfg.get(key)).found;
-        const picked = await vscode.window.showQuickPick(keys.map(key => {
+        const picked = await vscode.window.showQuickPick(Object.entries(keys).map(([key,label]) => {
             const info = cfg.inspect(key);
             const scope = info.workspaceFolderValue !== undefined ? '文件夹' : info.workspaceValue !== undefined ? '工作区' : info.globalValue !== undefined ? '用户' : '默认';
-            return {label:key, description:String(cfg.get(key)), detail:`来源：${scope}；${found[key] ? '已找到 ' + found[key] : '未找到当前配置'}`, key};
+            return {label, description:String(cfg.get(key)), detail:`${key}；来源：${scope}；${found[key] ? '已找到 ' + found[key] : '未找到当前配置'}`, key};
         }), {title:'选择要修改的工具'});
         if (!picked) return;
         const detected = tools.findExecutable(tools.TOOLS[picked.key], tools.searchDirectories());

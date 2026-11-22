@@ -39,4 +39,14 @@ test('Chinese menu aliases retain original targets, URI arguments, results and f
     assert(!context.some(x => x.command === 'latex-workshop.synctex'));
     assert(!context.some(x => /^.*copilot/i.test(x.command || '')));
     for (const item of pkg.contributes.menus['localLatex.sectionActions']) assert(definitions.has(item.command));
+    assert(definitions.get('localLatex.startPaperTask').title.includes('选择写作任务'));
+    assert(!definitions.get('localLatex.startPaperTask').title.includes('配置与任务合一'));
+    assert(pkg.contributes.menus['localLatex.reviewActions'].some(item => item.submenu === 'localLatex.reviewAdvanced'));
+    const hidden = new Set(pkg.contributes.menus.commandPalette.filter(item => item.when === 'false').map(item => item.command));
+    for (const id of ['localLatex.prepareReviewBlock','localLatex.resolveReviewHost','localLatex.migrateReviewState','localLatex.recoverReviewMigration']) {
+        assert(hidden.has(id) && definitions.has(id));
+        assert(pkg.contributes.menus['localLatex.reviewAdvanced'].some(item => item.command === id));
+    }
+    for (const id of ['localLatex.inlineEditCandidate','localLatex.inlineTranslate','localLatex.inlineQuestions']) assert(hidden.has(id) && definitions.has(id));
+    assert(definitions.has('localLatex.reviewWorkbench'));
 });

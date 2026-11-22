@@ -118,9 +118,9 @@ test('activating in a code-only or untrusted project applies no user settings', 
 test('tool selection keeps explicit scope and cancellation never writes a setting', async () => {
     const f = fixture({':gitPath':'git'}), handlers = new Map();
     f.context.subscriptions = [];
-    const steps = [];
+    const steps = []; let toolMenu;
     f.vscode.window = {createOutputChannel:() => ({appendLine() {},dispose() {}}),
-        showQuickPick:async options => {const next=steps.shift(); return options.find(item => item.label === next);},
+        showQuickPick:async options => {if (options.some(item => item.key === 'gitPath')) toolMenu = options; const next=steps.shift(); return next === undefined ? undefined : options.find(item => item.label === next || item.key === next);},
         showInputBox:async () => process.env.LOCAL_LATEX_GIT,
         showInformationMessage:() => {}, showErrorMessage:message => {throw Error(message);}};
     f.vscode.commands = {registerCommand:(id,fn) => {handlers.set(id,fn); return {dispose() {}};}};
@@ -130,6 +130,9 @@ test('tool selection keeps explicit scope and cancellation never writes a settin
     steps.push('gitPath', '自定义命令或路径');
     await handlers.get('localLatex.chooseTool')();
     assert.deepEqual(f.writes, [], 'cancel scope leaves old choice untouched');
+    assert.equal(toolMenu.length,8);
+    assert(toolMenu.every(item => /[\u4e00-\u9fff]/.test(item.label) && item.detail.includes(item.key)));
+    assert(toolMenu.find(item => item.key === 'gitPath').label.includes('Git'));
     steps.push('gitPath', '自定义命令或路径', '用户');
     await handlers.get('localLatex.chooseTool')();
     assert.equal(f.values.get(':gitPath'), process.env.LOCAL_LATEX_GIT);

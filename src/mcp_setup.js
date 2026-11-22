@@ -102,9 +102,16 @@ async function chooseTask(context, vscode) {
         if (!chat) return;
         keepCurrentChat = chat.keep;
     }
-    const preview = await taskRequest(goal, [folder.uri.fsPath], false, '确认后将核验 MCP 连接，并在此处显示实际连接状态。', readRequest, task.id);
     const destination = commands.includes('chatgpt.addFileToThread') ? (keepCurrentChat ? '当前聊天' : '新聊天') : '剪贴板（需要再次确认）';
-    const answer = await vscode.window.showInformationMessage('目标：' + destination + '。请核对任务说明；不会自动发送。\n\n' + preview,
+    const selectedScope = readRequest?.scopes?.[0];
+    const range = selectedScope ? ['文件：' + selectedScope.file, '选中原文：\n' + selectedScope.quote,
+        '前文：\n' + selectedScope.left, '后文：\n' + selectedScope.right].join('\n\n')
+        : readRequest?.files ? '文件：' + readRequest.files.join('、') : '范围：稍后在 Codex 说明';
+    const preview = ['任务：' + task.label, ...(task.goal ? ['任务说明：' + task.goal] : []),
+        '目标：' + destination, '项目：' + folder.uri.fsPath, range,
+        ...(extra.trim() ? ['补充要求：\n' + extra.trim()] : []),
+        '确认后可能登记连接；仅加入输入区或复制，不自动发送，也不接收修改。'].join('\n\n');
+    const answer = await vscode.window.showInformationMessage(preview,
         {modal:true}, '确认加入');
     if (answer !== '确认加入') return;
     return {goal, roots:[folder.uri.fsPath], readRequest, taskKind:task.id, keepCurrentChat};

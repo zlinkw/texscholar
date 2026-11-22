@@ -15,3 +15,9 @@ editor-final-2、editor-final-3 使用正确 LOCAL_LATEX_FORMATTER，均 exit 0�
 最终产品候选的 editor-final-4 exit 0（164 项），完整命令与环境在目录 process.txt；后续仅修改 backup.js，故 editor 覆盖不失效。c3-final-stage exit 0（8 项），包括实际隔离 Git 正常推送、已暂存范围外文件逐字保留、所选文件与已有暂存重叠时拒绝、拒绝公开目标和 hook；同时覆盖两入口取消和仅保存选中脏缓冲。普通项目备份可保留范围外暂存；审核成果检查点沿用原有整暂存区非空拒绝，保护但不备份，不能声称此入口支持带范围外暂存完成推送。未运行真实 cleanup 后段，未做真实 UI 跨进程或原用户环境升级测试。
 
 editor-final-5 对更新后的公共 backup 模块再次运行规定组 exit 0（164 项）。随后仅在备份按钮增加选择项与手动暂存重叠的提前拒绝，并扩展该按钮测试；c3-overlap-final exit 0（3 项），确认重叠在保存脏缓冲前拒绝。该后续变化不触及 editor 命令或共享后端；组合覆盖为 editor-final-5 与 c3-overlap-final。所有执行日志均保留，未将首败改为通过。
+
+R1：总控 C6 正常 Development 功能、跨进程及 Git 组合有效，但预览暴露内部协议、工具名和命令入口不够易懂；原始证据及驱动失败见 plan 的 C6 节。此前仅按旧档位规则短暂只读待命；新规则下实际 gpt-6.1-terra/high/priority，match/continue，4 次压缩，继续 R1。
+
+预览现只展示任务、聊天、项目、实际文件/选区及前后文、可选补充和不发送/不接受提示；完整协议与精确定位仍在最终附件。八项工具显示中文用途及工具名，内部键作次要信息。修改任务/配置命令标题；三个仅打开审核页的重复命令从命令面板隐藏，原 ID 仍注册并可从审核页使用；四个块/迁移/宿主恢复命令移至 LaTeX 编辑器右键“原文审核与批注 → 审核高级操作”，旧 ID 不变。README 给出入口。原功能/持久化和暂存保护继续复用 C6 证据；未修改业务事务、配置作用域和发行状态。
+
+R1 定向检查 cwd D:/GitRepo/texscholar，argv `C:/Program Files/nodejs/node.exe --test --test-concurrency=1 src/writing.test.js src/setup.test.js src/menu_commands.test.js src/inline_review.test.js`，env `LOCAL_LATEX_TEST_ROOT=D:/latex-writing-checks/choice-settings-20261122/r1-local-2 LOCAL_LATEX_PYTHON=C:/Python314/python.exe LOCAL_LATEX_GIT=D:/Git/cmd/git.exe PYTHONUTF8=1`，exit 0、56 项；完整 argv/cwd/env/stdout/stderr 在该目录。覆盖人类可读预览与完整附件、工具菜单八项及取消、命令路由和旧注册、迁移及审核调用方。首次 r1-local-1 exit 1（19项中1失败），新增测试 mock 对缺失步骤误匹配 undefined key，修正 mock 后上述结果通过；原日志保留。未重跑全部 editor、真实 UI、清理后段及未受影响完整组；总控 C6 补验实际预览、菜单和发现性，未通过不得发行。

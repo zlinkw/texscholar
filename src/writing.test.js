@@ -170,6 +170,10 @@ test('task choices retain exact selection, project identity and distinct instruc
     assert.equal(polish.readRequest.scopes[0].quote, '原文');
     assert(preview.includes('/paper/main.tex') || preview.includes('main.tex'));
     assert(preview.includes('保留原意'));
+    assert(preview.includes('选中原文：\n原文'));
+    assert(!/read_context|expected_plugin_version|"scopes"/.test(preview));
+    const packet = await taskRequest(polish.goal, polish.roots, false, undefined, polish.readRequest, polish.taskKind);
+    assert(packet.includes('read_context') && packet.includes('expected_plugin_version') && packet.includes('"quote":"原文"'));
     picks = ['discuss','later'];
     const discuss = await chooseTask(context, vscode);
     assert.notEqual(discuss.goal, polish.goal);

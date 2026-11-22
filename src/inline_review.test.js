@@ -126,6 +126,18 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         changed: () => fileChanged(uri(owner)), saved: () => saveHandler(document), savedDocument: doc => saveHandler(doc), texChanged: () => texChanged(uri(file)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
 }
 
+test('hidden compatibility commands remain registered and review aliases open the workbench', async () => {
+    const f=hostFixture(); await f.ui.ready; await f.ui.refresh({repo:f.root, owner:'reply.tex'});
+    const c=f.rows()[0].children[0].command.arguments[0];
+    for (const id of ['localLatex.inlineEditCandidate','localLatex.inlineTranslate','localLatex.inlineQuestions']) {
+        assert.equal(typeof f.handlers.get(id),'function');
+        await f.handlers.get(id)(c);
+    }
+    assert.equal(f.panels,1);
+    for (const id of ['localLatex.prepareReviewBlock','localLatex.migrateReviewState','localLatex.recoverReviewMigration'])
+        assert.equal(typeof f.handlers.get(id),'function');
+});
+
 test('refresh reuses only exact immutable option differences and keeps fresh source metadata', async () => {
     const f=hostFixture(); await f.ui.ready;
     f.data.options.forEach((option,i)=>{option.changes=[{old_start:i,new_start:i}];option.scope={old_start:i};});
