@@ -161,4 +161,12 @@ E7的T增量：先复用E5T有效请求捕获/纯公式原生UI，最终混合�
 
 ## 当前状态与下一动作
 
-初始计划已于e33e8c8普通push/fetch，E1–E6正在实现/小验收，未冻结/签完成。旧Terra因真实caveman条件交班并释放租约；现任local/01a20284-4ad8-70b1-87ff-61225eaec6aa已在execution实录Terra6.1/high/default match/continue及接管，持有产品/测试/UI/隔离配置租约，不能重放未知操作。S/U/P三层固定，R已批准；T现也明确批准并入实施/验证/发布安装，行内公式英文原样，旧“只读/待审/不修”限制撤销。总控本次只更新plan/index，未碰产品/测试/共享Git索引；将真实消息授权现任Terra在下一对应验证批精确纳入当前plan/index修订。总控暂不动共享Git元数据，旧执行和原检查会话不再唤醒。
+E6已冻结交包：d91ad4dfafbc695810d26ca1ec994dcf2270ebd4，普通push/fetch后总控再核HEAD==origin/master、master clean。现任Terra无在途操作，产品冻结监督及测试/UI/隔离配置租约已交总控执行E7；尚未发行。总控已审实际diff及必要消费者，核最终editor-t-final2 171项、backend-r-second 148项、translation-t-final2 9项真实exit0；Python审核/MCP事务未受后续翻译/GUI修改影响，按原范围复用。各项局部原生UI、请求捕获、隔离SKILL批准协议及首败/未测范围见execution，不把生成附件或CLI0扩大为完整流程通过。
+
+E7进行中，独占新样例位于本代外置根controller-e7及controller-e7b。首轮controller-e7真实取得三组件暂存及隐藏旧选择禁用里程碑，随后观察器在同一JS上下文重复声明const c而失败（observer1、hostfalse、CLI0、外层1），未接收任何新项；所有日志及失败保留，不当作产品缺陷或验收通过。已修外置观察脚本并新建controller-e7b，不重放首轮状态。真实论文、真实全局资料/安装未操作。
+
+E7首次不通过，发原Terra R1两项返修，E8保持禁止。controller-e7b在首次批接后CDP旧session消失而观察失败；controller-e7c修外置读上下文后准确接受1A/aC并停在Q1的3，但范围外2A消失。controller-e7d新样例将源编辑器放第二组排除夹具布局因素，before_accept记录aC/2A/1A，按当前Q1接收后真实源与决定只有1A/aC，当前仍Q1的3，after_accept选择却为空；observer1/hostfalse/CLI0/外层1，确定范围外批选丢失而非错误接收，不能称整轮通过。隐藏stale前置禁用及当前问题内续审里程碑有效。所有新场景私有未切桌面、前中后用户前台一致；各次宿主已结束，没有重放已接收或未知操作。
+
+R1另项：T改用(provider,text,kind,option)缓存键后，annotationSelection仍按旧(provider,source)取缓存，完成译文的划词批注因此报“译文已变化或未就绪”。外置controller-translation-selection.js调用当前真实createWorkbench，先成功生成候选A译文再提交同基准选区，note实际0次且断言exit1；原始messages/notes在controller-translation-selection-result.json。这是受影响真实消费者回归缺口，不是网络或AI质量问题；要求按候选/原文/问题精确身份修消费端，保留失效保护，不用仅匹配文本回退混淆方案。该受控调用证明接口反例，不冒充原生UI。
+
+R1只修上述选择生命周期与翻译选区消费者并补必要局部回归；其他E7未完成项仍由总控在返修交包后用新样例继续：跨进程/不同安装路径U/P与三稿用途、所选混合意见、共享项单份决定、实际后台Git/PDF/export哨兵。有效局部结果继续复用，不机械全组。总控本次仅维护plan/index，将全部产品/测试/UI租约交回原现任Terra；无在途命令或宿主，真实论文/全局资料/安装未动。
