@@ -62,10 +62,14 @@
 
 所有GUI验证遵循silent-ui-screenshot：测试宿主启动、交互、截图全程不抢焦；沿用已证未切换私有桌面CreateDesktopW/CreateProcessW.lpDesktop并核实际窗口/前台/输入桌面，不能仅凭独立profile、CDP或隐藏控制台宣布无感。截图按技能目录保留并实际查看，不删除。最多两项确已隔离的独立检查并行，共享UI/配置/Git串行。
 
-当前：U1–U4中间结果 `d0f2f194f9c30def2d2857878dda9d20b78bb6e8` 已push/fetch；用户决定前记录提交 `78e794c88cc5f40bc64740dd52343c52f33d6636`，此次修订前HEAD==origin/master、clean。U5未冻结，U6/U7未开始。执行者此前交回全部租约，无在途过程；本修订提交后总控通过完整续派交还产品、测试/UI、隔离配置与Git租约给原Terra，保留plan/index。editor-fourth 173项及局部UI仅覆盖中间版本，新增路由完成后须覆盖受影响部分，不能视为最终通过。
+当前：Terra U5冻结交包 `4338db1e81d7023d3f3978a0e615415df843ab93`，HEAD==origin/master、clean，交还全部租约无在途；新增问题卡精确路由复用原段落按钮与业务处理器，editor-sixth174、route-second及局部真实UI适用范围见execution。总控已读最终diff/调用链及深浅截图，U6于下述R1未通过，U7未开始；原通过局部证据保留，不能当最终通过。R1续派后产品/测试UI/隔离配置/Git租约交原Terra，总控保留plan/index。
 
 2026-11-23范围决定已解决：原问题卡只有复选、方案下拉和“打开本项”，段落动作以active项为目标，直接复制会串项；用户现明确选2，批准上述有限路由，不再等待确认，也不以只读三列替代最终功能。总控已审中间实际diff及两张局部截图，尚未签最终视觉或功能验收。继续原计划的极简画布、两模式同一动作组织、原文独立ABC并列、背景选择及阴影，不能只补路由而遗漏布局；原型代码仍禁止复用。
 
 执行期间普通进度写execution，只有完整交包、必要交权、真实阻断或需决定事实发消息；总控无独立待办时按事件协调进入角色空闲，不轮询催问。
 
-真实返修计数：0。最终结论、实际提交与未测在对应阶段完成后据实填写。
+U6首次反例/R1：全新正常Development `D:/latex-writing-checks/canvas-ui-20261123/controller-busy1`，在真实sync-saved调用边界受控暂停，只为确定协调中的按钮状态，不修改产品。`coordinating=true`时原段落接收禁用、模式可切，而Q1四项ABC共12个新增问题卡接收按钮全部disabled=false。`busy-state.json`与截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-7cc4db1660a94a76ba95f3b8e599a198.png`（已看）为证；未点击接收，不称发生错写或已完成串项检查。新按钮没有原写操作标记/协调条件，实际按钮消费者与原状态脱节。需沿原动作及目标条件修正新增卡片的可操作呈现，保留后台guard与只读/模式能力；不削弱校验、不重构业务或新增自动排队/重试。
+
+`controller-busy1-setup/prepare`各exit0，run外层exit1、observer1、host-result false（CLI0不是业务通过），真实断言失败而非观察器误判。pause已释放，自有宿主/观察器及相关进程均退出；私有桌面未切换、前中后HWND86837022与Default相同，无GUI落用户桌面，所有失败保留。完整argv/cwd/env/stdout/stderr和宿主/桌面结果在该根及同名process.json。前置只读读取曾误找不存在的fixture entry.js/项目settings文件exit1，无业务结论。复验用新样例，不重放旧状态。
+
+R1后仍需U6原定的新鲜多卡跨文件/同方案字母、共享项、三稿/批选与迟到动作组合，核真实落盘及保护哨兵；后台Git/PDF/export未变范围复用0.9.58，独立预览PDF完成复用Terra ui-sixteenth。真实返修计数：1（新增问题卡忙态衔接）。最终结论、实际提交与未测在对应阶段完成后据实填写。
