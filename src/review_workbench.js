@@ -84,6 +84,8 @@ function createWorkbench(vscode, context, services) {
     let translationRun, translationRequested = false, retryTranslation = false, translationEpoch = 0;
     let lastRecords = new Map(), sourceSelection;
     let ready = false, client, uiState, notice, reading, handoffRetry, restoredDraft;
+    let batchScope, batchItems = [];
+    const selectionScope = (c, session) => JSON.stringify([c.repo, c.owner, session]);
     let appearanceWork = Promise.resolve(), draftWork = Promise.resolve();
     const observedDraftSessions = new Map();
     let navigationFilter = {query: '', kind: '', notes: false};
@@ -243,10 +245,12 @@ function createWorkbench(vscode, context, services) {
         });
     }
     function packet() {
+        const session = services.session?.(active), scope = selectionScope(active, session);
+        if (batchScope !== scope) {batchScope = scope; batchItems = [];}
         const {file, kind, block_id, location: originalLocation, display_location, versions, requests, questions, previous_feedback} = loaded.edit;
         const location = display_location || originalLocation;
         return {type: 'content', c: active, data: {original: loaded.original, source_match: loaded.source_match, conflict: loaded.conflict, block: loaded.block, edit: {file, kind, block_id, location, versions, requests, questions, previous_feedback}, intent: loaded.intent, fulfillment: loaded.fulfillment || [], fact_evidence: loaded.fact_evidence || [], fewer_options_reason: loaded.fewer_options_reason},
-            options: options(loaded), directory: directory(), session: services.session?.(active), navigationFilter, style: services.style(), stashes: storedDrafts(active), questions: questionTable(active),
+            options: options(loaded), directory: directory(), session, batchItems, navigationFilter, style: services.style(), stashes: storedDrafts(active), questions: questionTable(active),
             sourceSelection, resume: uiState, reading, mode: context.globalState?.get('reviewMode', 'paragraph') || 'paragraph', questionViewStyle:context.globalState?.get('reviewQuestionViewStyle','snippets') || 'snippets',
             questionPosition: services.session?.(active) && services.session(active) === context.workspaceState?.get('reviewQuestionPosition', {})[JSON.stringify([active.repo,active.owner])]?.session
                 ? context.workspaceState.get('reviewQuestionPosition', {})[JSON.stringify([active.repo,active.owner])].key : '',
@@ -268,8 +272,9 @@ function createWorkbench(vscode, context, services) {
         const source = question ? question.quote : option ? option.after : loaded.original;
         let text = source;
         if (value.side === 'translation') {
-            const entry = translations.get(JSON.stringify([value.provider, source]));
-            if (value.provider !== services.provider() || !entry || entry.error) throw new Error('译文已变化或未就绪，请重新翻译并选择。');
+            const item = option && !question ? {text:source, kind:'candidate', option:option.label} : {text:source};
+            const entry = translations.get(translationKey(value.provider, item));
+            if (value.provider !== services.provider() || !entry || entry.error || entry.noTranslation) throw new Error('译文已变化或未就绪，请重新翻译并选择。');
             text = entry.text;
         }
         const span = selection(text, value.value, value.start, value.end);
@@ -392,6 +397,8 @@ function createWorkbench(vscode, context, services) {
         const session = services.session?.(c);
         if (session && context.workspaceState) await updateDrafts(c, session);
         if (request !== showRequest || session && services.session(c) !== session) return;
+        const scope = selectionScope(c, session);
+        if (batchScope !== scope) {batchScope = scope; batchItems = [];}
         active = {...c}; loaded = data; dirty = noteDirty = false; hasPending = false; sourceSelection = undefined; history = undefined;
         uiState = notice = handoffRetry = restoredDraft = undefined;
         if (restore) {uiState = readingState(restore.state); navigationFilter = restore.filter;}
@@ -402,7 +409,7 @@ function createWorkbench(vscode, context, services) {
             panel.onDidChangeViewState(({webviewPanel}) => {if (!webviewPanel.visible) {ready = false; translationRequested = retryTranslation = false;}});
             panel.onDidDispose(() => {panel = undefined; active = loaded = pending = sourceSelection = undefined;
                 lastRecords = new Map(); hasPending = dirty = noteDirty = ready = handling = false; pendingSynchronized.clear(); showRequest++;
-                uiState = notice = client = reading = relatedReturn = restoredDraft = undefined; translationEpoch++; translations.clear();});
+                uiState = notice = client = reading = relatedReturn = restoredDraft = batchScope = undefined; batchItems = []; translationEpoch++; translations.clear();});
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
@@ -515,6 +522,12 @@ function createWorkbench(vscode, context, services) {
             client = message.instance; ready = true; sendContent(); return;
         }
         if (!active || !panel) return;
+        if (message.type === 'batchSelection') {
+            if (message.instance !== client || message.repo !== active.repo || message.owner !== active.owner || message.session !== services.session?.(active) || batchScope !== selectionScope(active, message.session)) return;
+            if (!Array.isArray(message.items) || message.items.some(i => !i || typeof i.id !== 'string' || typeof i.option !== 'string' || i.version === undefined) || new Set(message.items.map(i => i.id)).size !== message.items.length) return;
+            batchItems = message.items.map(({id, version, option}) => ({id, version, option}));
+            return;
+        }
         if (message.type === 'rendered') {services.trace?.({stage:'webview_render',id:message.id,version:message.version,ms:message.ms}); return;}
         if (['accept','acceptBatch','saveAccept','reject'].includes(message.type)) services.trace?.({stage:'webview_request',id:message.id,version:message.version,
             displayed_id:active.id,displayed_version:active.version,roundtrip_to_host_ms:message.sentAt ? Date.now()-message.sentAt : undefined});
@@ -710,6 +723,7 @@ function createWorkbench(vscode, context, services) {
                     if (dirty || noteDirty) throw new Error('当前页已有未保存内容，请先保存或暂存后再恢复。');
                     restoredDraft = {id:draft.id, snapshot:JSON.stringify(context.workspaceState.get('reviewDrafts', {})[draft.id])};
                     uiState = {...draft.state, c:{...active}};
+                    if (uiState.batchNote?.trim() && Array.isArray(uiState.batchItems)) batchItems = uiState.batchItems.map(item => ({...item}));
                     if (uiState.selected?.side === 'translation') uiState.selectionStale = true;
                     dirty = Object.keys(uiState.drafts).length > 0 || uiState.blockDraft !== undefined && uiState.blockDraft !== loaded.block?.text.replace(/\r\n/g, '\n');
                     noteDirty = !!uiState.note?.trim() || !!uiState.editingNote;
@@ -877,6 +891,7 @@ function createWorkbench(vscode, context, services) {
                 if (message.questionOnly && (!message.questionKey || items.some(item=>!questionIds.has(item.id)))) throw new Error('问题范围已变化，请重新选择；未接收任何项。');
                 const request = showRequest;
                 await services.acceptBatch(items.map(i => ({...c, ...i, repo: c.repo, owner: c.owner})), session);
+                if (batchScope === selectionScope(c, session)) batchItems = batchItems.filter(selected => !items.some(item => item.id === selected.id && item.version === selected.version && item.option === selected.option));
                 if (panel === operationPanel) post({type:'batchAccepted', items, session, repo:c.repo, owner:c.owner});
                 if (request !== showRequest) return;
                 const eligible = filterItems(directory(), {...navigationFilter, queue:'active'});

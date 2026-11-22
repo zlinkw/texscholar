@@ -947,3 +947,35 @@ test('typing a newer candidate while save-and-accept runs keeps it and stops acc
     assert.deepEqual(accepted,[]);assert.equal(messages.findLast(m=>m.type==='saved').resume.drafts.A,'newer');
     assert(messages.some(m=>m.error&&m.message.includes('保存期间产生的新草稿')));
 });
+
+test('batch selections survive page reconstruction and remove only accepted identities', async () => {
+    let receive, session='s'; const messages=[];
+    const c={repo:'/batch',owner:'state',id:'1',version:'v1'};
+    const data={id:'1',version:'v1',original:'Original',source_match:true,edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'Candidate'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+    const services={session:()=>session,read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],acceptBatch:async()=>{}};
+    const view=createWorkbench(vscode,{subscriptions:[]},services); view.setRecords(new Map([['1',{c,data}]])); await view.show(c); await receive({type:'ready',instance:'one'});
+    const items=[{id:'1',version:'v1',option:'A'},{id:'2',version:'old',option:'B'}];
+    await receive({type:'batchSelection',instance:'one',repo:c.repo,owner:c.owner,session,items});
+    await receive({type:'ready',instance:'two'}); assert.deepEqual(messages.findLast(m=>m.type==='content').batchItems,items);
+    await receive({type:'acceptBatch',instance:'two',repo:c.repo,owner:c.owner,id:'1',version:'v1',session,items:[items[0]]});
+    await receive({type:'ready',instance:'three'}); assert.deepEqual(messages.findLast(m=>m.type==='content').batchItems,[items[1]]);
+    session='next'; await receive({type:'ready',instance:'four'}); assert.deepEqual(messages.findLast(m=>m.type==='content').batchItems,[]);
+    await receive({type:'batchSelection',instance:'one',repo:c.repo,owner:c.owner,session:'s',items});
+    await receive({type:'ready',instance:'five'}); assert.deepEqual(messages.findLast(m=>m.type==='content').batchItems,[]);
+});
+
+test('translation selection resolves the exact candidate cache key and rejects stale provider', async () => {
+    let receive, provider='controlled'; const messages=[], notes=[];
+    const c={repo:'/translated',owner:'state',id:'1',version:'v1'}, data={id:'1',version:'v1',original:'Same',source_match:true,edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[],questions:[{id:'q',file:'x',quote:'Question'}]},options:[{label:'A',after:'Same'},{label:'B',after:'Same'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={read:async()=>data,style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,provider:()=>provider,directory:()=>[],translate:async(_text,_provider,item)=>({text:item.option || item.key}),note:async(...args)=>notes.push(args)};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'p'});await receive({type:'translate',instance:'p',id:'1',version:'v1'});await view.whenTranslationIdle();
+    const send=extra=>receive({type:'note',instance:'p',id:'1',version:'v1',side:'translation',provider:'controlled',start:0,end:1,text:'note',...extra});
+    await send({option:'A',value:'A'}); await send({option:'B',value:'B'}); await send({value:'original'}); await send({question:data.edit.questions[0],value:'question0'});
+    assert.equal(notes.length,4);assert.equal(notes[0][1].option,'A');assert.equal(notes[1][1].option,'B');assert.equal(notes[3][1].display_context.source_side,'question');
+    await send({option:'A',value:'B'}); await send({option:'missing',value:'A'});
+    await receive({type:'note',instance:'p',id:'1',version:'old',side:'translation',provider:'controlled',option:'A',value:'A',start:0,end:1,text:'stale'});
+    assert.equal(notes.length,4);
+    provider='other'; await send({option:'A',value:'A'}); assert.equal(notes.length,4); assert(messages.some(m=>m.error&&m.message.includes('译文已变化')));
+});

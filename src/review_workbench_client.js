@@ -96,6 +96,9 @@ function remember(notify = true) {
     if (notify) send('viewState', {state}, false);
     return state;
 }
+function saveBatchSelection() {
+    send('batchSelection', {session:currentSession, items:[...batchSelection.values()]}, false);
+}
 function queueRemember() {
     if (stateFrame === undefined) stateFrame = requestAnimationFrame(() => {
         stateFrame = undefined;
@@ -108,7 +111,6 @@ function queueRemember() {
 function restoreInputs(state) {
     selected = state.selected; editingNote = state.editingNote; selectionStale = !!state.selectionStale;
     $('note').value = state.note; $('notePurpose').value=state.purpose || 'revision'; $('batchNote').value=state.batchNote || ''; $('batchPurpose').value=state.batchPurpose || 'revision'; $('batchNoteScope').value=state.batchScope || 'whole'; $('noteComposer').hidden = !state.composer; $('scopeChoice').value = state.scope;
-    if (state.batchNote?.trim() && Array.isArray(state.batchItems)) {batchSelection.clear(); for (const item of state.batchItems) batchSelection.set(item.id,item); selectedCount();}
     $('noteScopeControls').hidden = !!editingNote;
     $('noteMode').textContent = editingNote ? '编辑返修批注' : '新增返修批注';
     $('saveNote').textContent = editingNote ? '保存修改' : '保存返修批注';
@@ -315,8 +317,8 @@ function filterDirectory() {
         for (const label of (item.options || ['A','B','C'])) {const option = document.createElement('option'); option.value = label; option.textContent = label + (item.manual_options?.includes(label) ? '（已手改）' : ''); choice.appendChild(option);}
         choice.value = batchSelection.get(item.id)?.option || (item.id === current.id ? preview : item.option) || 'A';
         choice.setAttribute('aria-label', item.id + ' 接收方案');
-        check.addEventListener('change', () => {if (check.checked) batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); else batchSelection.delete(item.id); selectedCount();});
-        choice.addEventListener('change', () => {if (check.checked && batchSelection.get(item.id)?.version === item.version) {batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); selectedCount();}});
+        check.addEventListener('change', () => {if (check.checked) batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); else batchSelection.delete(item.id); saveBatchSelection(); selectedCount();});
+        choice.addEventListener('change', () => {if (check.checked && batchSelection.get(item.id)?.version === item.version) {batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); saveBatchSelection(); selectedCount();}});
         row.append(check, choice, node); $('directoryResults').appendChild(row);
     }
     selectedCount();
@@ -339,7 +341,7 @@ function selectedCount() {
         const choice = document.createElement('select'); choice.setAttribute('aria-label', selected.id + ' 已选方案');
         for (const label of item?.options || [selected.option]) {const option=document.createElement('option');option.value=label;option.textContent=label;choice.appendChild(option);}
         choice.value=selected.option;choice.disabled=invalid || !!waiting || coordinating;
-        choice.addEventListener('change',()=>{batchSelection.set(selected.id,{...selected,option:choice.value});selectedCount();});
+        choice.addEventListener('change',()=>{batchSelection.set(selected.id,{...selected,option:choice.value});saveBatchSelection();selectedCount();});
         row.append(button,choice);$('staleSelections').appendChild(row);
     }
     const accept = document.querySelector('[data-action="acceptBatch"]');
@@ -464,7 +466,7 @@ function renderQuestionMode() {
                 select.value=batchSelection.get(entry.id)?.option || entry.card.options[0]?.label;
                 select.setAttribute('aria-label',entry.id+' 接收方案');
                 check.disabled = entry.conflict || entry.card.postponed;
-                check.addEventListener('change',()=>{if(check.checked) batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value}); else batchSelection.delete(entry.id); selectedCount();});
+                check.addEventListener('change',()=>{if(check.checked) batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value}); else batchSelection.delete(entry.id); saveBatchSelection(); selectedCount();});
                 const excerpt=document.createElement('pre'); excerpt.className='review-text';
                 const updateExcerpt=()=>{
                     const chosen=entry.card.options.find(option=>option.label===select.value);
@@ -475,7 +477,7 @@ function renderQuestionMode() {
                     excerpt.textContent=sourceEdited ? '原文草稿尚未保存，变更片段暂不可用；请回到本项核对。' : changes.length ? '原文：\n'+changedLines(entry.card.original,changes,'old')+'\n方案 '+chosen.label+(activeDraft && candidate!==chosen.after ? '（未保存草稿）' : '')+'：\n'+changedLines(candidate,changes,'new') : '方案与原文没有文字变化。';
                     excerpt.hidden=$('questionViewStyle').value==='full';
                 };
-                select.addEventListener('change',()=>{if(check.checked && batchSelection.get(entry.id)?.version===entry.version) {batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value});selectedCount();}updateExcerpt();});
+                select.addEventListener('change',()=>{if(check.checked && batchSelection.get(entry.id)?.version===entry.version) {batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value});saveBatchSelection();selectedCount();}updateExcerpt();});
                 card.append(check,select);
                 const details=document.createElement('details'), summary=document.createElement('summary');summary.textContent='展开原文与方案';details.appendChild(summary);
                 const original=document.createElement('pre');original.className='review-text';original.textContent='已保存原文：\n'+entry.card.original;details.appendChild(original);
@@ -923,7 +925,7 @@ document.addEventListener('click', event => {
     if (type === 'followFont') {style({...appearance, fontFamily:''}); saveAppearance({values:{fontFamily:''}}); return;}
     if (type === 'resetAppearance') {saveAppearance({reset: true}); return;}
     if (type === 'selectAll') {for (const row of $('directoryResults').children) {const input=row.querySelector('input'); if(input && !input.checked) {input.checked=true; input.dispatchEvent(new Event('change'));}} return;}
-    if (type === 'clearSelection') {batchSelection.clear(); filterDirectory(); return;}
+    if (type === 'clearSelection') {batchSelection.clear(); saveBatchSelection(); filterDirectory(); return;}
     if (type === 'acceptBatch' || type === 'handoffSelected') {send(type,{items:[...batchSelection.values()], session:currentSession}); return;}
     if (type === 'batchNote') {send(type,{items:[...batchSelection.values()].map(item => $('batchNoteScope').value === 'chosen' ? item : {id:item.id,version:item.version}),session:currentSession,text:$('batchNote').value,purpose:$('batchPurpose').value,scope:$('batchNoteScope').value}); return;}
     if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
@@ -1102,7 +1104,8 @@ window.addEventListener('message', ({data: message}) => {
         if (!saved && (!refresh || current.version !== message.c.version)) {historyData=undefined; $('historyContent').hidden=true;}
         const oldOptions = options;
         if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) selectedQuestion = message.questionPosition || '';
-        if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) batchSelection.clear();
+        if (Array.isArray(message.batchItems)) {batchSelection.clear(); for (const item of message.batchItems) batchSelection.set(item.id,item);}
+        else if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) batchSelection.clear();
         if (message.session !== undefined) currentSession = message.session;
         current = message.c; data = message.data; options = message.options;
         renderQuestionTable(message.questions || []);
