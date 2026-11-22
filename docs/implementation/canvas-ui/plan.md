@@ -48,12 +48,12 @@
 
 ## 阶段与完成门槛
 
-- [ ] U1 唯一Terra完整读设计交接及本计划，记录真实基线、现任与租约；调查既有markup、样式、选择器、祖先与监听契约，确定保留接线的最小完整布局。结果写execution，不为普通进度发消息。
-- [ ] U2 在真实界面完成画布、原文/ABC、两模式统一、按需辅助入口；处理全部选择态、深浅主题、阴影、重点与异常层次。按用户选2补问题卡必要精确身份路由与真实各项动作，复用原业务链及校验。
-- [ ] U3 抽屉外空白关闭与自适应；保留内部交互、Esc、焦点、输入/用途/范围/批选/阅读位置，核窄窗长文本与公式。
-- [ ] U4 同步必要使用说明和受影响验证；按实际修改选择规定editor与DOM/消息消费者覆盖，复用适用旧证据，不机械跑backend/native/PDF/translation全组。真实无感正常Development局部UI验证、截图实际查看，深浅两模式、ABC等宽及真实按钮可用、抽屉内部/外部/Esc/尺寸/留稿、键盘与异常可见。问题卡路由重点覆盖active项与点击卡不同、相同方案字母跨不同项/文件、同名不同问题及共享项、候选更新后旧版本动作、操作中导航/重绘、失败/取消与三类未保存稿；核真正目标的源/候选/批注/决定，其他项零误写，不只断言前端消息。记录完整argv/cwd/env/输出/真实退出和业务终点，失败保留；CLI0不当业务通过。
-- [ ] U5 Terra审本次diff中的实际接线与所有触达入口，精确提交push/fetch，冻结产品并一次完整交包。交包列基线/commit/dirty、实际布局与展示处理器改动、保留接线证据、适用测试/首败/未测、夹具协议、截图、保护事实、无在途过程及测试/UI/隔离配置/Git租约交还。U1–U5不能代签U6。
-- [ ] U6 总控审实际diff和必要调用链、交包范围；只补局部未覆盖的正常Development组合：两模式与跨文件/共享项批选、三组件未保存输入及用途、抽屉收起/重开/窗口尺寸、深浅和异常状态。问题页同时多卡、宿主active项与点击目标不同，实际预览/编辑保存/批注/单项接收及原批接组合确认精确id/version/option与旧版本拒绝，不串项；必要保存/批接仅在全新隔离样例核源/决定及其他项/草稿/延期/counter/范围外stage哨兵。按实际受影响范围复用旧草稿持久化/后端/Git/PDF/export证据，不重跑全部。若失败交原Terra明确复现与返修边界，未通过不发行。
+- [x] U1 唯一Terra完整读设计交接及本计划，记录真实基线、现任与租约；调查既有markup、样式、选择器、祖先与监听契约，确定保留接线的最小完整布局。结果写execution，不为普通进度发消息。
+- [x] U2 在真实界面完成画布、原文/ABC、两模式统一、按需辅助入口；处理全部选择态、深浅主题、阴影、重点与异常层次。按用户选2补问题卡必要精确身份路由与真实各项动作，复用原业务链及校验。
+- [x] U3 抽屉外空白关闭与自适应；保留内部交互、Esc、焦点、输入/用途/范围/批选/阅读位置，核窄窗长文本与公式。
+- [x] U4 同步必要使用说明和受影响验证；按实际修改选择规定editor与DOM/消息消费者覆盖，复用适用旧证据，不机械跑backend/native/PDF/translation全组。真实无感正常Development局部UI验证、截图实际查看，深浅两模式、ABC等宽及真实按钮可用、抽屉内部/外部/Esc/尺寸/留稿、键盘与异常可见。问题卡路由重点覆盖active项与点击卡不同、相同方案字母跨不同项/文件、同名不同问题及共享项、候选更新后旧版本动作、操作中导航/重绘、失败/取消与三类未保存稿；核真正目标的源/候选/批注/决定，其他项零误写，不只断言前端消息。记录完整argv/cwd/env/输出/真实退出和业务终点，失败保留；CLI0不当业务通过。
+- [x] U5 Terra审本次diff中的实际接线与所有触达入口，精确提交push/fetch，冻结产品并一次完整交包。交包列基线/commit/dirty、实际布局与展示处理器改动、保留接线证据、适用测试/首败/未测、夹具协议、截图、保护事实、无在途过程及测试/UI/隔离配置/Git租约交还。U1–U5不能代签U6。
+- [x] U6 总控审实际diff和必要调用链、交包范围；只补局部未覆盖的正常Development组合：两模式与跨文件/共享项批选、三组件未保存输入及用途、抽屉收起/重开/窗口尺寸、深浅和异常状态。问题页同时多卡、宿主active项与点击目标不同，实际预览/编辑保存/批注/单项接收及原批接组合确认精确id/version/option与旧版本拒绝，不串项；必要保存/批接仅在全新隔离样例核源/决定及其他项/草稿/延期/counter/范围外stage哨兵。按实际受影响范围复用旧草稿持久化/后端/Git/PDF/export证据，不重跑全部。若失败交原Terra明确复现与返修边界，未通过不发行。
 - [ ] U7 U6明确通过后交原Terra核下一个正式版本（预计0.9.59，以真实tag/Release无冲突为准），必要版本/发行检查、一次构建、源码普通push/fetch、附注tag含双包摘要、正式Release/API摘要核对、同一VSIX实际CLI安装、登记/manifest核及尾记录push/fetch。不包后冒烟、不reload、不重启MCP。总控只核发行安装元数据并更新计划/index结案。
 
 ## 证据复用、资源与当前状态
@@ -62,7 +62,7 @@
 
 所有GUI验证遵循silent-ui-screenshot：测试宿主启动、交互、截图全程不抢焦；沿用已证未切换私有桌面CreateDesktopW/CreateProcessW.lpDesktop并核实际窗口/前台/输入桌面，不能仅凭独立profile、CDP或隐藏控制台宣布无感。截图按技能目录保留并实际查看，不删除。最多两项确已隔离的独立检查并行，共享UI/配置/Git串行。
 
-当前：R1冻结候选 `8d3b71be8f84aa2cbef778804fdd1a90c8e5f667`，HEAD==origin/master、clean，执行者交还全部租约无在途。R1新增卡片目标/意图忙态修正经r1-route-second39及r1-busy2真实暂停/恢复后非当前1/B接收通过，总控已审diff并查看图；原editor174及未变链继续适用。U6组合又发现下述R2，未通过，U7未开始。R2续派后产品/测试UI/隔离配置/Git租约交原Terra，总控保留plan/index。
+当前：最终产品候选 `d940b6dc5eb8d675bd1240c911a5b570a1a35b74`，HEAD==origin/master、clean。R1忙态与R2未绑定批注契约均已修复；总控已审实际diff、必要调用链及原证据，U1–U6完成，U6组合与独立消费者通过。U7尚未开始，将交原Terra依既有授权正式发布并同包安装；暂不重载VSCode或重启MCP。总控验收进程均退出，正式交权消息后产品/测试/UI/隔离配置/Git租约交原Terra，总控保留plan/index与最终发行元数据核验。
 
 2026-11-23范围决定已解决：原问题卡只有复选、方案下拉和“打开本项”，段落动作以active项为目标，直接复制会串项；用户现明确选2，批准上述有限路由，不再等待确认，也不以只读三列替代最终功能。总控已审中间实际diff及两张局部截图，尚未签最终视觉或功能验收。继续原计划的极简画布、两模式同一动作组织、原文独立ABC并列、背景选择及阴影，不能只补路由而遗漏布局；原型代码仍禁止复用。
 
@@ -77,3 +77,29 @@ U6组合/R2：`controller-combo1/2`均实际完成同名不同来源问题中非
 R2证据根仍为本轮外置根；unbound1 setup/prepare/stage各0，run外层1/observer1/host false、CLI0。`done.json`/`milestones.json`含原生error事件栈与具体entry；before/after源、state及范围外暂存逐字相同。截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-4771e33657624c508ffa2bcb66601166.png` 已查看。三轮均新项目、正常Development、未切私有桌面、前中后HWND86837022/Default一致，全部已退出，无在途。所有失败保留。外置combo2 setup首次exec变量被覆盖造成路径重复，随后只补未运行配置；stage首跑cwd重复WinError267，Git未启动，修路径后成功。combo2失败诊断函数在catch作用域不可见，原ReferenceError保留；独立unbound1另捕获原生产品错误，没有修改业务断言求绿。
 
 R2仅修正问题卡相关目录/问题条目的待处理批注显示契约与受影响消费者，保留真实条目、计数、批注、选项及精确动作身份，不能吞错、返回空列表或拿假数组掩盖。局部验证未绑定且有/无批注与关联问题两条路径及直接动作；不重复未变全组。之后仍须U6新鲜三稿/批选、迟到动作、共享项与跨文件批接组合，核真实落盘及保护哨兵；后台Git/PDF/export未变范围复用0.9.58，独立PDF完成复用Terra ui-sixteenth。真实返修计数：2（R1忙态；R2未绑定批注契约）。最终结论、实际提交与未测据实续记。
+
+## U6最终结论（2026-11-23）
+
+**通过，允许进入U7。** 最终功能候选为d940b6；实际产品返修2次，分别为R1问题卡忙态与R2未绑定批注契约，不把外置观察器或夹具错误记作产品返修。已审产品实际diff与必要原处理链，未移植原型代码，新增问题卡路由复用原show、三稿保护及实际段落动作；业务事务、后端、MCP、存储和校验保持。U1–U5有效局部证据由execution记录：editor174、最终路由40项，深浅主题、447px三列、抽屉内外/Esc/焦点、真实预览/编辑/批注/接收和TinyTeX预览完成；不相加冒称一次全测。
+
+R2最终修复仅在questionEntries汇合处生成openRequests，关联项统计真实open数组，未绑定沿真实数字，标题消费此数量；原requests不改。r2-route-first40项exit0，r2-unbound1正常Development有/无批注两类未绑定项与关联问题同显、非当前5/B个人批注独立落盘，其他项/源/counter/范围外stage保持，总控已审diff与截图。复用此前combo1/2真实b/B候选编辑和a/B个人批注落盘的局部结论，不把其整轮失败改成通过。
+
+### 全新正常Development组合及独立消费者
+
+证据根 `D:/latex-writing-checks/canvas-ui-20261123/controller-combo5`，最终d940b6冻结源码、新项目/profile、真实VSCode Memento、实际宿主桥与Python源事务。setup/prepare/stage/run/consume各真实exit0；host、observer和外层均0，业务结果passed。完整argv/cwd/env/stdout/stderr及退出在证据根同名前缀process.json/stdout.log/stderr.log；样例内before/after、received、milestones、host-result、run-result和consumer-result保留。
+
+- Q1先选1/B、a/C，切Q2追加2/A；抽屉关闭与模式切换保留范围外选择。未绑定5建候选/原文/批注三类未保存输入和paper_background用途，再点另一卡4/B编辑，原保护对话框取消后仍为5，三稿/用途保持、state与两个源零写。
+- 显式暂存并关闭整个工作台后重开，真实Memento保留三稿及用途；整个面板销毁会按原生命周期清空批选，记录实际空集合后由作者动作重新选择1/B、a/C、2/A。**不声称整个面板销毁后批选持久化**，不把这与抽屉/模式保留混淆。
+- 夹具在出站边界暂扣a/C单项接收的一次性grant，真实导航到1后释放旧grant；旧动作被拒，零accept消息、state及源零写。没有自动重放或重试接受。
+- 非当前4/B真实单项接收成功；Q2共享4只有同一份accepted决定。Q1批接精确只提交1/B、a/C，保留范围外2/A，继续当前问题的3，完整问题身份不变。
+- 整宿主结束后的独立consume核实际源/状态：1/B、4/B及a/C正确，原6/A保持；2/3/5/b不变，长期批注、schema/session/rounds/counter不变。三类未保存文本未进源，仅留既有Memento；范围外sentinel的Git index内容逐字保持，未提交该文件。真实后台Git与自动PDF在此夹具禁用，不把提示“已排队”当作后台成功。
+
+最终截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-be211da197a843229ce77c73a0742678.png` 已实际查看。该轮出现旧观察项“Cannot resolve tree item”提示：夹具host位于扩展目录外，VSCode API上下文缺失。为判定是否影响发行，另建 `controller-context1`，将宿主放在真实扩展目录由该扩展激活加载，不改产品；同样正常Development真实跨文件批接1/B+a/C成功、留在3，host捕获uiError为空、实际通知无该定位错误。setup/prepare/stage/run各0，host/observer/外层0，截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-617b102e21244257a65ec650232f1d31.png` 已看。该定向证据排除本夹具加载上下文导致的提示，不宣称验证所有未来树定位组合，也不新增产品修补。
+
+两成功轮均CreateDesktopW/CreateProcessW.lpDesktop私有未切桌面，EnumDesktopWindows核GUI不在Default，前/中/后HWND86837022、pid59260及Default输入桌面一致，desktop_closed=true；全部自有相关进程已结束，没有重载真实窗口或重启MCP。
+
+### 保留的外置失败与边界
+
+controller-combo3在三稿取消/暂存及迟到grant保护之后，4/B提交因support/sitecustomize仍指向combo1管道而失败；真实宿主错误与原60秒失败保留，不算产品错误或通过。combo4新样例修正管道后4/B实际接收，随后页面销毁使外置观察器挂在旧Runtime.evaluate，后续批接尚未发出；核精确命令行后只停止自有观察器，driver-stop及done=false保留，宿主正常退出、外层1，不改写为全绿。combo5只修外置CDP上下文销毁时拒绝待决只读查询并重发现，点击/写动作不重试，原60秒验收限不变。未知结果从未在原样例重放，所有首败、源状态和截图保留。一次plan标记apply_patch未匹配完整行，未改文件，随后UTF-8精确更新。
+
+后台Git/PDF/export、翻译、U/P资料和跨重启三稿等未变业务沿0.9.58有效证据原范围复用；本轮PDF完成用Terra ui-sixteenth，不声称禁用查看器的宿主已验证PDF查看器显示。未新增性能测试、实网AI/翻译质量、人工吞吐收益、真实用户升级重配根因、cleanup后段、独立PDF/translation全组合、复杂真实论文/冷启动、Mac、强杀或真实五分钟验证。所有真实论文、批注、未保存稿、范围外暂存、用户全局配置及活动VSCode/MCP未触碰，无删除。U7必须复用一次构建的同包发行安装，不包后冒烟，继续不重载或重启。
