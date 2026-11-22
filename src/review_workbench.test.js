@@ -2,6 +2,16 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html, filterItems, staleBatchSelections} = require('./review_workbench');
 
+test('question entries use open note counts from their respective data contracts', () => {
+    const fs=require('node:fs'),vm=require('node:vm');
+    const source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
+    const notes=[{status:'open',text:'keep'},{status:'resolved',text:'old'}];
+    const context={selectedQuestion:'__unbound__',questionRows:[{key:'q',entries:[{id:'linked',requests:notes}]}],directoryItems:[{id:'linked',requests:1},{id:'unbound',requests:2},{id:'empty',requests:0}]};
+    const entries=vm.runInNewContext('('+source.slice(source.indexOf('function questionEntries('),source.indexOf('\nfunction questionEntryDraft(',source.indexOf('function questionEntries(')))+')',context);
+    assert.deepEqual(Array.from(entries(),item=>[item.id,item.openRequests,item.requests]),[['unbound',2,2],['empty',0,0]]);
+    context.selectedQuestion='q';const linked=entries();assert.equal(linked[0].openRequests,1);assert.equal(linked[0].requests,notes);
+});
+
 test('question card controls reflect coordination and their own target state', () => {
     const fs=require('node:fs'),vm=require('node:vm');
     const source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');

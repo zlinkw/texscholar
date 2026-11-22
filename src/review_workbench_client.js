@@ -419,9 +419,10 @@ function renderQuestionTable(rows) {
 function questionEntries() {
     if (selectedQuestion === '__unbound__') {
         const linked = new Set(questionRows.flatMap(row => row.entries.map(entry => entry.id)));
-        return directoryItems.filter(item => !linked.has(item.id)).map(item => ({...item}));
+        return directoryItems.filter(item => !linked.has(item.id)).map(item => ({...item,openRequests:item.requests}));
     }
-    return questionRows.find(row => row.key === selectedQuestion)?.entries || [];
+    return (questionRows.find(row => row.key === selectedQuestion)?.entries || []).map(entry =>
+        ({...entry,openRequests:entry.requests.filter(note => note.status === 'open').length}));
 }
 function questionEntryDraft(entry) {
     return entry.id===current?.id && entry.version===current.version && (sourceDraftStale || candidateDraftStale || options.some(hasDraft) || !!data?.block && $('blockSource').value!==data.block.text.replace(/\r\n/g,'\n'));
@@ -461,7 +462,7 @@ function renderQuestionMode() {
         for (const entry of entries.filter(e=>e.kind===kind)) {
             const card=document.createElement('article'), title=document.createElement('h4');
             const activeDraft=questionEntryDraft(entry);
-            title.textContent=entry.id + ' · ' + entry.file + (entry.version ? ' · 版本 ' + entry.version.slice(0,8) : '') + (entry.location ? ' · ' + (entry.location.heading || '') : '') + (entry.conflict ? ' · 定位冲突' : '') + (entry.card?.postponed ? ' · 暂缓' : '') + (entry.status==='rework' ? ' · 返修' : '') + (activeDraft ? ' · 未保存草稿，变化标记待保存后重算' : '') + ((entry.requests || []).some(note=>note.status==='open') ? ' · 有待处理批注' : '') + (!entry.card ? ' · 已处理或历史不可用' : '');
+            title.textContent=entry.id + ' · ' + entry.file + (entry.version ? ' · 版本 ' + entry.version.slice(0,8) : '') + (entry.location ? ' · ' + (entry.location.heading || '') : '') + (entry.conflict ? ' · 定位冲突' : '') + (entry.card?.postponed ? ' · 暂缓' : '') + (entry.status==='rework' ? ' · 返修' : '') + (activeDraft ? ' · 未保存草稿，变化标记待保存后重算' : '') + (entry.openRequests ? ' · 有待处理批注' : '') + (!entry.card ? ' · 已处理或历史不可用' : '');
             if (entry.version) title.title='完整版本：'+entry.version;
             card.appendChild(title);
             if (entry.card) {
