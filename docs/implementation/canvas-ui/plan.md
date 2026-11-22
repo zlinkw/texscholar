@@ -62,7 +62,7 @@
 
 所有GUI验证遵循silent-ui-screenshot：测试宿主启动、交互、截图全程不抢焦；沿用已证未切换私有桌面CreateDesktopW/CreateProcessW.lpDesktop并核实际窗口/前台/输入桌面，不能仅凭独立profile、CDP或隐藏控制台宣布无感。截图按技能目录保留并实际查看，不删除。最多两项确已隔离的独立检查并行，共享UI/配置/Git串行。
 
-当前：Terra U5冻结交包 `4338db1e81d7023d3f3978a0e615415df843ab93`，HEAD==origin/master、clean，交还全部租约无在途；新增问题卡精确路由复用原段落按钮与业务处理器，editor-sixth174、route-second及局部真实UI适用范围见execution。总控已读最终diff/调用链及深浅截图，U6于下述R1未通过，U7未开始；原通过局部证据保留，不能当最终通过。R1续派后产品/测试UI/隔离配置/Git租约交原Terra，总控保留plan/index。
+当前：R1冻结候选 `8d3b71be8f84aa2cbef778804fdd1a90c8e5f667`，HEAD==origin/master、clean，执行者交还全部租约无在途。R1新增卡片目标/意图忙态修正经r1-route-second39及r1-busy2真实暂停/恢复后非当前1/B接收通过，总控已审diff并查看图；原editor174及未变链继续适用。U6组合又发现下述R2，未通过，U7未开始。R2续派后产品/测试UI/隔离配置/Git租约交原Terra，总控保留plan/index。
 
 2026-11-23范围决定已解决：原问题卡只有复选、方案下拉和“打开本项”，段落动作以active项为目标，直接复制会串项；用户现明确选2，批准上述有限路由，不再等待确认，也不以只读三列替代最终功能。总控已审中间实际diff及两张局部截图，尚未签最终视觉或功能验收。继续原计划的极简画布、两模式同一动作组织、原文独立ABC并列、背景选择及阴影，不能只补路由而遗漏布局；原型代码仍禁止复用。
 
@@ -72,4 +72,8 @@ U6首次反例/R1：全新正常Development `D:/latex-writing-checks/canvas-ui-2
 
 `controller-busy1-setup/prepare`各exit0，run外层exit1、observer1、host-result false（CLI0不是业务通过），真实断言失败而非观察器误判。pause已释放，自有宿主/观察器及相关进程均退出；私有桌面未切换、前中后HWND86837022与Default相同，无GUI落用户桌面，所有失败保留。完整argv/cwd/env/stdout/stderr和宿主/桌面结果在该根及同名process.json。前置只读读取曾误找不存在的fixture entry.js/项目settings文件exit1，无业务结论。复验用新样例，不重放旧状态。
 
-R1后仍需U6原定的新鲜多卡跨文件/同方案字母、共享项、三稿/批选与迟到动作组合，核真实落盘及保护哨兵；后台Git/PDF/export未变范围复用0.9.58，独立预览PDF完成复用Terra ui-sixteenth。真实返修计数：1（新增问题卡忙态衔接）。最终结论、实际提交与未测在对应阶段完成后据实填写。
+U6组合/R2：`controller-combo1/2`均实际完成同名不同来源问题中非当前b/B候选保存、非当前a/B个人用途批注，独立state/source快照证明只改对应项、源未接收；随后未绑定分组无法显示5/A，尚未到三稿、迟到消息或最终批接，不称整轮通过。combo1未等卡片即报不可用；combo2按原60秒等待仍失败。独立最小正常Development `controller-unbound1`只打开未绑定分组即捕获真实 `TypeError: (entry.requests || []).some is not a function`，entry5的requests=1、hasCard=true，实际cards=0。服务目录的requests是待处理数量，关联问题条目的requests是批注数组，现标题渲染混用；这是受影响工作流的真实契约缺口，不以静态假想或夹具故障抹掉。
+
+R2证据根仍为本轮外置根；unbound1 setup/prepare/stage各0，run外层1/observer1/host false、CLI0。`done.json`/`milestones.json`含原生error事件栈与具体entry；before/after源、state及范围外暂存逐字相同。截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-4771e33657624c508ffa2bcb66601166.png` 已查看。三轮均新项目、正常Development、未切私有桌面、前中后HWND86837022/Default一致，全部已退出，无在途。所有失败保留。外置combo2 setup首次exec变量被覆盖造成路径重复，随后只补未运行配置；stage首跑cwd重复WinError267，Git未启动，修路径后成功。combo2失败诊断函数在catch作用域不可见，原ReferenceError保留；独立unbound1另捕获原生产品错误，没有修改业务断言求绿。
+
+R2仅修正问题卡相关目录/问题条目的待处理批注显示契约与受影响消费者，保留真实条目、计数、批注、选项及精确动作身份，不能吞错、返回空列表或拿假数组掩盖。局部验证未绑定且有/无批注与关联问题两条路径及直接动作；不重复未变全组。之后仍须U6新鲜三稿/批选、迟到动作、共享项与跨文件批接组合，核真实落盘及保护哨兵；后台Git/PDF/export未变范围复用0.9.58，独立PDF完成复用Terra ui-sixteenth。真实返修计数：2（R1忙态；R2未绑定批注契约）。最终结论、实际提交与未测据实续记。
