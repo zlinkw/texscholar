@@ -54,7 +54,7 @@
 - [x] U4 同步必要使用说明和受影响验证；按实际修改选择规定editor与DOM/消息消费者覆盖，复用适用旧证据，不机械跑backend/native/PDF/translation全组。真实无感正常Development局部UI验证、截图实际查看，深浅两模式、ABC等宽及真实按钮可用、抽屉内部/外部/Esc/尺寸/留稿、键盘与异常可见。问题卡路由重点覆盖active项与点击卡不同、相同方案字母跨不同项/文件、同名不同问题及共享项、候选更新后旧版本动作、操作中导航/重绘、失败/取消与三类未保存稿；核真正目标的源/候选/批注/决定，其他项零误写，不只断言前端消息。记录完整argv/cwd/env/输出/真实退出和业务终点，失败保留；CLI0不当业务通过。
 - [x] U5 Terra审本次diff中的实际接线与所有触达入口，精确提交push/fetch，冻结产品并一次完整交包。交包列基线/commit/dirty、实际布局与展示处理器改动、保留接线证据、适用测试/首败/未测、夹具协议、截图、保护事实、无在途过程及测试/UI/隔离配置/Git租约交还。U1–U5不能代签U6。
 - [x] U6 总控审实际diff和必要调用链、交包范围；只补局部未覆盖的正常Development组合：两模式与跨文件/共享项批选、三组件未保存输入及用途、抽屉收起/重开/窗口尺寸、深浅和异常状态。问题页同时多卡、宿主active项与点击目标不同，实际预览/编辑保存/批注/单项接收及原批接组合确认精确id/version/option与旧版本拒绝，不串项；必要保存/批接仅在全新隔离样例核源/决定及其他项/草稿/延期/counter/范围外stage哨兵。按实际受影响范围复用旧草稿持久化/后端/Git/PDF/export证据，不重跑全部。若失败交原Terra明确复现与返修边界，未通过不发行。
-- [ ] U7 U6明确通过后交原Terra核下一个正式版本（预计0.9.59，以真实tag/Release无冲突为准），必要版本/发行检查、一次构建、源码普通push/fetch、附注tag含双包摘要、正式Release/API摘要核对、同一VSIX实际CLI安装、登记/manifest核及尾记录push/fetch。不包后冒烟、不reload、不重启MCP。总控只核发行安装元数据并更新计划/index结案。
+- [x] U7 U6明确通过后交原Terra核下一个正式版本（预计0.9.59，以真实tag/Release无冲突为准），必要版本/发行检查、一次构建、源码普通push/fetch、附注tag含双包摘要、正式Release/API摘要核对、同一VSIX实际CLI安装、登记/manifest核及尾记录push/fetch。不包后冒烟、不reload、不重启MCP。总控只核发行安装元数据并更新计划/index结案。
 
 ## 证据复用、资源与当前状态
 
@@ -62,7 +62,7 @@
 
 所有GUI验证遵循silent-ui-screenshot：测试宿主启动、交互、截图全程不抢焦；沿用已证未切换私有桌面CreateDesktopW/CreateProcessW.lpDesktop并核实际窗口/前台/输入桌面，不能仅凭独立profile、CDP或隐藏控制台宣布无感。截图按技能目录保留并实际查看，不删除。最多两项确已隔离的独立检查并行，共享UI/配置/Git串行。
 
-当前：最终产品候选 `d940b6dc5eb8d675bd1240c911a5b570a1a35b74`，HEAD==origin/master、clean。R1忙态与R2未绑定批注契约均已修复；总控已审实际diff、必要调用链及原证据，U1–U6完成，U6组合与独立消费者通过。U7尚未开始，将交原Terra依既有授权正式发布并同包安装；暂不重载VSCode或重启MCP。总控验收进程均退出，正式交权消息后产品/测试/UI/隔离配置/Git租约交原Terra，总控保留plan/index与最终发行元数据核验。
+当前：U1–U7全部完成并结案。最终功能候选d940b6，发行源码69b138c46c11defe8a1bd093519492152aea5e7b；0.9.59已正式发布并同包安装，总控已独立核tag远端解引用、Release附件摘要和本机登记/manifest。执行尾提交a33024d276190b4dddd7cafb79f0fa02e8a2fd23与origin/master一致且clean；最后计划/index结案提交按本仓普通push/fetch规则同步。全部租约已交回，无在途；未重载VSCode或重启MCP。
 
 2026-11-23范围决定已解决：原问题卡只有复选、方案下拉和“打开本项”，段落动作以active项为目标，直接复制会串项；用户现明确选2，批准上述有限路由，不再等待确认，也不以只读三列替代最终功能。总控已审中间实际diff及两张局部截图，尚未签最终视觉或功能验收。继续原计划的极简画布、两模式同一动作组织、原文独立ABC并列、背景选择及阴影，不能只补路由而遗漏布局；原型代码仍禁止复用。
 
@@ -103,3 +103,19 @@ R2最终修复仅在questionEntries汇合处生成openRequests，关联项统计
 controller-combo3在三稿取消/暂存及迟到grant保护之后，4/B提交因support/sitecustomize仍指向combo1管道而失败；真实宿主错误与原60秒失败保留，不算产品错误或通过。combo4新样例修正管道后4/B实际接收，随后页面销毁使外置观察器挂在旧Runtime.evaluate，后续批接尚未发出；核精确命令行后只停止自有观察器，driver-stop及done=false保留，宿主正常退出、外层1，不改写为全绿。combo5只修外置CDP上下文销毁时拒绝待决只读查询并重发现，点击/写动作不重试，原60秒验收限不变。未知结果从未在原样例重放，所有首败、源状态和截图保留。一次plan标记apply_patch未匹配完整行，未改文件，随后UTF-8精确更新。
 
 后台Git/PDF/export、翻译、U/P资料和跨重启三稿等未变业务沿0.9.58有效证据原范围复用；本轮PDF完成用Terra ui-sixteenth，不声称禁用查看器的宿主已验证PDF查看器显示。未新增性能测试、实网AI/翻译质量、人工吞吐收益、真实用户升级重配根因、cleanup后段、独立PDF/translation全组合、复杂真实论文/冷启动、Mac、强杀或真实五分钟验证。所有真实论文、批注、未保存稿、范围外暂存、用户全局配置及活动VSCode/MCP未触碰，无删除。U7必须复用一次构建的同包发行安装，不包后冒烟，继续不重载或重启。
+
+## U7交付与总控结案（2026-11-23）
+
+正式版本 **0.9.59** 已发布并安装，总控只做约定元数据核验，未重新打包或做包后冒烟。发行源码 `69b138c46c11defe8a1bd093519492152aea5e7b` 相对U6功能候选d940b6的唯一产品变化是package版本0.9.58→0.9.59，其他差异只有总控已通过的计划/index；运行源码未再改。执行尾提交 `a33024d276190b4dddd7cafb79f0fa02e8a2fd23` 经总控普通fetch核HEAD==origin/master，工作区及暂存clean。
+
+Terra版本/MCP u7-version2项exit0；发行工具u7-release-check首次12项中2项因新夹具根未创建FileNotFoundError而exit1，未改产品或断言，新根u7-release-check2的12项exit0，EOF为测试模拟错误。恰一次u7-build exit0，u7-publish exit0；实际argv/cwd/env/stdout/stderr与首次失败均在 `D:/latex-writing-checks/canvas-ui-20261123/u7-*`，execution保留。源码、标签及尾记录普通推送，没有重写历史。
+
+总控实际读取本地附注tag及 `git ls-remote`：v0.9.59对象 `184b49d7b5beea8a2daf0bdd9314961644ec40f9`，远端及本地解引用为上述发行源码，附注含双包摘要。总控重新计算三个本地文件SHA256，并实际查询GitHub Release API；[正式Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.59) draft=false、prerelease=false，三个附件均uploaded且digest逐项一致：
+
+- `dist/v0.9.59/texscholar-0.9.59.vsix`：`a3c12af04fee9258f137e91b4fe5c94562f804e1214cf07f3c8bf38cf45b13be`
+- `dist/v0.9.59/texscholar-0.9.59-source.zip`：`25613670ba1cbe148b07b7a00b9ae7f9926c586f48d83a61f9e38137f3bf429f`
+- `dist/v0.9.59/SHA256SUMS.txt`：`92a67b535f9eeae52872199e22dedc86637a6dfc68d481edb95d6b29258b221c`
+
+同一VSIX真实CLI安装u7-install exit0、报告success，Node DEP0169弃用警告保留。总控已重读实际 `C:/Users/ZLK/.vscode/extensions/extensions.json` 及对应安装manifest：唯一local-research.latex-writing-tools登记版本与manifest均0.9.59、source=vsix、pinned=true，未把CLI成功当作运行启用证明。用户明确暂不重载或重启，因此没有替用户启用新版；日后用户自行重载对应VSCode窗口并重启MCP连接后生效。
+
+U6通过及全部未测范围沿前文；真实论文、批注、未保存稿、范围外暂存和全局SKILL/配置未触碰，无删除。全部实现、必要验证、正式发布、同包安装及元数据核验已完成，没有必需待办。
