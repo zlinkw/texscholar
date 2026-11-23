@@ -72,7 +72,7 @@
 - [x] F5 Terra审实际diff、规定受影响覆盖与文档，源码精准commit/push/fetch，完整冻结交包，交还产品/测试/UI/隔离配置/Git租约；给总控局部已覆盖/尚欠、真实失败和可用外置协议，不能自签F6或发行。
 - [x] F6 总控独占最终组合：审diff/存储消费者及原证据，补新鲜正常Development跨文件共享项、上一版批注/暂留与三稿/范围外stage、真实批接及无已处理空卡/重复导航、工具栏偏好跨进程及安装路径身份、未变设置/论文背景保护，按实际缺口组合而不重做Terra小验收。以最终候选、同等视口/字号和足量长内容抓段落深/浅、问题深/浅四张真实图，实际查看；完整证据/首次失败、源状态与宿主/观察器/外层真实退出保留。失败交原Terra具体返修，未通过不发行。
 - [x] F7 **先向用户展示最终四张真实截图供其确认**。这是用户本轮明确先看截图顺序和前次视觉确认目的的落实；如有视觉反馈按原代修正，再仅补受影响检查。图须实际产品渲染，示例论文清楚说明，不贴原型或临时改CSS美化；不替用户重载/重启。截图提交和必要视觉确认完成前不进入发行安装。
-- [ ] F8 F6通过且F7完成后原Terra依既有授权核下一版本（预计0.9.60，以真实tag/Release检查为准），版本/MCP与发行工具必要检查、一次build、普通源码同步、附注tag及包摘要、正式Release/API digest、同一VSIX真实CLI安装及登记/manifest核、execution尾push/fetchclean。无包后冒烟，不reload/不重启MCP；总控仅核发行安装元数据、完整计划/index结案。
+- [x] F8 F6通过且F7完成后原Terra依既有授权核下一版本（预计0.9.60，以真实tag/Release检查为准），版本/MCP与发行工具必要检查、一次build、普通源码同步、附注tag及包摘要、正式Release/API digest、同一VSIX真实CLI安装及登记/manifest核、execution尾push/fetchclean。无包后冒烟，不reload/不重启MCP；总控仅核发行安装元数据、完整计划/index结案。
 
 ## 证据与停止边界
 
@@ -82,7 +82,7 @@
 
 所有真实失败与未测保留，不CLI0代替业务成功；未知写入不重放。没有新人工吞吐/性能承诺、实网AI/翻译质量、cleanup后段或真实用户升级重配根因验证。按全局事件协调只发完整交包、返修/租约和真正需决定的阻塞，不索取开工回执、不逐项唤醒。总控派发成功且无独立待办后角色空闲；本轮直到F8真实交付结案才整体完成。
 
-当前：R1修复候选17f00cbfa49bc89880e69e4ae657657315879f3d已冻结，F6按下述原有效组合、R1局部和最终独立profile补验通过；F7四图已展示，2026-11-23用户明确“可以，界面就按这版，继续按之前的多会话流程发布和安装”，视觉确认完成。返修计数1。无在途进程；本次计划同步后通过必要阶段消息将产品/测试/UI/隔离配置/Git及同包CLI安装租约交原Terra执行F8，产品功能冻结，总控保留plan/index，待完整交付后核元数据。保护及暂不重载/重启继续有效。
+当前：F1–F8完成。R1功能候选17f00cbfa49bc89880e69e4ae657657315879f3d通过F6组合验证，F7四图获用户明确确认；0.9.60已正式发布并同包CLI安装，总控已核远端标签、Release三附件摘要和安装登记。返修计数1，首败及误删隔离对象事件原样保留。全部租约交回、无在途业务；真实论文、上一版/暂留批注、未保存草稿及范围外暂存未操作。未重载VSCode或重启MCP，活动窗口尚不据安装登记认定已启用新版。
 
 ## F6阶段事实与R1（2026-11-23）
 
@@ -128,3 +128,17 @@
 ## F7用户确认与F8交付授权（2026-11-23）
 
 四图提交后用户明确确认界面按此版，要求沿原多会话流程继续发布和安装，并再次指定保护上一版批注、暂留待审批注、未保存草稿及范围外暂存，暂不重载或重启。无需重复征求已授权发行安装许可。原Terra复用最终有效覆盖，仅做版本相关检查和既定一次构建/正式Release/同包安装；不得因交付恢复cleanup、操作真实论文、自动reload/MCP重启或包后冒烟。F8完成前不标整项完成，失败/未知须保留，真实阻断及时升级；总控末尾只核发行及安装元数据并更新plan/index结案。
+
+## F8正式交付与总控结案（2026-11-23）
+
+原Terra核无冲突后仅将package版本改为0.9.60，源码提交5728dd4be497331f5a0f8b0916c010bfe7a2691a；执行尾记录445ade469f50c9be77263ea6af7ced3522da1fad普通push/fetch后HEAD==origin/master、clean。总控核17f到发行源码的src/scripts/package差异只有package版本，复用最终功能覆盖；f8-version2项、f8-release-check12项、唯一一次f8-build、publish/API及安装均真实exit0，完整argv/env/cwd/stdout/stderr/退出在证据根f8-*。发行测试中的EOF属模拟读取失败，安装Node DEP0169警告保留，均不伪作产品失败或隐去。
+
+总控实际核本地附注tag及远端ls-remote：v0.9.60对象fab6369edbadfda244c4b1f8267779074a382b77，解引用5728dd4be497331f5a0f8b0916c010bfe7a2691a；附注含双包摘要。重新计算同包文件SHA256，并直接查询正式[Release API对应页面](https://github.com/zlinkw/texscholar/releases/tag/v0.9.60)，draft=false、prerelease=false，三附件uploaded且digest一致：
+
+- `dist/v0.9.60/texscholar-0.9.60.vsix`：8a315bc6c269a49ce72f41aeaddbed3ced5bc5bc1d62bc208974b1f7d7e7224a。
+- `dist/v0.9.60/texscholar-0.9.60-source.zip`：f3d8b26a6e557dc928613b69c6c5db02d046903a264da027aa51d5e85152ab84。
+- `dist/v0.9.60/SHA256SUMS.txt`：7d8b11218fc009bab1312345f5aa66d14ee252a9751a5e5d58b84b221729addb，内容包含上述双包摘要。
+
+真实CLI安装同一VSIX，f8-install exit0且报告成功；总控核原命令/输出并只读重读当前extensions.json及安装manifest：唯一local-research.latex-writing-tools登记和manifest均0.9.60、source=vsix、pinned=true。没有重建包、重复安装、包后冒烟、用户活动窗口操作、自动reload或MCP重启；仅核发行安装元数据。执行者交回全部租约、CIM无本代相关进程；本次plan/index结案提交按普通push/fetch同步。
+
+保护与局限沿前文：没有操作真实论文、上一版批注、暂留批注、未保存稿、范围外暂存或全局资料。原backup-first在隔离b1误删至少3个对象、其他目标及总数未知的事实不因交付成功撤销，本阶段无cleanup或删除。未测实网AI/翻译与占位符质量、人工吞吐、原用户升级重配及截图Git拒绝具体根因、cleanup后段、独立PDF/translation全组合、复杂论文/冷启动、Mac/强杀/真实五分钟及真实PDF查看器；不作新速度或实际用户环境启用结论。本轮开发交付完成，启用新版仍由用户决定何时重载相应VSCode窗口并重启MCP连接。
