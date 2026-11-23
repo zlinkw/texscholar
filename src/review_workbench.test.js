@@ -115,9 +115,17 @@ test('question translation requests use the displayed card identity and do not t
     assert.equal(notes[0][0].id,'2');assert.equal(notes[0][0].version,'v2');
     assert.equal(notes[0][1].option,'A');assert.equal(notes[0][1].quote,'Changed 2');assert.equal(notes[0][1].display_context.quote,'中文');
     assert.deepEqual(notes[0][1].display_context.review_question,question);
+    const sourceKey=JSON.stringify(['session',questionKey,'2','v2','candidate','A','full','Changed 2']);
+    await receive({type:'note',instance:'page',...c,side:'candidate',questionSourceKey:sourceKey,questionTarget:'2',questionTargetVersion:'v2',questionKey,option:'A',questionSource:'Changed 2',questionViewStyle:'full',session:'session',value:'Changed 2',start:0,end:7,text:'核对原文'});
+    assert.equal(notes[1][0].id,'2');assert.equal(notes[1][0].version,'v2');assert.equal(notes[1][1].quote,'Changed');assert.equal(notes[1][1].option,'A');
+    await receive({type:'note',instance:'page',...c,side:'candidate',questionSourceKey:sourceKey,questionTarget:'2',questionTargetVersion:'old',questionKey,option:'A',questionSource:'Changed 2',questionViewStyle:'full',session:'session',value:'Changed 2',start:0,end:7,text:'过期'});
+    assert.equal(notes.length,2,'stale card selection is rejected');
+    const quoteKey=JSON.stringify(['session',questionKey,'2','v2','question','','full',question.quote]);
+    await receive({type:'note',instance:'page',...c,side:'question',questionSourceKey:quoteKey,questionTarget:'2',questionTargetVersion:'v2',questionKey,questionSource:question.quote,questionViewStyle:'full',session:'session',value:question.quote,start:0,end:7,text:'核对问题'});
+    assert.equal(notes[2][0].id,'2');assert.equal(notes[2][1].display_context.quote,'Explain');assert.deepEqual(notes[2][1].display_context.question,question);
     await receive({type:'note',instance:'page',...c,side:'translation',provider:'fixture',questionTranslationKey:displayKey,questionTarget:'2',questionTargetVersion:'v2',questionKey,questionSide:'candidate',option:'A',questionSource:'Changed 2',questionViewStyle:'full',session:'session',value:'中文 Changed 2',start:0,end:2,text:'核对译文',handoff:true});
     assert(messages.some(message=>message.error && message.message.includes('加入 Codex 失败')));
-    await receive({type:'retryHandoff',instance:'page',...c});assert.equal(handoffs,2);assert.equal(notes.length,2,'retry must not save the note again');
+    await receive({type:'retryHandoff',instance:'page',...c});assert.equal(handoffs,2);assert.equal(notes.length,4,'retry must not save the note again');
     await receive({type:'questionTranslate',instance:'page',...c,session:'session',questionKey,target:'2',targetVersion:'old',side:'candidate',option:'A',viewStyle:'full',source:'Changed 2',view:viewKey,displayKey,retry:true});
     assert.deepEqual(calls,['Changed 2'],'a stale card must not be translated');
     const firstKey=JSON.stringify(['session',questionKey,'1','v1','candidate','A','full','Changed 1']);

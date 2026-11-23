@@ -289,6 +289,27 @@ function createWorkbench(vscode, context, services) {
     const validHandoff = c => c && active && c.repo===active.repo && c.owner===active.owner &&
         services.session?.(c)===services.session?.(active) && lastRecords.get(c.id)?.c.version===c.version;
     function annotationSelection(value) {
+        if (value.questionSourceKey) {
+            const rows=questionTable(active), row=rows.find(item=>item.key===value.questionKey);
+            const linked=value.questionKey==='__unbound__' && !rows.some(item=>item.entries.some(entry=>entry.id===value.questionTarget))
+                ? directory().find(item=>item.id===value.questionTarget && item.version===value.questionTargetVersion && item.card)
+                : row?.entries.find(item=>item.id===value.questionTarget && item.version===value.questionTargetVersion);
+            const record=linked && lastRecords.get(linked.id);
+            const key=JSON.stringify([value.session,value.questionKey,value.questionTarget,value.questionTargetVersion,value.side,
+                value.option || '',value.questionViewStyle,value.questionSource]);
+            if (!record || value.session!==services.session(active) || value.questionSourceKey!==key ||
+                questionView!==JSON.stringify([value.session,value.questionKey,value.questionViewStyle,'question']) ||
+                !['original','candidate','question'].includes(value.side) || !['full','snippets'].includes(value.questionViewStyle))
+                throw new Error('审核项、问题或选区已变化，请重新选择。');
+            const excerpt=questionTranslationSource(record.data,row?.question,value.side,value.option,value.questionViewStyle);
+            if (!excerpt || excerpt.text!==value.questionSource) throw new Error('原文或候选片段已变化，请重新选择。');
+            const span=selection(excerpt.text,value.value,value.start,value.end);
+            if (value.side==='question') return {target:record.c,selection:{side:'original',start:0,end:Array.from(record.data.original).length,quote:record.data.original,
+                display_context:{kind:'question',source_side:'question',source:row.question.quote,text:row.question.quote,
+                    start:span.start,end:span.end,quote:span.quote,question:row.question}}};
+            return {target:record.c,selection:{side:value.side,option:value.side==='candidate' ? value.option : undefined,
+                start:excerpt.start+span.start,end:excerpt.start+span.end,quote:span.quote}};
+        }
         if (value.questionTranslationKey) {
             const rows=questionTable(active), row=rows.find(item=>item.key===value.questionKey);
             const linked=value.questionKey==='__unbound__' && !rows.some(item=>item.entries.some(entry=>entry.id===value.questionTarget))
@@ -994,7 +1015,7 @@ function createWorkbench(vscode, context, services) {
                 if (uiState?.selectionStale && message.start !== undefined) throw new Error('批注选区已变化；请重新选择或明确改为整项批注。');
                 const option = options(loaded).find(o => o.label === message.option);
                 let selected;
-                if (['question', 'translation'].includes(message.side)) selected = annotationSelection(message);
+                if (message.questionSourceKey || ['question', 'translation'].includes(message.side)) selected = annotationSelection(message);
                 else if (message.side === 'candidate') {
                     if (!option) throw new Error('候选方案不存在。');
                     selected = selection(option.after, message.value, message.start, message.end);

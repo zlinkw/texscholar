@@ -18,6 +18,7 @@ const feedbackTargets = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap(), differences = new WeakMap();
 const displayedChanges = new WeakMap();
 const questionTranslations = new Map(), questionClosed = new Set(), questionNodes = new Map();
+const questionSources = new Map();
 const paragraphClosed = new Set();
 let questionObserver, questionVisible = new Set(), paragraphObserver;
 let sourceMode = false;
@@ -509,7 +510,7 @@ function observeParagraphTranslations() {
 function renderQuestionMode() {
     const composer=$('noteComposer');
     if ($('questionModeView').contains(composer)) $('composerDock').appendChild(composer);
-    questionObserver?.disconnect(); questionNodes.clear();
+    questionObserver?.disconnect(); questionNodes.clear(); questionSources.clear();
     const choice = $('questionModeChoice'), previous = selectedQuestion;
     choice.replaceChildren();
     const visible = questionRows.filter(row => row.entries.some(entry => entry.card));
@@ -528,9 +529,14 @@ function renderQuestionMode() {
     const entries=questionEntries().filter(entry=>!kindFilter || kindFilter==='rework' && entry.status==='rework' || kindFilter==='conflict' && (entry.conflict || entry.source_match===false) ||
         ['number','citation','math','term'].includes(kindFilter) && questionEntryDraft(entry) ||
         entry.card?.options.some(option=>(option.fact_changes || []).some(change=>change.kind===kindFilter))), root=$('questionModeCards'); root.replaceChildren();
-    const quote=$('questionModeQuote'); quote.replaceChildren(document.createTextNode(questionRows.find(row=>row.key===selectedQuestion)?.question.quote || ''));
+    const quote=$('questionModeQuote'); quote.replaceChildren();
     const selectedRow=questionRows.find(row=>row.key===selectedQuestion), quoteEntry=selectedRow?.entries.find(entry=>entry.card);
-    if (quoteEntry) questionTranslationControl(quote,quoteEntry,'question',undefined,selectedRow.question.quote);
+    if (quoteEntry) {
+        const text=document.createElement('div'); text.className='review-text'; quote.appendChild(text);
+        models.set(text,math.render(text,selectedRow.question.quote,[],'readonly',sourceMode ? 'source' : 'preview',globalThis.katex));
+        bindQuestionSource(text,quoteEntry,'question',undefined,selectedRow.question.quote);
+        questionTranslationControl(quote,quoteEntry,'question',undefined,selectedRow.question.quote);
+    }
     for (const [kind,label] of [['manuscript','正文'],['response','回复信']]) {
         const column=document.createElement('section'), heading=document.createElement('h4'); heading.textContent=label; column.appendChild(heading);
         for (const entry of entries.filter(e=>e.kind===kind)) {
@@ -568,21 +574,23 @@ function renderQuestionMode() {
                     comparison.appendChild(node); return {option,node,text};
                 });
                 const updateExcerpt=()=>{
-                    const activeDraft=entry.id===current?.id && entry.version===current.version;
-                    const sourceEdited=activeDraft && (sourceDraftStale || data?.block && $('blockSource').value!==data.block.text.replace(/\r\n/g,'\n'));
+                    const isCurrent=entry.id===current?.id && entry.version===current.version;
+                    const sourceEdited=isCurrent && (sourceDraftStale || data?.block && $('blockSource').value!==data.block.text.replace(/\r\n/g,'\n'));
                     const full=$('questionViewStyle').value==='full';
-                    const changes=optionNodes.map(({option})=>math.wordChanges(entry.card.original,activeDraft ? displayed(options.find(item=>item.label===option.label) || option) : option.after));
+                    const changes=optionNodes.map(({option})=>math.wordChanges(entry.card.original,isCurrent ? displayed(options.find(item=>item.label===option.label) || option) : option.after));
                     const original=sourceEdited || full ? entry.card.original : changedLines(entry.card.original,changes.flat(),'old') || entry.card.original;
-                    math.render(referenceText,original,[],'original',sourceMode ? 'source' : 'preview',globalThis.katex);
+                    models.set(referenceText,math.render(referenceText,original,[],'original',sourceMode ? 'source' : 'preview',globalThis.katex));
+                    if (!activeDraft) bindQuestionSource(referenceText,entry,'original',undefined,original);
                     referenceWarning.textContent=sourceEdited ? '原文草稿尚未保存，变更片段暂不可用；请回到本项核对。' : '';
                     optionNodes.forEach(({option,node,text},index)=>{
-                        const value=activeDraft ? displayed(options.find(item=>item.label===option.label) || option) : option.after;
+                        const value=isCurrent ? displayed(options.find(item=>item.label===option.label) || option) : option.after;
                         const clipped=sourceEdited || full ? value : changedLines(value,changes[index],'new') || value;
                         const baseline=sourceEdited || full ? entry.card.original : changedLines(entry.card.original,changes[index],'old') || entry.card.original;
                         const visibleChanges=sourceEdited ? [] : full ? changes[index] : math.wordChanges(baseline,clipped);
                         node.classList.toggle('selected',select.value===option.label);
-                        math.render(text,clipped,visibleChanges,'candidate',sourceMode ? 'source' : 'preview',globalThis.katex);
-                        node.querySelector('strong').textContent='方案 '+option.label+(activeDraft && value!==option.after ? '（未保存草稿）' : '');
+                        models.set(text,math.render(text,clipped,visibleChanges,'candidate',sourceMode ? 'source' : 'preview',globalThis.katex));
+                        if (!activeDraft) bindQuestionSource(text,entry,'candidate',option.label,clipped);
+                        node.querySelector('strong').textContent='方案 '+option.label+(isCurrent && value!==option.after ? '（未保存草稿）' : '');
                     });
                 };
                 select.addEventListener('change',()=>{if(check.checked && batchSelection.get(entry.id)?.version===entry.version) {batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value});saveBatchSelection();selectedCount();}updateExcerpt();});
@@ -609,6 +617,12 @@ function renderQuestionMode() {
     observeQuestionTranslations();
     observeParagraphTranslations();
     placeComposer();
+}
+function bindQuestionSource(node,entry,side,option,source) {
+    const viewStyle=$('questionViewStyle').value;
+    const key=JSON.stringify([currentSession,selectedQuestion,entry.id,entry.version,side,option || '',viewStyle,source]);
+    node.dataset.questionSource=key;
+    questionSources.set(key,{node,session:currentSession,questionKey:selectedQuestion,target:entry.id,targetVersion:entry.version,side,option,viewStyle,source});
 }
 function markDirectoryCursor() {
     for (const node of $('directoryResults').querySelectorAll('button')) {
@@ -787,7 +801,7 @@ function placeComposer() {
     else {
         const side = selected?.side || ($('scopeChoice').value === 'original' ? 'original' : 'candidate');
         const label = selected?.option || $('scopeChoice').value;
-        const content = selected && ['question', 'translation'].includes(side) ? selectionNode(selected) : side === 'original' ? $('originalZh') : $('zh-' + label);
+        const content = selected && (selected.questionSourceKey || ['question', 'translation'].includes(side)) ? selectionNode(selected) : side === 'original' ? $('originalZh') : $('zh-' + label);
         const article = content?.closest('article');
         const obscured = article && (article.hidden || article.classList.contains('folded'));
         if (content && !composer.hidden && obscured) {if (composer.parentElement !== $('composerDock')) $('composerDock').appendChild(composer);}
@@ -825,6 +839,7 @@ function highlightSelection() {
     CSS.highlights.set('review-selection', new Highlight(...math.selectionRanges(model, selected.start, selected.end)));
 }
 function selectionNode(value) {
+    if (value.questionSourceKey) return questionSources.get(value.questionSourceKey)?.node;
     if (value.questionTranslationKey) return questionNodes.get(value.questionTranslationKey)?.node;
     const index = value.question && (data.edit.questions || []).findIndex(q => q.id === value.question.id && q.file === value.question.file && q.quote === value.question.quote);
     if (value.question && index < 0) return;
@@ -833,8 +848,8 @@ function selectionNode(value) {
     return $(value.side === 'original' ? 'original' : 'text-' + value.option);
 }
 function selectionLabel(value) {
-    return (value.question ? value.question.id : value.option ? '方案 ' + value.option : '原文')
-        + (value.side === 'translation' ? '中文译文' : value.side === 'question' ? '审稿问题' : '');
+    return (value.questionTarget ? value.questionTarget + ' · ' : '') + (value.question ? value.question.id : value.side==='question' ? '审稿问题' : value.option ? '方案 ' + value.option : '原文')
+        + (value.side === 'translation' ? '中文译文' : value.side === 'question' && value.question ? '审稿问题' : '');
 }
 function bindSelection(value) {
     selected = value; pendingSelection = undefined; selectionStale = false; openComposer();
@@ -942,7 +957,7 @@ function selectionChanged(event) {
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed || !selection.rangeCount) return;
         const range = selection.getRangeAt(0), ancestor = range.commonAncestorContainer;
-        const selector = '.review-text[data-side], .review-text[data-question], .zh[data-translation], .zh[data-question-translation]';
+        const selector = '.review-text[data-side], .review-text[data-question], .review-text[data-question-source], .zh[data-translation], .zh[data-question-translation]';
         const node = (ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement).closest(selector);
         if (!node || !node.contains(range.startContainer) || !node.contains(range.endContainer)) {
             const touchesReview = [range.startContainer, range.endContainer].some(n => (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement)?.closest(selector));
@@ -956,7 +971,13 @@ function selectionChanged(event) {
         next = {side: node.dataset.side, option: node.dataset.option, value: model.raw.replace(/\r\n/g, '\n'),
             start: model.raw.slice(0, bounds.start).replace(/\r\n/g, '\n').length,
             end: model.raw.slice(0, bounds.end).replace(/\r\n/g, '\n').length, wholeMath: bounds.wholeMath};
-        if (node.dataset.questionTranslation !== undefined) {
+        if (node.dataset.questionSource !== undefined) {
+            const key=node.dataset.questionSource, value=questionSources.get(key);
+            if (!value) return;
+            next={...next,side:value.side,option:value.option,questionSourceKey:key,questionTarget:value.target,
+                questionTargetVersion:value.targetVersion,questionKey:value.questionKey,questionSource:value.source,
+                questionViewStyle:value.viewStyle,session:value.session};
+        } else if (node.dataset.questionTranslation !== undefined) {
             const key=node.dataset.questionTranslation, value=questionNodes.get(key), entry=questionTranslations.get(key);
             if (!value || !entry || entry.error || entry.noTranslation) return;
             next={...next,side:'translation',provider:entry.provider,questionTranslationKey:key,questionTarget:value.target,
