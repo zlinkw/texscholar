@@ -2,7 +2,9 @@
 
 ## 目标与当前事实
 
-2026-11-24最终功能审核通过，Q返修1已闭合，待Q4同包正式发布安装。功能最终源码e180098f6bf008da94aa0b86db5ff42da0020e44已普通同步clean；总控已审完整8文件实现及R1四文件差异，不接管产品实现。交付沿用户既有“按之前流程发布并安装最新版”授权继续，版本预计0.9.62须实际预核；只做必要版本/发行检查、唯一构建、正式tag/Release及同VSIX安装，不再次重载/重启用户窗口或MCP，不做包后冒烟。
+2026-11-24本代完成，Q返修1已闭合，0.9.62正式发布并同包CLI安装。功能最终源码e180098f6bf008da94aa0b86db5ff42da0020e44，版本/唯一构建输入f7ab6dc7f0df11bc0da30e7beaee0cc56b61a3a5，execution尾1f97eba42a93a53e02175732af8a0af936a487f9普通push/fetch同步clean。总控已审完整8文件实现及R1四文件差异，独占跨模式/跨卡组合及交付元数据通过；未接管产品实现。按用户既有流程完成必要版本/发行检查、唯一构建、正式tag/Release及同VSIX安装，未重载/重启用户窗口或MCP，无包后冒烟。
+
+总控实核https://github.com/zlinkw/texscholar/releases/tag/v0.9.62为正式版（API draft=false、prerelease=false）；远端附注tag对象f7ea2bdf29980fc3d3f2f31d2e796f3e5394dd16及解引用目标f7ab6dc7与构建输入相符，SOURCE-COMMIT/双包摘要正确。API三附件digest等于已构建和安装包：VSIX 17e4c46755457c01745818c256fefe68c59d7b3b8d7d60f4f46c6b6c47dc0cc5，source.zip 93690cb8ba25485ff340a13ce4c9a902ca6b0f30a652f3ee65444d359dde13b2，SHA256SUMS.txt 629be5b2d7b479a43dc597c445eb1843a5007ea23ee55c3c970f1dbc10072557；实际安装manifest及登记同为0.9.62、source=vsix/pinned=true。唯一build/publish/install各exit0，安装Node DEP0169警告及预检预期404/其他原失败完整见execution。安装不表示活动宿主已加载，用户重载目标窗口后启用修复；旧MCP连接后续状态未探测，不冒称刷新。所有租约已交回、无在途。
 
 用户2026-11-23报告：问题审核模式默认自动翻译及手动翻译均无效，原每张卡片的独立翻译按钮缺失，“变更片段”视图也无翻译。按既有总控兼最终验收＋唯一Terra执行流程直接复现、修复并验证，不重做已完成论文迁移。
 
@@ -23,7 +25,7 @@
 - [x] Q1 Terra在现有workbench真实协议/DOM入口建立失败信号，Q-ui-red/Q-host-red保留，e4b4773实现当前修复；总控审实际8文件diff及负责调用链。
 - [x] Q2 局部Q-editor-final5 90项、Q-feedback-final 10项及正常Development Q-ui-green4/5/6/7均exit0；单卡手动/全文片段/429/跨卡译文批注保存定位/可见自动/收起及全局按钮通过，合成供应商不称实网质量。各原失败和独立profile/pipe/私有桌面证据见execution。
 - [x] Q3 Terra两次完整冻结交包，总控审真实diff/调用链及原日志，Q-R1修复后完成独占正常Development跨模式/跨卡组合，结果及边界如下；全部测试/UI租约已停止使用，无在途。
-- [ ] Q4 最终通过后沿已有交付授权/规范处理具体版本包；必要检查、唯一构建、同包发布安装范围由总控一次派清，不把源码修复或模拟译文通过说成已安装或实网通过。
+- [x] Q4 必要版本/MCP/运行依赖闭包、隔离MCP2项及发行工具13项0；唯一构建0.9.62、正式tag/Release和同包CLI安装完成，总控仅核上述元数据通过。实网供应商质量未测，未自动重载/重启。
 
 每个内聚批最多2至3个相关问题、8个源码/测试/文档文件，优先负责边界而非新增框架。普通精确stage/commit/push origin master/fetch核一致，远端前移等停止不reset/rebase/merge/force。UTF8、pwsh7、Python -B -X utf8；完整日志和首败保存新证据根，不覆盖/删除。总控计划/index与Terra执行源码写入必须按租约串行；派单成功后总控无独立工作则角色空闲，按必要消息续接。
 

@@ -1,6 +1,6 @@
 # TeXScholar 实施索引
 
-当前计划：[问题审核翻译修复](question-translation/plan.md)。问题模式自动/手动、每卡入口及变更片段译文已修复，Q返修1成功内容复用已补回；原局部90/10项、返修45项和总控正常Development跨模式/跨卡组合按各自最终输入通过，首败保留。真实论文/P/旧批注未操作，实网翻译质量未测。功能源码e180098f已冻结，接下来唯一Terra按原交付流程预核新版本、一次构建、正式发布并同包安装，不自动重载用户窗口/MCP，不做包后冒烟。
+最新完成计划：[问题审核翻译修复](question-translation/plan.md)。问题模式自动/手动、每卡入口及变更片段译文已修复，Q返修1成功内容复用已补回；原局部90/10项、返修45项和总控正常Development跨模式/跨卡组合按各自最终输入通过，首败保留。[0.9.62正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.62)并同包安装，总控已核远端附注tag/构建目标、三附件API摘要及本机manifest/登记。真实论文/P/旧批注未操作，实网翻译质量未测；未自动重载用户窗口/MCP，无包后冒烟。重载目标VSCode窗口后启用修复。
 
 最新完成计划：[论文资料统一与助手角色选择](paper-profile/plan.md)。按用户允许的具体顺序，真实论文D:/Overleaf/TMI-DA-Marked-up Copy已由真实新宿主完成受保护迁移，68项定位、全部26条原批注/561引用对象、152条资料及14问题核对通过；原暂存107草稿记录、模板、范围外文件和Git HEAD/stage保持。[0.9.61已正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.61)并同包安装，目标窗口按授权仅重载一次。总控已核远端附注tag及构建目标ee0e95dc、Release三附件API摘要和本机0.9.61manifest/登记；无重复构建、安装或包后冒烟。唯一Terra local/01a208d4-2ab9-7a93-9994-56e2c5dfc6c7已冻结交回全部租约，无在途。
 
