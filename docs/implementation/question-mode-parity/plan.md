@@ -31,9 +31,19 @@ Terra先在唯一execution中建立下表入口母集，按真实实现/现有�
 
 ## 连续阶段、验收与交付
 
-- [ ] M1 Terra完成上述母集的真实入口对照；对发现的当前缺陷建立最小运行失败信号，按负责模块归并。execution记录全量对照和实际缺陷，不另造平行报告。作者语义/权限的真正不可替代决定才升级，其他常规修法直接连续实施。
-- [ ] M2 Terra按每批2至3个强相关问题、最多8源码/测试/文档文件完成所有已确认范围内修复，必要测试与文案同批。优先扩现有测试，局部功能/路由与保护小验收由Terra；正常Development UI使用独立profile/专属pipe、CreateDesktopW私有未切桌面，核不在Default及前台/输入桌面，截图TEMP/CodexUiCaptures实看保留。翻译合成供应商，不称实网质量；不新增性能测试/阈值，不自动变更既有测试超时/覆盖。build-test-delivery按变更闭包复用有效Q/N/P证据，未执行不称通过。
+- [x] M1 Terra完成上述母集的真实入口对照；对发现的当前缺陷建立最小运行失败信号，按负责模块归并。execution记录全量对照和实际缺陷，不另造平行报告。作者语义/权限的真正不可替代决定才升级，其他常规修法直接连续实施。
+- [x] M2 Terra按每批2至3个强相关问题、最多8源码/测试/文档文件完成所有已确认范围内修复，必要测试与文案同批。优先扩现有测试，局部功能/路由与保护小验收由Terra；正常Development UI使用独立profile/专属pipe、CreateDesktopW私有未切桌面，核不在Default及前台/输入桌面，截图TEMP/CodexUiCaptures实看保留。翻译合成供应商，不称实网质量；不新增性能测试/阈值，不自动变更既有测试超时/覆盖。build-test-delivery按变更闭包复用有效Q/N/P证据，未执行不称通过。
 - [ ] M3 Terra完成整份实施与小验收后一次完整冻结交包并交回租约。总控审真实diff、全部母集结论及原日志/失败，只补未重叠跨模块/跨模式最终组合；任何必修一次交原Terra，不总控实现自签。必要最终组合重点为带草稿和批注的跨卡/跨问题路由、差异/取舍/决定信息与真实目标一致、共享项/批选和历史批注保护；具体以实际缺陷及既有局部覆盖定界，不重跑相同清单。
 - [ ] M4 最终通过后由原Terra按明确派单做必要版本/MCP/发行检查、唯一构建、正式tag/Release及同VSIX安装；总控只核元数据结案。沿既有用户项目发布安装授权，不在最终批准前build/install/publish，不自动reload/restart或包后冒烟。
 
 总控先独占plan/index文档批，完成普通同步后给Terra整份产品/测试/UI/隔离配置/Git租约；租约期间不并行写计划。成功内聚批精确stage/commit/普通push origin master/fetch核一致，远端前移等停相关动作，不reset/rebase/merge/force/改remote或绕hook。UTF8、pwsh7、Python -B -X utf8；新证据根建议D:/latex-writing-checks/question-mode-parity-20261124，完整argv/cwd/相关环境/stdout/stderr/真实exit及首败保留，复用现有runner。无在途才冻结移交，阶段消息按全局事件协调：整包、必要决定/实质阻断才唤醒，不普通回执/重复等待。总控无独立待办时角色空闲，任务由必要消息续接。
+
+## 总控最终组合与 M-R1
+
+2026-11-24 Terra完整冻结交包，源码4c58acb7、记录3af28a78均普通同步clean，全部产品/测试/UI/隔离配置/Git租约交回；完整8类入口母集与各局部有效证据见execution。总控已审5文件完整diff和受影响调用链，复用M 92/46项、各真实Development局部及Q既有有效覆盖，未重跑相同组。
+
+总控外置M-controller1正常私有Development首先因Electron不支持Browser.getWindowForTarget而观察器/外层exit1（host0），未进入窄窗判断；首败原日志保留。新qparity-controller2改为在已核私有桌面唯一自有Development HWND上SetWindowPos(NOMOVE|NOZORDER|NOACTIVATE)，实际审核iframe295px。M-controller2宿主/观察器/外层exit0，真实方向键切换全文、Tab到变化筛选、跨卡1/A的[0,9)选区及未保存批注经真实host refresh后目标/版本/源/范围/全文和scrollY、composer top精确保留。Default输入桌面及前中后HWND25630512不变，宿主正常退出、私有桌面关闭。argv/cwd/相关环境/stdout/stderr/退出、done/layout/refresh/run-result在D:/latex-writing-checks/review-efficiency-20261122/M-controller*及qparity-controller*；非完整环境快照。
+
+自动布局断言只核页面无横向溢出，不能证明可用：总控实看截图C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-bc8d895e3f804ac58ada62e88c1f5bee.png，确认问题模式ABC在295px仍强制三列，批注composer嵌于窄方案列，英文逐字断开、保存按钮文案被裁。此为真实可达产品缺陷，M返修1，M3暂不通过，不发行。原M-access两次787px前提失败及本轮首败保留，不能称窄窗已通过。
+
+M-R1由原Terra做最小响应式布局修复：在受影响窄窗口让问题卡ABC和批注输入/保存动作可读可操作，复用已有媒体查询/布局，不新增配置、框架或依赖；保留宽窗ABC对照、精确跨卡选区与所有草稿/翻译/决定保护。以新隔离正常Development真实窄iframe核内容/控件边界并实看截图，实际键盘到保存并精确读回跨卡批注；补受影响已有最小正确性回归，复用此前刷新/翻译等未变链。一次冻结交包后总控仅审返修diff及必要未覆盖部分，再M4交付；真实论文/P/用户窗口/默认pipe及删除禁令不变。
