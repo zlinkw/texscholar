@@ -509,7 +509,7 @@ function observeParagraphTranslations() {
 }
 function renderQuestionMode() {
     const composer=$('noteComposer');
-    if ($('questionModeView').contains(composer)) $('composerDock').appendChild(composer);
+    if ($('questionModeCards').contains(composer) || $('questionModeQuote').contains(composer)) $('questionComposerDock').appendChild(composer);
     questionObserver?.disconnect(); questionNodes.clear(); questionSources.clear();
     const choice = $('questionModeChoice'), previous = selectedQuestion;
     choice.replaceChildren();
@@ -628,6 +628,10 @@ function renderQuestionMode() {
     observeQuestionTranslations();
     observeParagraphTranslations();
     placeComposer();
+    if (selected?.questionKey && !$('noteComposer').hidden) {
+        $('scope').textContent=selectionLabel(selected)+'选区：'+selected.value.slice(selected.start,selected.end)
+            +(reviewMode!=='question' || selected.questionKey!==selectedQuestion ? '；原问题已切换，请返回原问题后保存或重新选择。' : '');
+    }
 }
 function bindQuestionSource(node,entry,side,option,source) {
     const viewStyle=$('questionViewStyle').value;
@@ -821,7 +825,13 @@ function placeComposer() {
         const content = selected && (selected.questionSourceKey || ['question', 'translation'].includes(side)) ? selectionNode(selected) : side === 'original' ? $('originalZh') : $('zh-' + label);
         const article = content?.closest('article');
         const obscured = article && (article.hidden || article.classList.contains('folded'));
-        if (content && !composer.hidden && obscured) {if (composer.parentElement !== $('composerDock')) $('composerDock').appendChild(composer);}
+        if (!composer.hidden && reviewMode==='question' && (!content || !$('questionModeView').contains(content))) {
+            if (composer.parentElement !== $('questionComposerDock')) $('questionComposerDock').appendChild(composer);
+        }
+        else if (!composer.hidden && reviewMode==='paragraph' && content && $('questionModeView').contains(content)) {
+            if (composer.parentElement !== $('composerDock')) $('composerDock').appendChild(composer);
+        }
+        else if (content && !composer.hidden && obscured) {if (composer.parentElement !== $('composerDock')) $('composerDock').appendChild(composer);}
         else if (content && !composer.hidden) {if (content.nextElementSibling !== composer) content.after(composer);}
         else if ($('noteComposer').nextElementSibling !== $('notes')) $('notes').before($('noteComposer'));
     }
@@ -839,7 +849,7 @@ function canChangeNote() {
 }
 function scope() {
     selected = pendingSelection = undefined; selectionStale = false; highlightSelection();
-    $('scope').textContent = $('scopeChoice').value === 'group' ? '针对本项全部方案，不需要逐个拒绝。' : $('scopeChoice').value === 'original' ? '针对完整原文。' : '针对方案 ' + $('scopeChoice').value + ' 整体。';
+    $('scope').textContent = (reviewMode==='question' ? '当前审核项 '+current.id+'：' : '') + ($('scopeChoice').value === 'group' ? '针对本项全部方案，不需要逐个拒绝。' : $('scopeChoice').value === 'original' ? '针对完整原文。' : '针对方案 ' + $('scopeChoice').value + ' 整体。');
     placeComposer(); buttons();
 }
 function highlightSelection() {
