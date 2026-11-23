@@ -65,11 +65,11 @@
 
 ## 阶段、唯一验收与交付顺序
 
-- [ ] F1 Terra核模型/实际基线/租约，建立上述字段写读与界面入口母集，记录execution；先区分展示历史/实际存储/必要活动数据，完成最小完整调查后连续实施，不等待普通进度确认。真正需要扩大保护边界或用户决定才升级。
-- [ ] F2 实现A/B/C，补齐历史消费者与批注落实/草稿/问题生命周期，分内聚小批验证并普通同步；本轮不删除完整文件或处理真实论文历史。
-- [ ] F3 实现D/E与F中有依据的相关修正，真实原布局及精确动作链复用，必要文档同步；保留其他0.9.59功能和取消语义。
-- [ ] F4 Terra小验收：受影响editor/backend/MCP/保存/反馈/草稿/配置消费者定向覆盖；上一版批注滚动、暂留保留、无历史积累、已有格式及未安全checkpoint保护；工具栏选择/排序/取消/单项恢复默认；正常Development深浅和两模式局部UI、真实按钮及必要异常、截图实际查看。新夹具含多数已处理+少量待审/返修/暂留，核当前批数量正确，不只是三项空白样例；这是正确性场景，不写性能阈值或压测。引用未变链有效旧证据，不机械全组重跑。
-- [ ] F5 Terra审实际diff、规定受影响覆盖与文档，源码精准commit/push/fetch，完整冻结交包，交还产品/测试/UI/隔离配置/Git租约；给总控局部已覆盖/尚欠、真实失败和可用外置协议，不能自签F6或发行。
+- [x] F1 Terra核模型/实际基线/租约，建立上述字段写读与界面入口母集，记录execution；先区分展示历史/实际存储/必要活动数据，完成最小完整调查后连续实施，不等待普通进度确认。真正需要扩大保护边界或用户决定才升级。
+- [x] F2 实现A/B/C，补齐历史消费者与批注落实/草稿/问题生命周期，分内聚小批验证并普通同步；本轮不删除完整文件或处理真实论文历史。
+- [x] F3 实现D/E与F中有依据的相关修正，真实原布局及精确动作链复用，必要文档同步；保留其他0.9.59功能和取消语义。
+- [x] F4 Terra小验收：受影响editor/backend/MCP/保存/反馈/草稿/配置消费者定向覆盖；上一版批注滚动、暂留保留、无历史积累、已有格式及未安全checkpoint保护；工具栏选择/排序/取消/单项恢复默认；正常Development深浅和两模式局部UI、真实按钮及必要异常、截图实际查看。新夹具含多数已处理+少量待审/返修/暂留，核当前批数量正确，不只是三项空白样例；这是正确性场景，不写性能阈值或压测。引用未变链有效旧证据，不机械全组重跑。
+- [x] F5 Terra审实际diff、规定受影响覆盖与文档，源码精准commit/push/fetch，完整冻结交包，交还产品/测试/UI/隔离配置/Git租约；给总控局部已覆盖/尚欠、真实失败和可用外置协议，不能自签F6或发行。
 - [ ] F6 总控独占最终组合：审diff/存储消费者及原证据，补新鲜正常Development跨文件共享项、上一版批注/暂留与三稿/范围外stage、真实批接及无已处理空卡/重复导航、工具栏偏好跨进程及安装路径身份、未变设置/论文背景保护，按实际缺口组合而不重做Terra小验收。以最终候选、同等视口/字号和足量长内容抓段落深/浅、问题深/浅四张真实图，实际查看；完整证据/首次失败、源状态与宿主/观察器/外层真实退出保留。失败交原Terra具体返修，未通过不发行。
 - [ ] F7 **先向用户展示最终四张真实截图供其确认**。这是用户本轮明确先看截图顺序和前次视觉确认目的的落实；如有视觉反馈按原代修正，再仅补受影响检查。图须实际产品渲染，示例论文清楚说明，不贴原型或临时改CSS美化；不替用户重载/重启。截图提交和必要视觉确认完成前不进入发行安装。
 - [ ] F8 F6通过且F7完成后原Terra依既有授权核下一版本（预计0.9.60，以真实tag/Release检查为准），版本/MCP与发行工具必要检查、一次build、普通源码同步、附注tag及包摘要、正式Release/API digest、同一VSIX真实CLI安装及登记/manifest核、execution尾push/fetchclean。无包后冒烟，不reload/不重启MCP；总控仅核发行安装元数据、完整计划/index结案。
@@ -82,4 +82,30 @@
 
 所有真实失败与未测保留，不CLI0代替业务成功；未知写入不重放。没有新人工吞吐/性能承诺、实网AI/翻译质量、cleanup后段或真实用户升级重配根因验证。按全局事件协调只发完整交包、返修/租约和真正需决定的阻塞，不索取开工回执、不逐项唤醒。总控派发成功且无独立待办后角色空闲；本轮直到F8真实交付结案才整体完成。
 
-当前：计划已批准，F1–F8未执行，本代产品返修计数0。执行指针及资源实况由Terra核后维护execution；F5/F6/F7门槛不能省略。
+当前：F1–F5候选b6a3f335e8982003b775dc7d58ae1da0619a54e4已交包，总控F6组合发现下述真实R1，尚未通过；F7四图未交用户确认、F8未开始。返修计数1。总控自有进程均退出，R1正式派发后产品/测试/UI/隔离配置/Git租约交原Terra，总控保留plan/index。
+
+## F6阶段事实与R1（2026-11-23）
+
+已审实际diff及必要历史/目录/批注/配置/checkpoint消费者；原小验收editor-seventh177、backend-second148、mcp-first43、previous-feedback-first和checkpoint-fourth按各自最终输入适用，backup-first51项不能计作合规覆盖。误删事件直接确认至少3个b1隔离对象，完整两条精确路径及第三个父目录见execution，总数/其他目标未知；不重跑cleanup或删除，未发现真实论文涉入证据，未把通过掩盖违规。
+
+最终组合用全新 `D:/latex-writing-checks/focused-review-20261123/controller-f6a2`，冻结b6a3f33源码、30正文/2回复、25预接收与7待审/返修、完整问题身份/共享项、3的紧邻上一版批注、5的长期批注与范围外暂存。prepare实际两次返修后只引用当前/上一版所需快照、generation连续，过早旧批注不再出现在当前state。正常Development真实宿主先自定义工具栏选择/排序，再保存5的候选/原文/批注三组件未保存输入和paper_background用途为Memento；state、两个源和范围外index逐字不变。host/observer均0且业务passed；外层1仅因本阶段忘记拍协议必需截图、末尾capture.is_file断言失败，日志保留，不宣称整轮全绿，不重放该业务。
+
+`controller-f6b1` 在整个进程退出后，以**同profile/同真实项目、新扩展目录路径**启动：工具栏持久值和真实DOM排序保持、三稿及用途保留、上一版批注仍在，原自定义字体设置不变；截图与业务host/observer/外层全0。真实非当前共享4/B接收，另一问题不再出现已完成4空卡；Q1批接精确1/B+a/C，保留范围外2/A、继续3，3上一版批注、5长期批注、三稿、counter、其他项和stage保留。实际四张深浅两模式图已逐张看，路径在controller-f6b1/captures.json；这是发行前组合图，尚未作为F7最终稿提交用户。
+
+### 本轮无删除的真实Git checkpoint等价覆盖
+
+为覆盖新sidecar精简消费者，主控明确采用直接调用**真实plan/record/compact及其原writer/persist**、真实Git/独立localbare，而不调用JS finishReview中的cleanup后段；这是本轮必要checkpoint验证的有界等价安排，不停跑/退役旧测试、不改超时、断言或产品守卫。外置 `controller-checkpoint1.py` 经检查不引用cleanup、unlink、rmdir或删除命令，仅对自有夹具运行。日志controller-checkpoint-first exit0，实际Git无桩，命令/退出/源/索引和状态在controller-f6b1/checkpoint-commands.json及checkpoint-result.json。
+
+实际本地Git checkpoint commit188e2babc43e90bae8353abef0bf36c7a6d51630，remote为该夹具自己的remote.git。提交用私有index构造原plan核实的源payload，精确更新源index，范围外sentinel内容逐字保持；推送前compact真实拒绝且持久state不变，普通push/fetch确认HEAD==origin/master后compact成功。1/a/6等已核实完成的候选引用清空，但保留身份与问题；4为活动3依赖，必要候选版本保持；2/3/5/b、上一版/暂留批注、counter、两份源保持。对象文件集合前后子集检查证明本检查未删除原对象，无cleanup。这里仅收敛state引用，不声称旧对象文件被物理删除；不能把无删除约束改名绕过。
+
+### R1确定产品问题：精简后空版本条目使新页面内容发送失败
+
+随后新独立profile `controller-f6c1` 真实打开同一已checkpoint项目，初始3仍在pending/rework且backend inspect成功，但页面不能加载；原60秒wait超时，host false、observer1、CLI0、外层1。`controller-f6d1` 另一全新profile仅补原生错误/出站/DOM只读诊断，同样失败；before/after快照和原始日志保留，没有重放接受或checkpoint。
+
+原生exthost/renderer精确栈（controller-f6d1/profile/logs/20261123T143947/window1/exthost/exthost.log:34起）：`TypeError: Cannot read properties of undefined (reading 'option')`，inline_review.js selectedOption:827→directory:838→review_workbench.js directory:137→packet:263→sendContent:323→ready:533。新sidecar compact让已完成条目versions=[]；directory在过滤lastRecords之前枚举所有条目，向selectedOption传version=undefined，无previewChoices记录时saved?.version与c.version两个undefined相等，随后saved.option抛错。post未发content，DOM current=null，审核页只有空壳；不是已完成项历史应该回来，也不是CDP观察器假失败。
+
+截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-857d367eb49d438e83fdb5d9e3417575.png` 已看；两个异常轮均未点击业务动作。需原Terra修空版本已完成目录消费者的精确选择契约，不能伪造版本、吞异常、恢复旧历史、跳过compact或改成焦点回退；保留当前有效方案和所有源/批注/草稿/校验。局部应覆盖真实closed versions=[]与未知saved选择、混合pending/closed、既有正确方案；小验收用新的已精简合成样例正常宿主确认内容可加载，不能用旧UI图代签。总控随后只补失败的独立profile/已compact界面和必要最终四图，不机械重跑已通过batch/checkpoint组合。
+
+所有外置首次失败：controller-f6a1 prepare首次尝试与已有候选完全相同，被正确拒绝No content change，创建全新f6a2修夹具文案后通过；旧样例未重放。f6a2外层截图遗漏如上。f6c1失败后附加只读native诊断遇已退出CDP ECONNREFUSED，未产生界面或状态结论；f6d1另捕获真实原生栈，不改产品求绿。
+
+资源：正常Development四轮均私有未切桌面、GUI不在Default且desktop_closed=true；f6b1前/中/后HWND29166230与Default一致。f6a2及f6d1用户前台HWND在非测试窗口间改变，均未落自有隐藏GUI；如实保留，不声称每轮HWND全部一致。CIM核本轮自有Code/Node/Python均退出，无在途。真实论文/全局配置/活动窗口/MCP未操作，不reload/restart；只生成隔离合成数据与保留的证据，F6仍未通过，F7/F8不放行。
