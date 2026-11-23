@@ -102,6 +102,8 @@ def prepare(review, approved):
     for key in ('session', 'schema', 'owner', 'state_sha256', 'source_revisions', 'conflicts', 'counts', 'actions'):
         if approved.get(key) != current[key]:
             raise Conflict('迁移预览或源文件已变化，请重新预览。')
+    if current['conflicts']:
+        raise Conflict('迁移预览存在未解决冲突；请先核对所有冲突，未迁移任何审核项。')
     def comparable(blocks):
         return sorted(({key: value for key, value in row.items() if key != 'block_id'} for row in blocks),
                       key=lambda row: (row['file'], row['start'], row['end'], row['kind']))
@@ -210,6 +212,8 @@ def transaction(review, approved):
 def apply(review, approved):
     """Apply an explicitly confirmed preview under the caller's writer lock."""
     from review_host_client import HostError, HostSession
+    if approved.get('conflicts') or preview(review)['conflicts']:
+        raise Conflict('迁移预览存在未解决冲突；请先核对所有冲突，未迁移任何审核项。')
     try:
         with HostSession(review.repo) as host:
             staged = transaction(review, approved)

@@ -596,6 +596,67 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(len(staged['plan']), 64)
         self.assertEqual({name: (self.root / name).read_bytes() for name in before},before)
 
+    def test_migration_conflicts_reject_all_paths_before_host_or_write(self):
+        from unittest.mock import patch
+        from review_migration import preview, prepare, transaction, apply
+        id_ = self.proposal(); r = self.review(); version = r.state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id':id_, 'version':version, 'side':'original', 'start':0,
+                                'end':3, 'quote':'The', 'text':'Protect this note.'})
+        source = self.root / 'main.tex'
+        source.write_text(source.read_text(encoding='utf-8').replace('The model is strong and fast.',
+                                                                      'Author changed this sentence.'), encoding='utf-8')
+        r = self.review(); packet = preview(r)
+        self.assertEqual([row['id'] for row in packet['conflicts']], [id_])
+        paths = [source, self.root / 'reply.tex']
+        before = {path:path.read_bytes() for path in paths}
+        objects = {path.name:path.read_bytes() for path in (self.root / '.codex-review' / 'objects').iterdir()}
+        for method in (prepare, transaction, apply):
+            with patch('review_host_client.HostSession', side_effect=AssertionError('host must not be contacted')):
+                with self.assertRaisesRegex(Conflict, '未解决冲突'):
+                    method(r, packet)
+        with patch('review_host_client.HostSession', side_effect=AssertionError('host must not be contacted')):
+            with self.assertRaisesRegex(Conflict, '未解决冲突'):
+                apply(r, {**packet, 'conflicts':[]})
+        self.assertEqual({path:path.read_bytes() for path in paths}, before)
+        self.assertEqual({path.name:path.read_bytes() for path in (self.root / '.codex-review' / 'objects').iterdir()}, objects)
+        self.assertFalse((self.root / '.codex-review' / 'state.json').exists())
+        self.assertEqual(self.review().state['schema'], 2)
+        self.assertEqual(self.review().state['edits'][id_]['requests'][0]['text'], 'Protect this note.')
+        support = self.root / 'isolated-support'; support.mkdir()
+        (support / 'sitecustomize.py').write_text(
+            'import review_host_client\nclass Blocked:\n def __init__(self,*a,**k): raise AssertionError("host forbidden")\nreview_host_client.HostSession=Blocked\n', encoding='utf-8')
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(support), str(Path(__file__).parent))))
+        command = [sys.executable, '-B', '-X', 'utf8', str(Path(__file__).with_name('source_review.py')),
+                   '--project', str(self.root), '--state', 'reply.tex', '--apply', 'migrate-state']
+        result = subprocess.run(command, input=json.dumps(packet, ensure_ascii=False).encode('utf-8'),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('未解决冲突', result.stderr.decode('utf-8'))
+        self.assertNotIn('host forbidden', result.stderr.decode('utf-8'))
+        self.assertEqual({path:path.read_bytes() for path in paths}, before)
+        self.assertEqual({path.name:path.read_bytes() for path in (self.root / '.codex-review' / 'objects').iterdir()}, objects)
+
+    def test_migration_overlapping_blocks_rejects_complete_transaction(self):
+        from unittest.mock import patch
+        from review_migration import preview, prepare, transaction, apply
+        source = self.root / 'main.tex'
+        source.write_text('\\documentclass{article}\n\\begin{document}\nIntroductory prose.\n'
+                          '\\section{Heading}\nFirst detail.\nClosing prose.\n\\end{document}\n', encoding='utf-8')
+        for before, after in [('Introductory prose.', 'Revised introduction.'), ('First detail.', 'Revised detail.')]:
+            self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':before, 'after':after})
+        r = self.review(); packet = preview(r)
+        self.assertEqual({row['id'] for row in packet['conflicts']}, {'1', '2'})
+        before = {path:path.read_bytes() for path in (source, self.root / 'reply.tex')}
+        objects = {path.name:path.read_bytes() for path in (self.root / '.codex-review' / 'objects').iterdir()}
+        for method in (prepare, transaction, apply):
+            with patch('review_host_client.HostSession', side_effect=AssertionError('host must not be contacted')):
+                with self.assertRaisesRegex(Conflict, '未解决冲突'):
+                    method(r, packet)
+        self.assertEqual({path:path.read_bytes() for path in before}, before)
+        self.assertEqual({path.name:path.read_bytes() for path in (self.root / '.codex-review' / 'objects').iterdir()}, objects)
+        self.assertEqual(self.review().state['schema'], 2)
+        self.assertFalse((self.root / '.codex-review' / 'state.json').exists())
+
     def test_migration_refuses_stale_preview_and_existing_sidecar(self):
         from review_migration import preview, prepare
         self.proposal(); r = self.review(); packet = preview(r)

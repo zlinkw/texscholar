@@ -1,5 +1,17 @@
 # 批注批量管理执行记录
 
+## P7 只读调查与 P R1
+
+现任执行 local/01a20284-4ad8-70b1-87ff-61225eaec6aa；P 返修 1。总控移交产品/测试/UI/隔离配置/Git 租约，仅修迁移冲突写入边界；真实论文和真实资料库仍无写租约。用户已明确由代理一次性迁移，完成验证后再发行安装；本阶段不重载、不重启、不发行。
+
+只读调查基于 controller-p7-preview1 冻结副本，HostSession 显式禁用。P7-analysis-first/second/third 均 exit 0，脚本、process、stdout/stderr 和逐项结果保存在 D:/latex-writing-checks/paper-profile-20261123/P7-analysis*。68 个待审/返修项中 65 项现有精确锚点可核：以最近合法独立行边界构造的 65 个候选块互不交叠，纯内存 prepare 全部成功，最大 12 行；这不是现有迁移器支持的映射，也不是源写入或完整迁移通过。原 29 项宽段落范围交叠实际分 7 组，原始精确编辑片段无交叠；bg/bh 两处行内插入和 dy/dz/ea/ef 四处边界可在保留精确偏移下置于独立行块。aq/ar/115 原文均为空插入、120 字符左右上下文不能同时匹配：前两项仅左上下文各唯一，115 仅右上下文唯一，单侧证据不足以确定插入点，不可猜测或静默丢弃。
+
+局部注释复核发现原 85 对精确映射漏了 main 中缩进的两对：160–166 figure 和 631–635 paragraph，故按宽松缩进解析共 87 对纯注释；剩余 5 个未配对尾标记为 main 201/586/748 与 response 320/1079。总数以只读解析为准，不能把配对等同于适用范围已核实或授权删除；精确内容保留外置结果。CODEX-QUESTION 被 questions.js 解析为实际问题关联，CODEX-RESPONSE 及 QUESTION 在 document_roles.py 亦参与旧角色识别，旧写作指南仍使用 RESPONSE 依赖和 QUESTION 语义；不得当普通冗余注释批量移除。P 的 entry 支持 text/evidence/source/scope，scope 是自然语言字符串，范围不自动绑定位置；每条须精确保留来源和适用范围并核消费者，未知内容保留原位。
+
+实际反例在全新合成项目：p7-r1-repro-first exit 1，缺锚点例真实产生 schema3 无块项，第二例的 itemize 夹具未构造出预期交叠，断言失败；p7-r1-repro-second 用新根、章节相邻样例 exit 0，实际重现缺锚点及交叠项被 prepare 切为 schema3 且缺 block。两轮没有连接任何真实管道、论文或资料库。代码修复在 prepare 的完整预览相等校验后拒绝非空 conflicts；apply 在取得宿主前对提交与当前预览均检查冲突，防止绕过或占用宿主；合法路径保留原校验和事务。
+
+p7-r1-tests-first exit 0 为初版 6 项；增加 CLI 与 MCP 并最终修改输入后，p7-r1-tests-second 和 third 各 7 项 exit 0。third 使用 SOURCE_REVIEW_FIXTURES=p7-r1-test3、PYTHONPATH=仓库 src，启动前静态导入确认 review_host_test_support 为仓库 FakeHostSession；CLI 子进程专属 sitecustomize 把任何 HostSession 调用设为立即报错。定向覆盖缺锚点、交叠、伪造空冲突、prepare/transaction/apply、真实 CLI 及 MCP 调用的零写/无宿主，保留原有无冲突迁移、过期预览测试。无真实 UI、实网、完整后台或真实迁移；未运行 cleanup/backup 删除组。原 P6 局部未变链按原证据复用。
+
 现任执行者：local/01a20284-4ad8-70b1-87ff-61225eaec6aa，Terra 6.1/high；N 产品、测试、UI、隔离配置和 Git 租约。总控维护 plan/index。N 返修计数 0。
 
 基线：master 与 origin/master 均为 aa7540b64c4c5bf172e43103d73764354188509f，工作区及暂存为空。N1 调查与实现进行中；N2 尚未验证。真实论文、配置、活动宿主及安装不操作，禁止文件删除和 cleanup 后段。

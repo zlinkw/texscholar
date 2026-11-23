@@ -10,11 +10,30 @@ import unittest
 from mcp_server import Server, TOOLS, ToolConflict
 from mcp_config import configure, check
 import native_review_test as fixtures
-from source_review import digest
+from source_review import digest, Conflict
 from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_migration_conflict_rejects_mcp_apply_without_host_or_state_change(self):
+        self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'The model is strong and fast.',
+                               'after':'The model is reliable.'})
+        source = self.root / 'main.tex'
+        source.write_text(source.read_text(encoding='utf-8').replace('The model is strong and fast.',
+                                                                      'The author changed the sentence.'), encoding='utf-8')
+        server = self.server(); base = {'project':str(self.root), 'state':'reply.tex'}
+        packet = server.call('migrate_state', base)['preview']
+        self.assertTrue(packet['conflicts'])
+        paths = [source, self.root / 'reply.tex']
+        before = {path:path.read_bytes() for path in paths}
+        objects = {path.name:path.read_bytes() for path in (self.root / '.codex-review' / 'objects').iterdir()}
+        with patch('review_host_client.HostSession', side_effect=AssertionError('host must not be contacted')):
+            with self.assertRaisesRegex(Conflict, '未解决冲突'):
+                server.call('migrate_state', {**base, 'apply':True, 'approved':packet})
+        self.assertEqual({path:path.read_bytes() for path in paths}, before)
+        self.assertEqual({path.name:path.read_bytes() for path in (self.root / '.codex-review' / 'objects').iterdir()}, objects)
+        self.assertFalse((self.root / '.codex-review' / 'state.json').exists())
+
     def test_ai_confirms_structured_roles_without_source_injection(self):
         from document_roles import without_block
         owner = self.root / 'main.tex'
