@@ -68,7 +68,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         workspace: {isTrusted: true, workspaceFolders: [{uri: uri(root)}], textDocuments: [document],
             getWorkspaceFolder: () => ({uri: uri(root)}),
             findFiles: async () => tex ? [uri(file), ...(state ? [uri(owner)] : [])] : [],
-            getConfiguration: () => ({get: (key, fallback) => key === 'translation.autoTranslate' ? false : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback}),
+            getConfiguration: () => ({get: (key, fallback) => key === 'translation.autoTranslate' ? false : key === 'reviewPDF.autoUpdateAfterAccept' ? autoPDF : fallback, inspect: () => ({globalValue: undefined})}),
             openTextDocument: async () => document, onDidChangeTextDocument: disposable, onDidSaveTextDocument: f => {saveHandler = f; return disposable();},
             onDidChangeConfiguration: f => {configurationChanged = f; return disposable();},
             createFileSystemWatcher: () => ({dispose() {}, onDidChange: f => {if (!texChanged) texChanged = f; fileChanged = f; return disposable();}, onDidCreate: disposable, onDidDelete: disposable})},
@@ -202,7 +202,7 @@ test('advance can display a pending card while its editor buffer is dirty', asyn
     assert.equal(f.edit.status,'pending');
 });
 
-test('related completed items locate only matching sources and retain pending and compacted paths', async () => {
+test('related review shows pending items and excludes completed history', async () => {
     const f=hostFixture({autoPDF:false});await f.ui.ready;
     const question={id:'R1-Q1',file:'reply.tex',quote:'Reviewer question.'};
     f.edit.questions=[question];
@@ -210,11 +210,8 @@ test('related completed items locate only matching sources and retain pending an
     f.vscode.window.showQuickPick=async choices=>choices.find(c=>c.id==='2');
     await f.ui.refresh({repo:f.root,owner:'reply.tex'});
     const c=f.rows()[0].children[0].command.arguments[0], command=f.handlers.get('localLatex.inlineRelatedChanges');
-    await command(c);assert(f.calls.some(x=>x[0]==='showTextDocument'));
-    f.allCards['2'].source_match=false;const shown=f.calls.filter(x=>x[0]==='showTextDocument').length;
-    await command(c);assert(f.notices.some(x=>x.includes('无法精确定位')));assert.equal(f.calls.filter(x=>x[0]==='showTextDocument').length,shown);
-    f.allCards['2'].edit.versions=[];await command(c);assert(f.notices.some(x=>x.includes('已精简')));
-    f.allCards['2'].edit.versions=['v1'];f.allCards['2'].edit.status='pending';f.allCards['2'].source_match=true;
+    await command(c);assert(!f.calls.some(x=>x[0]==='showTextDocument'));assert(f.notices.some(x=>x.includes('没有其他')));
+    f.allCards['2'].edit.status='pending';
     await command(c);assert.equal(f.ui.workbench.active.id,'2');
 });
 

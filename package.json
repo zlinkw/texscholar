@@ -653,6 +653,12 @@
     "configuration": {
       "title": "TeXScholar · 本地论文写作",
       "properties": {
+        "localLatex.reviewToolbar": {
+          "type": ["object", "null"],
+          "default": null,
+          "scope": "window",
+          "description": "审核工具栏中显示的操作及顺序，由审核页的自定义工具栏管理。"
+        },
         "localLatex.translation.provider": {
           "type": "string",
           "enum": [

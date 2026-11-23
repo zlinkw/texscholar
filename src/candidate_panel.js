@@ -78,7 +78,7 @@ function createCandidatePanel(vscode, context, services) {
         const entry = {c: current, dirty: false, handling: false, hasPending: false};
         active = entry;
         const post = message => view.webview.postMessage(message);
-        const content = message => ({title: `${current.id} · ${loaded.edit.file} · 候选 v${loaded.edit.versions.length}`, style: services.style(),
+        const content = message => ({title: `${current.id} · ${loaded.edit.file} · 候选 v${loaded.edit.generation ?? loaded.edit.versions.length}`, style: services.style(),
             version: current.version, original: loaded.original, candidate: loaded.candidate, message});
         const apply = record => {
             if (entry.handling) {entry.pending = record; entry.hasPending = true; return;}

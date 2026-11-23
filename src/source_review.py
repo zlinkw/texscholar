@@ -665,9 +665,11 @@ class Review:
         updated.pop('fact_evidence', None)
         new_version = self.snapshot({'original.tex': before.encode('utf-8'), 'candidate.tex': options[0]['after'].encode('utf-8'),
                                      'span.json': json.dumps(updated, ensure_ascii=False).encode('utf-8')}, 'synchronized review item ' + id_)
+        edit['generation'] = edit.get('generation', len(edit['versions'])) + 1
         edit['versions'].append(new_version)
         self.bind(edit, text, row['start'] + start, row['start'] + end)
         self.mark_original_stale(edit, before, version, item['before'])
+        self.retain_active_versions(edit)
         return {}, {'id': id_, 'version': new_version, 'previous_version': version, 'changed': True,
                     'before': before, 'options': options, 'source_revision': source_revision}
 
@@ -1316,9 +1318,11 @@ class Review:
         if rework:
             notes = [r for r in edit.get('requests', []) if r['status'] in ('open', 'addressed-pending-review')]
             if notes:
-                # One read-only comparison round, separate from actionable notes.
-                # No new notes means the last requirements remain useful to compare.
+                # Keep only the feedback associated with the immediately preceding revision.
                 edit['previous_feedback'] = {'version': edit['versions'][-1], 'requests': copy.deepcopy(notes)}
+            else:
+                edit.pop('previous_feedback', None)
+        edit['generation'] = edit.get('generation', len(edit['versions'])) + 1
         edit["versions"].append(commit)
         if deferred:
             self.bind(edit, text, a, b, len(item['left']), len(item['right']))
@@ -1346,9 +1350,29 @@ class Review:
                     request["status"] = "addressed-pending-review"
                     request["addressed_version"] = commit
             self.stale({id_})
+        self.retain_active_versions(edit)
         if id_ not in self.state["rounds"][-1]["ids"]:
             self.state["rounds"][-1]["ids"].append(id_)
         return ({} if deferred else {rel: text[:a] + after + text[b:]}), {"id": id_, "status": edit["status"]}
+
+    @staticmethod
+    def retain_active_versions(edit):
+        """Retain the current snapshot and snapshots referenced by review material."""
+        keep = {edit['versions'][-1]}
+        for note in edit.get('requests', []):
+            keep.add(note['version'])
+            if note.get('addressed_version'):
+                keep.add(note['addressed_version'])
+        previous = edit.get('previous_feedback')
+        if previous:
+            keep.add(previous['version'])
+            for note in previous['requests']:
+                keep.add(note['version'])
+                if note.get('addressed_version'):
+                    keep.add(note['addressed_version'])
+        if edit.get('published_version'):
+            keep.add(edit['published_version'])
+        edit['versions'] = [version for version in edit['versions'] if version in keep]
 
     def stale(self, changed):
         seen = set(changed)
@@ -2025,13 +2049,14 @@ class Review:
         folder = self.repo / ".codex-review" / "views" / self.state["session"] / (id_ + "-" + uuid.uuid4().hex)
         folder.mkdir(parents=True, exist_ok=False)
         # Only the selected edit's excerpts; never a second full manuscript or state table.
-        old, new = folder / (id_ + "-original.tex"), folder / (id_ + f"-candidate-v{len(edit['versions'])}.tex")
+        generation = edit.get('generation', len(edit['versions']))
+        old, new = folder / (id_ + "-original.tex"), folder / (id_ + f"-candidate-v{generation}.tex")
         old.write_bytes(obj["before"].encode("utf-8"))
         new.write_bytes(obj["after"].encode("utf-8"))
         old.chmod(0o444)
         new.chmod(0o444)
         result = {"id": id_, "original": str(old), "candidate": str(new), "file": edit["file"],
-                  "status": edit["status"], "generation": len(edit["versions"]), "source_match": self.status()["edits"][id_].get("source_match")}
+                  "status": edit["status"], "generation": generation, "source_match": self.status()["edits"][id_].get("source_match")}
         # Retired old-window launch; retain commented until the next confirmed cleanup.
         # if code:
         #     subprocess.run([code, "--reuse-window", "--diff", str(old), str(new)], check=True)

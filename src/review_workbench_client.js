@@ -9,7 +9,7 @@ let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSele
 let navigationFilter = {query: '', kind: '', notes: false};
 let changeCursor;
 let directoryCursor, localFeedback;
-let stashes = [], historyData, questionRows = [];
+let stashes = [], questionRows = [];
 const batchSelection = new Map();
 const coordinatedWrites = new Set(['save', 'saveAccept', 'accept', 'acceptBatch', 'reject', 'note', 'noteHandoff', 'editNote', 'batchNote', 'saveSource', 'manualRebase', 'syncBlock', 'repairBlock', 'relocate']);
 const feedbackTargets = new Map();
@@ -19,7 +19,11 @@ let sourceMode = false;
 let comparison = 'original', draftFrame;
 const math = globalThis.TeXScholarMath;
 const instance = crypto.randomUUID();
-let rendering = false, stateFrame, restoration, toolbarSize;
+let rendering = false, stateFrame, restoration;
+const toolbarLabels = {previous:'上一项', next:'下一项', handoff:'批注 → Codex', source:'定位源文件', mathMode:'LaTeX 源码', reopen:'打开 PDF', locate:'定位 PDF', pdf:'更新审核 PDF', sourcePDF:'正式 PDF', translate:'翻译／重试', provider:'翻译来源', toggleChinese:'显示／收起中文', paperBackground:'当前论文背景', personalPrompts:'个人论文提示词', configuration:'检查配置', start:'AI 论文助手', checkUpdates:'检查插件更新', finish:'Git 备份', stashClose:'暂存并关闭'};
+const toolbarOrder = Object.keys(toolbarLabels), toolbarDefault = {order:toolbarOrder, visible:['previous','next']};
+const toolbarNodes = Object.fromEntries(toolbarOrder.map(id => [id, document.querySelector('header [data-action="' + id + '"]')]));
+let toolbar = toolbarDefault, toolbarDraft;
 let sourceDraftStale = false, candidateDraftStale = false, oldOriginal;
 let selectedBlockRevision;
 $('currentBlock').addEventListener('pointerup', () => {selectedBlockRevision = data?.block?.source_revision;});
@@ -27,16 +31,33 @@ $('currentBlock').addEventListener('keyup', () => {selectedBlockRevision = data?
 const passiveActions = new Set(['reopen', 'locate', 'source', 'question', 'translate', 'handoff', 'configuration', 'paperBackground', 'personalPrompts', 'start', 'checkUpdates', 'sourcePDF']);
 const sideBusy = new Set();
 const actionNames = {save: '保存候选', saveSource: '保存当前原文', syncBlock: '同步候选', repairBlock: '修复审核块', manualRebase: '人工更新候选', saveSwitch: '保存并切换', saveAccept: '保存并接收候选', retryHandoff: '重试本项交接', noteHandoff: '保存并准备 Codex 批注', note: '保存批注', editNote: '保存批注修改', accept: '接收候选', reject: '拒绝候选',
-    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', readHistory:'读取历史', adoptHistory:'采用历史草稿', checkQuestion:'核对问题', questionEntry:'查看关联项', questionCard:'打开问题卡操作', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
+    next: '切换审核项', previous: '切换审核项', switch: '切换审核项', postpone: '暂缓本项', restorePostponed: '恢复本项', stashClose: '暂存并关闭', restoreStash: '恢复草稿', discardStash: '放弃暂存', checkQuestion:'核对问题', questionEntry:'查看关联项', questionCard:'打开问题卡操作', backRelated: '返回原审核项', latest: '读取新版', handoff: '准备 Codex 批注', finish: '备份已接收成果',
     configuration: '检查配置', checkUpdates: '检查插件更新', start: '准备 AI 任务', provider: '切换翻译来源', preview: '准备 PDF 预览', pdf: '准备 PDF 更新', sourcePDF: '编译正式 PDF', related: '定位关联改动'};
 function fitToolbar() {
     const header = document.querySelector('header');
     document.documentElement.style.setProperty('--toolbar-height', header.offsetHeight + 'px');
-    const size = JSON.stringify([header.clientWidth, appearance?.controlFontSize, $('mathMode').textContent, $('progress').textContent, $('pdfStatus').textContent, $('backRelated').hidden, $('backRelated').textContent]);
-    if (toolbarSize === size) return;
-    toolbarSize = size;
-    const nodes = ['sourceLocation', 'mathMode', 'pdfActions', 'pdfStatus'].map($);
-    for (const node of nodes) $('overflowActions').appendChild(node);
+}
+function applyToolbar(value) {
+    toolbar = value;
+    for (const id of value.order) (value.visible.includes(id) ? $('toolbarCustom') : $('overflowActions')).appendChild(toolbarNodes[id]);
+    $('overflowActions').appendChild($('pdfStatus'));
+    fitToolbar();
+}
+function renderToolbarChoices() {
+    const root = $('toolbarChoices'); root.replaceChildren();
+    toolbarDraft.order.forEach((id, index) => {
+        const row=document.createElement('div'), label=document.createElement('label'), input=document.createElement('input');
+        input.type='checkbox'; input.checked=toolbarDraft.visible.includes(id);
+        input.addEventListener('change', () => {toolbarDraft.visible = input.checked ? [...toolbarDraft.visible,id] : toolbarDraft.visible.filter(value => value!==id);});
+        label.append(input, document.createTextNode(' ' + toolbarLabels[id])); row.appendChild(label);
+        for (const [delta,text] of [[-1,'上移'],[1,'下移']]) {
+            const button=document.createElement('button'); button.className='secondary'; button.textContent=text;
+            button.disabled=index+delta<0 || index+delta>=toolbarDraft.order.length;
+            button.addEventListener('click', () => {const order=toolbarDraft.order; [order[index],order[index+delta]]=[order[index+delta],order[index]]; renderToolbarChoices();});
+            row.appendChild(button);
+        }
+        root.appendChild(row);
+    });
 }
 new ResizeObserver(fitToolbar).observe(document.documentElement);
 new ResizeObserver(fitToolbar).observe(document.querySelector('header'));
@@ -167,7 +188,6 @@ function dirty() {
     const changed = candidateDirty || sourceDraftStale ||
         !!data?.block && $('blockSource').value !== data.block.text.replace(/\r\n/g, '\n');
     send('dirty', {dirty: changed, noteDirty: !!$('note').value.trim() || !!editingNote || !!$('batchNote').value.trim(), state: remember(false)}, false);
-    if (historyData) renderHistory();
     buttons(); return changed;
 }
 function draftWarning() {
@@ -292,7 +312,7 @@ function renderDirectory(items) {
     const postponed = items.some(item => item.id === current?.id && item.postponed);
     $('postpone').hidden = postponed; $('restorePostponed').hidden = !postponed;
     const pending = items.filter(i => ['pending', 'rework'].includes(i.status));
-    $('progress').textContent = current ? current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · v' + data.edit.versions.length
+    $('progress').textContent = current ? current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · v' + (data.edit.generation ?? data.edit.versions.length)
         + (navigationFilter.query || navigationFilter.kind || navigationFilter.notes ? ' · 已筛选' : '') : '审核项';
     $('progress').title = '本批可操作 ' + items.length + ' 项 · 待处理 ' + pending.length + ' · 暂缓 ' + items.filter(i => i.postponed).length + ' · 定位冲突 ' + items.filter(i => i.source_match === false).length + '；点击搜索编号、位置或关联问题';
     if ($('directoryDialog').open) filterDirectory();
@@ -370,50 +390,17 @@ function renderStash() {
         ...(d.state.blockDraft === undefined ? [] : ['原文草稿\n' + d.state.blockDraft]), ...(d.state.note ? ['未提交批注\n' + d.state.note] : []), ...(d.state.batchNote ? ['未提交共同意见\n' + d.state.batchNote] : [])].join('\n\n');
     document.querySelector('[data-action="restoreStash"]').disabled = !d.exact || !!waiting;
 }
-function renderHistory() {
-    const option = historyData?.options.find(o => o.label === $('historyOption').value);
-    if (!option) return;
-    const changes = math.wordChanges(historyData.original, option.after);
-    renderText($('historyOriginal'), historyData.original, changes, 'original');
-    renderText($('historyCandidate'), option.after, changes, 'candidate');
-    let increment=$('historyIncrement');
-    if (!increment) {
-        increment=document.createElement('section');increment.id='historyIncrement';
-        const heading=document.createElement('h4');heading.id='historyIncrementTitle';
-        const old=document.createElement('div');old.id='historyIncrementOld';old.className='review-text';
-        const now=document.createElement('div');now.id='historyIncrementNew';now.className='review-text';
-        increment.append(heading,old,now);$('historyContent').appendChild(increment);
-    }
-    const target=options.find(o=>o.label===$('historyTarget').value);
-    if (!target) {increment.hidden=true;return;}
-    increment.hidden=false;
-    $('historyIncrementTitle').textContent='旧版本 '+historyData.version+' · '+option.label+' → 当前版本 '+current.version+' · '+target.label;
-    const delta=math.wordChanges(option.after,displayed(target));
-    renderText($('historyIncrementOld'),option.after,delta,'original');
-    renderText($('historyIncrementNew'),displayed(target),delta,'candidate');
-}
 function renderQuestionTable(rows) {
     questionRows = rows;
     renderQuestionMode();
     const root = $('questionTableRows'); root.replaceChildren();
-    if (!rows.length) {root.textContent='本轮尚无明确关联的问题；未关联不等于没有修改。'; return;}
+    if (!rows.length) {root.textContent='本轮尚无明确关联的问题。'; return;}
     for (const row of rows) {
-        const section=document.createElement('section'), heading=document.createElement('h4'), quote=document.createElement('pre');
-        heading.textContent=row.question.id + ' · ' + row.question.file + (row.checked ? ' · 本轮已核对' : row.recheck ? ' · 关联或内容变化，需再核对' : ' · 尚未核对');
-        quote.className='review-text'; quote.textContent=row.question.quote; section.append(heading,quote);
-        const columns=document.createElement('div'); columns.className='appearanceFields';
-        for (const [kind,label] of [['manuscript','正文'],['response','回复信']]) {
-            const entries=row.entries.filter(entry=>entry.kind===kind), col=document.createElement('div'), title=document.createElement('strong');
-            const pending=entries.filter(entry=>['pending','rework'].includes(entry.status)).length;
-            const conflicts=entries.filter(entry=>entry.conflict).length;
-            const review=entries.reduce((n,entry)=>n+(entry.freshness==='needs-recheck'?1:0)+entry.requests.filter(r=>r.status==='addressed-pending-review').length,0);
-            title.textContent=`${label} ${entries.length} 项 · 待审 ${pending} · 冲突 ${conflicts} · 待复核 ${review}`; col.appendChild(title);
-            for (const entry of entries) {const line=document.createElement('div'), button=document.createElement('button'); button.className='secondary'; button.dataset.action='questionEntry'; button.dataset.questionKey=row.key; button.dataset.target=entry.id;
-                button.textContent=entry.id + ' · ' + entry.file + ' · ' + ({pending:'待审',rework:'返修',accepted:'已接收',rejected:'已拒绝'}[entry.status] || entry.status) + (entry.conflict ? ' · 冲突' : '') + (entry.version ? '' : ' · 已精简'); line.appendChild(button); col.appendChild(line);}
-            columns.appendChild(col);
-        }
+        const section=document.createElement('details'), heading=document.createElement('summary'), quote=document.createElement('pre');
+        heading.textContent=row.question.id + ' · ' + row.question.file + (row.checked ? ' · 本轮已核对' : row.recheck ? ' · 需再核对' : ' · 尚未核对');
+        quote.className='review-text'; quote.textContent=row.question.quote;
         const check=document.createElement('button'); check.className='secondary'; check.dataset.action='checkQuestion'; check.dataset.questionKey=row.key; check.textContent='本轮已核对';
-        section.append(columns,check); root.appendChild(section);
+        section.append(heading,quote,check); root.appendChild(section);
     }
 }
 function questionEntries() {
@@ -421,7 +408,7 @@ function questionEntries() {
         const linked = new Set(questionRows.flatMap(row => row.entries.map(entry => entry.id)));
         return directoryItems.filter(item => !linked.has(item.id)).map(item => ({...item,openRequests:item.requests}));
     }
-    return (questionRows.find(row => row.key === selectedQuestion)?.entries || []).map(entry =>
+    return (questionRows.find(row => row.key === selectedQuestion)?.entries || []).filter(entry => entry.card).map(entry =>
         ({...entry,openRequests:entry.requests.filter(note => note.status === 'open').length}));
 }
 function questionEntryDraft(entry) {
@@ -445,14 +432,18 @@ function changedLines(text, changes, side) {
 function renderQuestionMode() {
     const choice = $('questionModeChoice'), previous = selectedQuestion;
     choice.replaceChildren();
-    for (const row of questionRows) {
+    const visible = questionRows.filter(row => row.entries.some(entry => entry.card));
+    for (const row of visible) {
         const option=document.createElement('option'); option.value=row.key;
-        option.textContent=row.question.id + ' · ' + row.question.file + ' · ' + row.question.quote;
+        const duplicates = visible.filter(other => other.question.id === row.question.id && other.question.file === row.question.file);
+        option.textContent=row.question.id + ' · ' + row.question.file + (duplicates.length > 1 ? ' · ' + (duplicates.indexOf(row) + 1) : '');
+        option.title=row.question.quote;
         choice.appendChild(option);
     }
     const unbound=document.createElement('option'); unbound.value='__unbound__'; unbound.textContent='未绑定问题的修改'; choice.appendChild(unbound);
     selectedQuestion = [...choice.options].some(option => option.value === previous) ? previous : choice.options[0].value;
     choice.value = selectedQuestion;
+    $('questionModeQuote').textContent = questionRows.find(row => row.key === selectedQuestion)?.question.quote || '';
     const kindFilter=$('questionType').value;
     const entries=questionEntries().filter(entry=>!kindFilter || kindFilter==='rework' && entry.status==='rework' || kindFilter==='conflict' && (entry.conflict || entry.source_match===false) ||
         ['number','citation','math','term'].includes(kindFilter) && questionEntryDraft(entry) ||
@@ -517,7 +508,7 @@ function renderQuestionMode() {
         }
         root.appendChild(column);
     }
-    $('questionModeScope').textContent='未绑定不代表没有修改；接收不代表问题解决。';
+    $('questionModeScope').textContent=selectedQuestion === '__unbound__' ? '未绑定不代表没有修改。' : '';
     $('questionModeView').hidden=reviewMode!=='question'; $('review').hidden=reviewMode==='question' || unavailable;
     document.querySelector('[data-action="paragraphMode"]').setAttribute('aria-pressed',String(reviewMode==='paragraph'));
     document.querySelector('[data-action="questionMode"]').setAttribute('aria-pressed',String(reviewMode==='question'));
@@ -625,8 +616,9 @@ function renderQuestions(questions) {
         let node = existing.get(key);
         if (!node) {
             node = document.createElement('div'); node.className = 'question'; node.dataset.key = key;
-            node.innerHTML = '<div class="questionHeading"><strong></strong><div><button class="secondary" data-action="question" title="跳转到原始审稿意见文件位置">原始位置</button><button class="secondary" data-action="related" title="查看本问题关联的全部改动">全部改动</button></div></div><div class="review-text"></div><div class="zh"></div>';
-            node.querySelector('strong').textContent = q.id;
+            node.innerHTML = '<details><summary><strong></strong></summary><div class="questionHeading"><div><button class="secondary" data-action="question" title="跳转到原始审稿意见文件位置">原始位置</button><button class="secondary" data-action="questionFocus">进入问题审核</button><button class="secondary" data-action="related" title="查看本问题关联的全部改动">全部改动</button></div></div><div class="review-text"></div><div class="zh"></div></details>';
+            const summary=Array.from(q.quote.replace(/\s+/g, ' '));
+            node.querySelector('strong').textContent = q.id + ' · ' + summary.slice(0,100).join('') + (summary.length > 100 ? '…' : '');
         }
         if (container.children[index] !== node) container.insertBefore(node, container.children[index] || null);
         node.dataset.index = String(index);
@@ -644,8 +636,7 @@ function renderQuestions(questions) {
 function noteOrigin(n) {
     const context = n.display_context;
     const origin = context ? (context.question ? context.question.id : n.option ? '方案 ' + n.option : '原文') + (context.kind === 'translation' ? '译文' : '审稿问题') : n.option || '整项';
-    const generation = data.edit.versions.indexOf(n.version) + 1;
-    return origin + ' · ' + ({revision:'普通返修',skill:'完善通用 SKILL',personal:'完善我的习惯',paper_requirements:'完善本论文要求',paper_background:'论文背景',discussion:'仅提问或讨论'}[n.purpose || 'revision']) + (generation ? ' · v' + generation : '');
+    return origin + ' · ' + ({revision:'普通返修',skill:'完善通用 SKILL',personal:'完善我的习惯',paper_requirements:'完善本论文要求',paper_background:'论文背景',discussion:'仅提问或讨论'}[n.purpose || 'revision']) + ' · ' + n.version.slice(0, 8);
 }
 function fulfillmentText(n) {
     if (data.source_match === false || n.source_stale) return '<p>原文或批注基准已变化，请重新核对返修说明。</p>';
@@ -888,8 +879,6 @@ $('comparisonChoice').addEventListener('change', () => {
 $('scopeChoice').addEventListener('change', scope);
 for (const id of ['directoryKind', 'directoryNotes', 'directoryQueue']) $(id).addEventListener('change', filterDirectory);
 $('stashChoice').addEventListener('change', renderStash);
-$('historyOption').addEventListener('change', renderHistory);
-$('historyTarget').addEventListener('change', renderHistory);
 $('directoryDialog').addEventListener('keydown', event => {
     if (event.isComposing || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.target.id !== 'directoryQuery' && !event.target.closest('#directoryResults')) return;
@@ -952,7 +941,12 @@ document.addEventListener('click', event => {
     const type = button.dataset.action, option = button.dataset.option;
     localFeedback = feedbackFor(button);
     const menu = button.closest('.more'); if (menu) menu.open = false;
+    if (type === 'toolbarSettings') {toolbarDraft={order:[...toolbar.order],visible:[...toolbar.visible]}; $('toolbarStatus').textContent=''; renderToolbarChoices(); $('toolbarDialog').showModal(); return;}
+    if (type === 'toolbarCancel') {$('toolbarDialog').close(); return;}
+    if (type === 'toolbarReset') {toolbarDraft={order:[...toolbarDefault.order],visible:[...toolbarDefault.visible]}; renderToolbarChoices(); return;}
+    if (type === 'toolbarSave') {$('toolbarStatus').textContent='正在保存…'; send(type,{toolbar:toolbarDraft},false); return;}
     if (type === 'paragraphMode' || type === 'questionMode') {reviewMode=type === 'questionMode' ? 'question' : 'paragraph';renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);return;}
+    if (type === 'questionFocus') {const q=data.edit.questions[Number(button.dataset.index)]; selectedQuestion=JSON.stringify([q.id,q.file,q.quote]); reviewMode='question'; renderQuestionMode(); send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false); return;}
     if (type === 'questionCard') {send(type,{session:currentSession,questionKey:button.dataset.questionKey,target:button.dataset.target,targetVersion:button.dataset.targetVersion,option,intent:button.dataset.intent});return;}
     if (type === 'questionSelectAll') {for (const check of $('questionModeCards').querySelectorAll('input[data-question-item]:not(:disabled)')) if (!check.checked) {check.checked=true;check.dispatchEvent(new Event('change'));}return;}
     if (type === 'questionAccept' || type === 'questionAcceptAll') {
@@ -968,15 +962,6 @@ document.addEventListener('click', event => {
     if (type === 'acceptBatch' || type === 'handoffSelected') {send(type,{items:[...batchSelection.values()], session:currentSession}); return;}
     if (type === 'batchNote') {send(type,{items:[...batchSelection.values()].map(item => $('batchNoteScope').value === 'chosen' ? item : {id:item.id,version:item.version}),session:currentSession,text:$('batchNote').value,purpose:$('batchPurpose').value,scope:$('batchNoteScope').value}); return;}
     if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
-    if (type === 'questionTable') {$('questionTable').open=true; $('questionTable').scrollIntoView({block:'nearest'}); return;}
-    if (type === 'history') {
-        const versions = data.edit.versions.slice(0,-1);
-        $('historyVersion').replaceChildren();
-        versions.forEach((version,index) => {const option=document.createElement('option'); option.value=version; option.textContent='版本 ' + (index+1); $('historyVersion').appendChild(option);});
-        if (versions.length) $('historyVersion').value=versions.at(-1);
-        $('historyStatus').textContent=versions.length ? '选择仍保留的历史版本。' : '本项没有可用历史；精简或开始新批次后不保证保留。';
-        $('historyContent').hidden=true; $('historyDialog').open=true; $('historyDialog').scrollIntoView({block:'nearest'}); return;
-    }
     if (type === 'clearFilter') {$('directoryQuery').value = ''; $('directoryKind').value = ''; $('directoryNotes').checked = false; $('directoryQueue').value = 'active'; filterDirectory(); return;}
     if (type === 'nextChange' || type === 'previousChange') {jumpChange(type === 'nextChange' ? 1 : -1); return;}
     if (type === 'locateNote') {locateNote(button.closest('.note').dataset.noteId); return;}
@@ -1015,8 +1000,6 @@ document.addEventListener('click', event => {
     if (type === 'saveSource') {send(type, {value: $('blockSource').value}); return;}
     if (type === 'stashClose') {send(type, {state:snapshot()}); return;}
     if (type === 'restoreStash' || type === 'discardStash') {send(type, {stash:$('stashChoice').value}); return;}
-    if (type === 'readHistory') {if ($('historyVersion').value) {$('historyContent').hidden=true; $('historyStatus').textContent='正在读取历史版本…'; send(type, {historyVersion:$('historyVersion').value});} return;}
-    if (type === 'adoptHistory') {send(type, {option:$('historyOption').value,target:$('historyTarget').value}); return;}
     if (type === 'checkQuestion' || type === 'questionEntry') {
         const row=questionRows.find(item=>item.key===button.dataset.questionKey); if (!row) return;
         const entry=row.entries.find(item=>item.id===button.dataset.target);
@@ -1049,21 +1032,14 @@ function executeCardAction(action) {
     target.click();
 }
 window.addEventListener('message', ({data: message}) => {
+    if (message.type === 'toolbarResult') {
+        $('toolbarStatus').textContent=message.message || '';
+        if (!message.error) {applyToolbar(message.toolbar); $('toolbarDialog').close();}
+        return;
+    }
     if (message.type === 'cardActionGrant') {executeCardAction(message.action); return;}
     if (message.type === 'relatedReturn') {showRelatedReturn(message.id); return;}
     if (message.type === 'questionRows') {renderQuestionTable(message.questions); return;}
-    if (message.type === 'history') {
-        historyData=message.history; $('historyOption').replaceChildren(); $('historyTarget').replaceChildren();
-        for (const o of historyData.options) {const option=document.createElement('option'); option.value=o.label; option.textContent=o.label; $('historyOption').appendChild(option);}
-        for (const o of options) {const option=document.createElement('option'); option.value=o.label; option.textContent=o.label; $('historyTarget').appendChild(option);}
-        $('historyNotes').textContent = historyData.notes === undefined ? '该版本的当时批注快照未保留。' : historyData.notes.length ? historyData.notes.map(n => (n.option || '整项') + ' · ' + n.text).join('\n\n') : '该版本没有已保留的批注。';
-        $('historyStatus').textContent='只读历史对照。'; $('historyContent').hidden=false; renderHistory(); return;
-    }
-    if (message.type === 'historyAdopted') {
-        drafts.set(message.option, message.text.replace(/\r\n/g,'\n')); $('edit-' + message.option).value=drafts.get(message.option);
-        $('editor-' + message.option).hidden=false; $('historyDialog').open=false; dirty(); queueDraftPreview();
-        status('已放入当前方案草稿；尚未保存或接收。'); return;
-    }
     if (message.type === 'handoffRetry') {$('retryHandoff').hidden = !message.available; return;}
     if (message.type === 'busy') {waiting = message.action; buttons(); activateCardAction(); return;}
     if (message.type === 'coordinating') {coordinating = message.busy; buttons(); return;}
@@ -1125,7 +1101,7 @@ window.addEventListener('message', ({data: message}) => {
         $('syncBlock').hidden = !data.block || message.source_match !== false;
         $('repairBlock').hidden = current.owner !== '.codex-review/state.json' || !data.edit.block_id || message.source_match !== false;
         renderNotes(data.edit.requests || []); draftWarning(); dirty(); return;}
-    if (message.type === 'titles') {data.edit.location = message.location; $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (message.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length; renderDirectory(message.directory); return;}
+    if (message.type === 'titles') {data.edit.location = message.location; $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (message.location || data.edit.file) + ' · 候选 v' + (data.edit.generation ?? data.edit.versions.length); renderDirectory(message.directory); return;}
     if (message.type === 'titleStatus') {$('titleStatus').textContent = message.message; return;}
     if (message.type === 'backupStatus') {$('backupStatus').textContent = message.message || '后台 Git 备份尚无任务'; if (['failed','local'].includes(message.status)) $('backupDetails').open=true; return;}
     if (message.type === 'directory') {renderDirectory(message.directory); return;}
@@ -1157,13 +1133,13 @@ window.addEventListener('message', ({data: message}) => {
         rendering = true; restoration = undefined;
         const saved = message.type === 'saved';
         const refresh = !saved && current && current.repo === message.c.repo && current.owner === message.c.owner && current.id === message.c.id;
-        if (!saved && (!refresh || current.version !== message.c.version)) {historyData=undefined; $('historyContent').hidden=true;}
         const oldOptions = options;
         if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) selectedQuestion = message.questionPosition || '';
         if (Array.isArray(message.batchItems)) {batchSelection.clear(); for (const item of message.batchItems) batchSelection.set(item.id,item);}
         else if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) batchSelection.clear();
         if (message.session !== undefined) currentSession = message.session;
         current = message.c; data = message.data; options = message.options;
+        if (message.toolbar) applyToolbar(message.toolbar);
         renderQuestionTable(message.questions || []);
         stashes = message.stashes || [];
         const priorStash = $('stashChoice').value;
@@ -1185,7 +1161,7 @@ window.addEventListener('message', ({data: message}) => {
         $('mathMode').setAttribute('aria-pressed', String(sourceMode));
         preview = message.preview; unavailable = conflict = false; $('latest')?.remove();
         style(message.style); $('empty').hidden = true; $('review').hidden = false;
-        $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + data.edit.versions.length;
+        $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + (data.edit.generation ?? data.edit.versions.length);
         pdfStatus(message.pdfStatus);
         $('locationConflict').hidden = data.source_match !== false;
         $('locationConflict').textContent = data.source_match === false ? '正文或审核块需核对：' + data.conflict + '。候选和批注仍保留。' : '';

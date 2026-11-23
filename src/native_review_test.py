@@ -280,7 +280,7 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(data['candidate'], 'The model is reliable and compact.')
         self.assertFalse(r.cards()['cards'][id_]['source_match'])
 
-    def test_sidecar_checkpoint_preserves_all_rounds_versions_and_notes(self):
+    def test_sidecar_checkpoint_compacts_only_safe_completed_history(self):
         import copy
         from review_checkpoint import compact
         id_ = self.proposal()
@@ -288,18 +288,36 @@ class NativeReview(unittest.TestCase):
         state = dict(self.review().state, schema=3)
         edit = state['edits'][id_]; edit['status'] = 'accepted'; version = edit['versions'][-1]
         edit['requests'] = [{'version': version, 'status': 'resolved', 'text': 'Preserve history'}]
+        edit['questions'] = [{'id':'Q1','file':'reply.tex','quote':'Thank you.'}]
+        state['edits']['2'] = copy.deepcopy(edit)
+        state['edits']['2']['requests'][0]['status'] = 'open'
+        state['edits']['3'] = copy.deepcopy(edit)
+        state['edits']['3']['freshness'] = 'needs-recheck'
+        state['edits']['4'] = copy.deepcopy(edit)  # Not in this verified checkpoint.
+        state['edits']['5'] = copy.deepcopy(edit)
+        state['edits']['6'] = copy.deepcopy(edit)
+        state['edits']['6']['status'] = 'pending'
+        state['edits']['6']['deps'] = ['5']
+        state['next'][0] = 7
+        protected = copy.deepcopy({i: state['edits'][i] for i in ('2','3','4','5','6')})
         state['rounds'].insert(0, copy.deepcopy(state['rounds'][0]))
         state['pending_backup'] = {'commit': 'fixture-commit', 'files': {}, 'accepted': {id_: version},
-                                   'closed': {id_: {'status': 'accepted', 'version': version}}}
+                                   'closed': {i: {'status': 'accepted', 'version': version} for i in (id_, '2', '3', '5')}}
         self.install_sidecar(state)
         r = Review(self.root, '.codex-review/state.json', 'missing-git')
         r.git = lambda *args: b'fixture-commit\n'
         _, result = compact(r)
         self.assertEqual(result['removed_ids'], [])
-        self.assertEqual(len(r.state['rounds']), 2)
-        self.assertEqual(r.state['edits'][id_]['versions'], [version])
-        self.assertEqual(r.state['edits'][id_]['requests'][0]['text'], 'Preserve history')
-        self.assertEqual(r.state['edits'][id_]['published_version'], version)
+        self.assertEqual(len(r.state['rounds']), 1)
+        self.assertEqual(r.state['edits'][id_]['versions'], [])
+        self.assertNotIn('requests', r.state['edits'][id_])
+        self.assertEqual(r.state['edits'][id_]['questions'][0]['id'], 'Q1')
+        self.assertEqual(r.state['edits'][id_]['checkpoint'], 'fixture-commit')
+        self.assertEqual({i: r.state['edits'][i] for i in protected}, protected)
+        r.persist({}, digest(r.raw))
+        persisted = Review(self.root, '.codex-review/state.json', 'missing-git').state
+        self.assertEqual(persisted['edits'][id_]['versions'], [])
+        self.assertEqual({i: persisted['edits'][i] for i in protected}, protected)
 
     def test_block_question_association_requires_verified_exact_quote(self):
         sidecar = self.root / '.codex-review' / 'state.json'
@@ -553,7 +571,10 @@ class NativeReview(unittest.TestCase):
         r.persist(updated, digest(r.raw)); r = review(); card = r.inspect(item['id'], source=True)
         self.assertTrue(card['source_match']); self.assertEqual(card['original'], 'Author The model is strong and fast.')
         self.assertEqual(card['options'][0]['after'], 'Author The model is reliable and fast.')
-        self.assertEqual(r.state['edits'][item['id']]['versions'][0], old)
+        self.assertEqual(r.state['edits'][item['id']]['versions'], [card['version']])
+        self.assertEqual(r.state['edits'][item['id']]['generation'], 2)
+        with self.assertRaisesRegex(Conflict, 'Version does not belong'):
+            r.inspect(item['id'], old)
         updated, _ = r.decide([item['id']], [], {item['id']:card['version']}, 'A'); r.persist(updated, digest(r.raw))
         self.assertIn('Author The model is reliable and fast.', review().read('main.tex'))
         from review_blocks import reconcile
@@ -1107,7 +1128,10 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(prior['requests'][0]['text'], '直接重新生成候选。')
         self.assertEqual(self.review().feedback_context()['items'], [], 'comparison notes are not outstanding AI requests')
         self.apply('propose', {'after': 'The model is compact and fast.', 'discard_annotations': True}, id_)
-        self.assertEqual(self.review().state['edits'][id_]['previous_feedback'], prior, 'no new requirements keeps the last useful comparison')
+        rolled = self.review().state['edits'][id_]
+        self.assertNotIn('previous_feedback', rolled, 'feedback from an older revision is not retained as the previous revision')
+        self.assertEqual(rolled['versions'], [rolled['versions'][-1]])
+        self.assertEqual(rolled['generation'], 3)
         newer = self.review().inspect(id_)
         self.apply('feedback', {'id': id_, 'version': newer['version'], 'side': 'original', 'start': 13, 'end': 19,
                                 'quote': 'strong', 'text': '新的这一轮要求。'})

@@ -139,14 +139,39 @@ def compact(r):
                 edits[id_].pop('previous_feedback', None)
                 edits[id_].setdefault('checkpoint', commit)
                 minimal.append(id_)
+    else:
+        # Keep question and dependency identity, while releasing completed
+        # candidate and note references only after the verified checkpoint.
+        eligible = set()
+        for id_, old in saved['closed'].items():
+            edit = edits.get(id_)
+            if (edit and edit['status'] == old['status'] and edit['versions'] and edit['versions'][-1] == old['version']
+                    and edit.get('freshness') != 'needs-recheck'
+                    and not any(q['status'] in {'open', 'addressed-pending-review'} for q in edit.get('requests', []))):
+                eligible.add(id_)
+        needed = set(edits) - eligible
+        queue = list(needed)
+        while queue:
+            for dependency in edits[queue.pop()].get('deps', []):
+                if dependency not in needed:
+                    needed.add(dependency)
+                    queue.append(dependency)
+        for id_ in eligible - needed:
+            edit = edits[id_]
+            edit['versions'] = []
+            edit.pop('requests', None)
+            edit.pop('previous_feedback', None)
+            edit.pop('accepted_option', None)
+            edit['checkpoint'] = commit
+            minimal.append(id_)
     for id_, version in saved['accepted'].items():
         if id_ in edits and edits[id_]['versions'] and edits[id_]['versions'][-1] == version:
             edits[id_]['published_version'] = version
             edits[id_]['checkpoint'] = commit
+    active = r.state['rounds'][-1]
     if not r.sidecar:
-        active = r.state['rounds'][-1]
         active['ids'] = [id_ for id_ in active['ids'] if id_ in edits]
-        r.state['rounds'] = [active]
+    r.state['rounds'] = [active]
     r.state['checkpoint'] = {'commit': commit}
     # Explicit author-reviewed backup also resolves automatic attribution blockers.
     r.state['auto_backup_projection'] = r.state['accepted']

@@ -6,7 +6,7 @@ test('question entries use open note counts from their respective data contracts
     const fs=require('node:fs'),vm=require('node:vm');
     const source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
     const notes=[{status:'open',text:'keep'},{status:'resolved',text:'old'}];
-    const context={selectedQuestion:'__unbound__',questionRows:[{key:'q',entries:[{id:'linked',requests:notes}]}],directoryItems:[{id:'linked',requests:1},{id:'unbound',requests:2},{id:'empty',requests:0}]};
+    const context={selectedQuestion:'__unbound__',questionRows:[{key:'q',entries:[{id:'linked',requests:notes,card:{}},{id:'closed',requests:[]}]}],directoryItems:[{id:'linked',requests:1},{id:'unbound',requests:2},{id:'empty',requests:0}]};
     const entries=vm.runInNewContext('('+source.slice(source.indexOf('function questionEntries('),source.indexOf('\nfunction questionEntryDraft(',source.indexOf('function questionEntries(')))+')',context);
     assert.deepEqual(Array.from(entries(),item=>[item.id,item.openRequests,item.requests]),[['unbound',2,2],['empty',0,0]]);
     context.selectedQuestion='q';const linked=entries();assert.equal(linked[0].openRequests,1);assert.equal(linked[0].requests,notes);
@@ -782,22 +782,46 @@ test('a draft already stale before stashing cannot be restored as an exact draft
     await receive({type:'restoreStash',instance:'p',id:'1',version:'v2',stash:stash.id});assert(messages.some(m=>m.error&&m.message.includes('基准已变化')));
 });
 
-test('history remains read-only and adopts only into the current draft', async () => {
+test('retired history messages cannot read or adopt old candidates', async () => {
     let receive; const messages=[], writes=[];
     const c={repo:'/history',owner:'state',id:'1',version:'v2'};
     const data={id:'1',version:'v2',original:'Current',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1','v2'],requests:[]},options:[{label:'A',after:'Now',reason:'A'}]};
     const old={version:'v1',original:'Old',options:[{label:'A',after:'Old choice'}],edit:{...data.edit,previous_feedback:{version:'v1',requests:[{text:'Old note'}]}}};
     const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
-    const services={session:()=> 's',read:async()=>structuredClone(data),history:async(target,version)=>{assert.equal(target.version,'v2');assert.equal(version,'v1');return structuredClone(old);},style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],accept:()=>writes.push('accept'),save:()=>writes.push('save')};
+    const services={session:()=> 's',read:async()=>structuredClone(data),history:async()=>{writes.push('history');return structuredClone(old);},style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',...data.edit}],accept:()=>writes.push('accept'),save:()=>writes.push('save')};
     const view=createWorkbench(vscode,{subscriptions:[]},services); view.setRecords(new Map([['1',{c,data}]])); await view.show(c); await receive({type:'ready',instance:'page'});
     await receive({type:'readHistory',instance:'page',id:'1',version:'v2',historyVersion:'v1'});
-    assert.equal(messages.find(m=>m.type==='history').history.notes[0].text,'Old note');
+    assert(!messages.some(m=>m.type==='history')); assert(messages.some(m=>m.error));
     await receive({type:'adoptHistory',instance:'page',id:'1',version:'v2',option:'A',target:'A'});
-    assert.equal(messages.find(m=>m.type==='historyAdopted').text,'Old choice'); assert.deepEqual(writes,[]);
+    assert(!messages.some(m=>m.type==='historyAdopted')); assert.deepEqual(writes,[]);
     await receive({type:'readHistory',instance:'page',id:'1',version:'v2',historyVersion:'other'});
-    assert(messages.some(m=>m.error && m.message.includes('历史版本不可用')));
+    assert(!messages.some(m=>m.type==='history'));
     await receive({type:'adoptHistory',instance:'page',id:'1',version:'v1',option:'A',target:'A'});
     assert(messages.some(m=>m.error && m.message.includes('当前项已更新'))); assert.deepEqual(writes,[]);
+});
+
+test('toolbar preferences save only supported action order and remain profile scoped', async () => {
+    let receive; const messages=[], values={}, writes=[];
+    const globalState={get:(key,fallback)=>values[key] ?? fallback,update:async(key,value)=>{writes.push(key);values[key]=structuredClone(value);}};
+    const c={repo:'/one',owner:'state',id:'1',version:'v1'};
+    const data={id:'1',version:'v1',original:'Old',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'New'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={session:()=> 's',read:async()=>structuredClone(data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[],
+        toolbar:()=>values.reviewToolbar,saveToolbar:async value=>{writes.push('reviewToolbar');values.reviewToolbar=structuredClone(value);}};
+    const view=createWorkbench(vscode,{subscriptions:[],globalState},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    const initial=messages.findLast(m=>m.type==='content').toolbar;assert.deepEqual(initial.visible,['previous','next']);
+    await receive({type:'toolbarSave',instance:'page',toolbar:{order:['unknown'],visible:['unknown']}});assert.deepEqual(writes,[]);assert(messages.findLast(m=>m.type==='toolbarResult').error);
+    const value={order:[...initial.order].reverse(),visible:['handoff','source']};await receive({type:'toolbarSave',instance:'page',toolbar:value});
+    assert.deepEqual(writes,['reviewToolbar']);assert.deepEqual(values.reviewToolbar,value);
+    await view.show(c);assert.deepEqual(messages.findLast(m=>m.type==='content').toolbar,value);
+    const reset={order:[...initial.order],visible:['previous','next']};
+    await receive({type:'toolbarSave',instance:'page',toolbar:reset});
+    await receive({type:'reviewMode',instance:'page',...c,mode:'question',viewStyle:'full',questionKey:''});
+    await view.show(c);
+    assert.deepEqual(messages.findLast(m=>m.type==='content').toolbar,reset);
+    assert.deepEqual(values.reviewToolbar,reset);
+    values.reviewToolbar={order:['unknown'],visible:['unknown']};
+    await assert.rejects(view.show(c),/工具栏设置无效/);
 });
 
 test('problem review mark is scoped and becomes stale after associated changes', async () => {

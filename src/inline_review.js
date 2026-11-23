@@ -77,7 +77,7 @@ function changedHtml(text, side, style = reviewStyle.defaults) {
         return chars.length >= 32 ? chars.map(colored).join('\u200b') : colored(token);
     }).join('');
 }
-const label = (data, id) => `${id} · 原文 → 候选 v${data.edit.versions.length}`;
+const label = (data, id) => `${id} · 原文 → 候选 v${data.edit.generation ?? data.edit.versions.length}`;
 
 function commentSpans(text) {
     const spans = [];
@@ -344,7 +344,7 @@ function createInlineReview(vscode, context, execute = run) {
             item.id = JSON.stringify([c.repo, c.owner, batch, c.id]);
             const state = notes.length || data.edit.status === 'rework' ? '返修' : '待审';
             item.description = (record.displayConflict ? '原文位置待核对' : state) + (notes.length ? ` · ${notes.length} 条批注` : '');
-            item.tooltip = `${c.id} · ${file} · 候选 v${data.edit.versions.length}`;
+            item.tooltip = `${c.id} · ${file} · 候选 v${data.edit.generation ?? data.edit.versions.length}`;
             item.command = {command: 'localLatex.reviewWorkbench', title: '打开论文审核页', arguments: [c]};
             item.parent = files.get(file);
             item.children = notes.map((note, index) => {
@@ -827,16 +827,12 @@ function createInlineReview(vscode, context, execute = run) {
         return saved?.version === c.version ? saved.option : 'A';
     }
     const workbench = require('./review_workbench').createWorkbench(vscode, context, {
+        toolbar: () => vscode.workspace.getConfiguration('localLatex').inspect('reviewToolbar')?.globalValue,
+        saveToolbar: value => vscode.workspace.getConfiguration('localLatex').update('reviewToolbar', value, vscode.ConfigurationTarget.Global),
         style, read: c => readCurrent(c, false), readNext: c => currentFromRecords(c, false), selection: selectedOption, activeChanged: selectReviewItem,
         session: c => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? latestReviewState?.session : undefined,
         questions: (c, checked) => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? questionRows(latestReviewState, checked) : [],
         openQuestionEntry: async (c, id, version) => openRelatedItem({...c,id,version}),
-        history: async (c, version) => {
-            const data = await backend(c, ['inspect', '--id', c.id, '--version', version]);
-            if (!OPEN.has(data.edit.status) || data.edit.versions.at(-1) !== c.version || data.version !== version)
-                throw new Error('当前审核项已变化；未采用历史版本。');
-            return data;
-        },
         trace: value => diagnostics?.appendLine(JSON.stringify(value)),
         directory: () => Object.entries(latestReviewState?.edits || {}).map(([id, edit]) => ({id, file: edit.file, kind: edit.kind, status: edit.status,
             version: edit.versions.at(-1), source_match: edit.source_match, options: records.get(id)?.data?.options?.map(o => o.label), manual_options: records.get(id)?.data?.options?.filter(o => o.manually_edited).map(o => o.label), option: selectedOption({...activeScope, id, version: edit.versions.at(-1)}), location: locationTitle(edit), summary: displayText(records.get(id)?.data?.options?.[0]?.after || '').replace(/\s+/g, ' ').slice(0, 140), questions: (edit.questions || []).map(q => q.id), requests: (edit.requests || []).filter(n => n.status === 'open').length})),
@@ -1308,7 +1304,7 @@ function createInlineReview(vscode, context, execute = run) {
         const matches = (edit) => (edit.questions || []).filter(q => questions.some(source =>
             source.id === q.id && source.file === q.file && source.quote === q.quote));
         const status = {pending: '待审', rework: '返修', accepted: '已接收', rejected: '已拒绝'};
-        const choices = Object.entries(state.edits).filter(([id, edit]) => id !== c.id && matches(edit).length)
+        const choices = Object.entries(state.edits).filter(([id, edit]) => id !== c.id && OPEN.has(edit.status) && matches(edit).length)
             .map(([id, edit]) => ({label: `${id} · ${status[edit.status] || edit.status} · ${edit.file}`,
                 description: matches(edit).map(q => q.id).join('、'), detail: edit.location || '本批关联修改；接收不代表科学问题已解决。', id, edit}));
         if (!choices.length) return vscode.window.showInformationMessage('本批没有其他精确关联的改动；已精简的历史请查看 Git，不据此判定问题已完成。');
