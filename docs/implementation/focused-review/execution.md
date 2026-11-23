@@ -41,3 +41,13 @@ F5范围外仍待总控F6：真实Git确认后跨文件共享项和活动依赖�
 真实UI新样例 `r1-ui-2` 从总控已成功真实checkpoint的合成项目只读复制，独立项目、localbare、profile、扩展目录、pipe及端口9582，最新源码，未重放接收或checkpoint。setup和run、host及observer均0，content真实发出，当前待审3正常显示，问题Q1无已完成空卡，上一版批注与5的长期暂留保留，前后state/正文/回复/stage一致；私有桌面不在Default、前中后HWND29166230与输入桌面Default一致、desktop关闭。截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-43d6105c9ad94a24afeee014e9be0703.png` 已实际查看并保留。首次 `r1-ui-setup-first` exit1是复制后Git配置中反斜线转义与断言不符，未启动UI或改产品；保留该未完成根，使用全新 `r1-ui-2` 和修正构建脚本，不覆盖现场。完整argv/cwd/env/stdout/stderr/真实退出在证据根同名前缀。
 
 总控仍需F6复核并以最终候选完成四图，F7先给用户看并确认，之后才可能F8；既往backup-first误删隔离对象事件及至少3项、其他未知和未测照前记录，严格不运行cleanup或删除。
+
+## F8发行与安装
+
+2026-11-23：总控确认F6通过、F7四图已展示且用户明确确认，返修计数1。实核gpt-6.1-terra/high/priority、match/continue；起点285ed713a69b7ba9c7a8c0fd8a2c04bfc47a8fa4与origin/master一致且clean。0.9.60本地/远端标签不存在、Release API 404、`dist/v0.9.60` 不存在。仅将package版本改为0.9.60；MCP版本同源读取。定向 `f8-version` 2项和 `f8-release-check` 12项均exit0；发行测试源码和调用边界已核，未调用cleanup，测试日志中EOF为模拟读取失败。复用前述最终有效产品覆盖，未重跑无关全组。
+
+一次 `scripts/build.py --output dist/v0.9.60` 的 `f8-build` exit0；源码提交 `5728dd4be497331f5a0f8b0916c010bfe7a2691a` 普通push/fetch一致。附注标签 `v0.9.60` 对象 `fab6369edbadfda244c4b1f8267779074a382b77`，本地与远端解引用均为该源码提交，附注含双包摘要。VSIX SHA256 `8a315bc6c269a49ce72f41aeaddbed3ced5bc5bc1d62bc208974b1f7d7e7224a`，源码包 SHA256 `f3d8b26a6e557dc928613b69c6c5db02d046903a264da027aa51d5e85152ab84`，SHA256SUMS.txt SHA256 `7d8b11218fc009bab1312345f5aa66d14ee252a9751a5e5d58b84b221729addb`。正式 [Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.60) 的 `f8-publish` 和 `f8-release-api` 均exit0，API返回draft=false、prerelease=false，三个附件digest与本地一致。
+
+同一VSIX实际由 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.60/texscholar-0.9.60.vsix --force` 安装，`f8-install` exit0并报告成功，Node DEP0169警告原样保留；`f8-registration` exit0，登记及安装manifest均0.9.60、source=vsix、pinned=true。完整argv/cwd/env/stdout/stderr和真实退出位于 `D:/latex-writing-checks/focused-review-20261123/f8-*`。未包后冒烟、未自动重载VSCode或重启MCP。
+
+仍未测实网AI/翻译和占位符质量、人工吞吐、用户升级重配和截图Git拒绝的具体根因、cleanup后段、PDF/translation全组合、复杂论文/冷启动、Mac/强杀/真实五分钟及真实PDF查看器。此前backup-first误删本代隔离夹具至少3个对象、其他目标与总数未知的事实及所有首败保留；本阶段未运行cleanup。真实论文、上一版/暂留批注、未保存草稿、范围外暂存及用户资料不动；唯一授权的真实安装写入已完成。
