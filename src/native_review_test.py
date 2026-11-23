@@ -86,6 +86,29 @@ class NativeReview(unittest.TestCase):
         from mcp_server import feedback_packet
         self.assertTrue(feedback_packet(r)['items'][0]['requests'][0]['held'])
 
+    def test_open_previous_feedback_on_decided_item_remains_in_handoff(self):
+        from mcp_server import feedback_packet
+        id_ = self.proposal(); version = self.review().state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id':id_, 'version':version, 'side':'original',
+                                'start':0, 'end':0, 'quote':'', 'text':'Unresolved older note.'})
+        self.apply('propose', {'after':'The model remains strong.', 'discard_annotations':True}, id_)
+        r = self.review(); previous = r.state['edits'][id_]['previous_feedback']['requests'][0].copy()
+        r.state['edits'][id_]['status'] = 'accepted'
+        r.persist({}, digest(r.raw))
+        r = self.review()
+        for packet in (r.feedback_context(), feedback_packet(r)):
+            items = packet['items']
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]['id'], id_)
+            self.assertEqual(items[0]['version'], version)
+            self.assertEqual(items[0]['requests'][0]['id'], previous['id'])
+            self.assertEqual(items[0]['requests'][0]['status'], 'open')
+        r.state['edits'][id_]['previous_feedback']['requests'][0]['status'] = 'closed-by-author-acceptance'
+        r.persist({}, digest(r.raw))
+        r = self.review()
+        self.assertEqual(r.feedback_context()['items'], [])
+        self.assertEqual(feedback_packet(r)['items'], [])
+
     def install_sidecar(self, state):
         owner = self.root / 'reply.tex'
         owner.write_text(''.join(line for line in owner.read_bytes().decode('utf-8').splitlines(keepends=True)

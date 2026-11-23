@@ -8,6 +8,10 @@ P7 继续实施：现任总控更换为 local/01a20811-7c1e-7a50-908c-c59a658531
 
 额外只读 P7-anchor-analysis-first 与 P7-anchor-exact-first 均 exit 0：aq/ar 的完整旧上下文分别在旧批次 baseline 唯一存在，比较当前文本时原边界邻接部分仍各唯一精确相符，分别保留左 120/右 35、左 120/右 27 字符；115 左 26/右 120 字符共同唯一相符，但当前旧批次基准搜索未找到完整240字符上下文。当前产品完整旧上下文定位仍正确拒绝三项；这些数据只是后续严格映射的证据，未自动缩短旧锚或放行冲突。P7-marker-analysis-first exit 0，独立核14个QUESTION、14个RESPONSE、13个REVISED-EXCERPT；存在同一问题注释重复出现且多个审核项共链，不能按单条文字/问题名合并；具体机器关系及原文留在外置结果，未修改冻结副本。
 
+P7-baseline-scan-first 只读检查全部561个复制对象，aq/ar完整左右相邻上下文各在同一旧源对象中唯一出现，115没有完整匹配。P7-relocate-sandbox-first 在另一个全新复制根使用现有显式 relocate、旧不可变上下文与当前唯一相邻双侧片段绑定三项，保留原版本/问题/状态；其预览68项无冲突。P7-relocate-verify-first 核旧561对象逐字未变、全部状态除三锚外一致、原文 body 不变、26条批注逐字保持、68项均有块；仅模拟 FakeHost，且115完整历史源基准缺失，不能擅认真实现场已可安全迁移。P7-relocate-consumers-first exit 0 实际68项 inspect均可定位，但反馈仅3条，暴露已决定项的18条previous_feedback open被反馈消费者忽略；不是完整保留可见性通过。
+
+按用户保护所有旧open批注的已批准范围，source_review.feedback_context 与 MCP feedback_packet 对真实open批注不再因所属项已决定而排除；已关闭且未暂留不纳入。p7-feedback-tests-first 定向4项 exit 0，second 定向5项 exit 0并增加真实隔离Server.call；P7-relocate-consumers-second 新副本重验68项可定位、20组共21条open，P7-feedback-exact-first 对 MCP 与本地交接逐项核完整 ID/version/全部原字段和21条源记录一致，均 exit 0；五条closed仍保留于状态。仅受控副本，未调用真实MCP或写真实论文。旧真实结果的3条缺口保留，不抹写；仍需宿主UI与其他消费者组合核验。
+
 现任执行 local/01a20284-4ad8-70b1-87ff-61225eaec6aa；P 返修 1。总控移交产品/测试/UI/隔离配置/Git 租约，仅修迁移冲突写入边界；真实论文和真实资料库仍无写租约。用户已明确由代理一次性迁移，完成验证后再发行安装；本阶段不重载、不重启、不发行。
 
 只读调查基于 controller-p7-preview1 冻结副本，HostSession 显式禁用。P7-analysis-first/second/third 均 exit 0，脚本、process、stdout/stderr 和逐项结果保存在 D:/latex-writing-checks/paper-profile-20261123/P7-analysis*。68 个待审/返修项中 65 项现有精确锚点可核：以最近合法独立行边界构造的 65 个候选块互不交叠，纯内存 prepare 全部成功，最大 12 行；这不是现有迁移器支持的映射，也不是源写入或完整迁移通过。原 29 项宽段落范围交叠实际分 7 组，原始精确编辑片段无交叠；bg/bh 两处行内插入和 dy/dz/ea/ef 四处边界可在保留精确偏移下置于独立行块。aq/ar/115 原文均为空插入、120 字符左右上下文不能同时匹配：前两项仅左上下文各唯一，115 仅右上下文唯一，单侧证据不足以确定插入点，不可猜测或静默丢弃。

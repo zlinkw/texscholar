@@ -15,6 +15,21 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_read_feedback_includes_open_previous_note_on_decided_item(self):
+        result = self.apply('propose', {'file':'main.tex', 'kind':'manuscript',
+                                       'before':'The model is strong and fast.', 'after':'The model is reliable.'})
+        id_ = result['id']; version = self.review().state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id':id_, 'version':version, 'side':'original', 'start':0,
+                                'end':0, 'quote':'', 'text':'Still unresolved.'})
+        self.apply('propose', {'after':'The model remains reliable.', 'discard_annotations':True}, id_)
+        review = self.review(); original = review.state['edits'][id_]['previous_feedback']['requests'][0].copy()
+        review.state['edits'][id_]['status'] = 'rejected'; review.persist({}, digest(review.raw))
+        packet = self.server().call('read_feedback', {'project':str(self.root), 'state':'reply.tex', 'ids':[id_]})
+        self.assertEqual(len(packet['items']), 1)
+        self.assertEqual(packet['items'][0]['version'], version)
+        self.assertEqual(packet['items'][0]['requests'][0]['id'], original['id'])
+        self.assertEqual(packet['items'][0]['requests'][0]['text'], 'Still unresolved.')
+
     def test_migration_conflict_rejects_mcp_apply_without_host_or_state_change(self):
         self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'The model is strong and fast.',
                                'after':'The model is reliable.'})

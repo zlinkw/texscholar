@@ -223,7 +223,7 @@ def feedback_packet(review, ids=None):
         identities = {(n['id'], n['version']) for n in notes}
         notes = [*notes, *(n for n in (edit.get('previous_feedback') or {}).get('requests', []) if (n['id'], n['version']) not in identities)]
         for note in notes:
-            if not (note.get('held', False) or edit['status'] in PENDING and note['status'] == 'open'):
+            if not (note.get('held', False) or note['status'] == 'open'):
                 continue
             version = note['version']
             if version not in edit['versions']:
