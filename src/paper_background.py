@@ -33,7 +33,49 @@ def connect(storage):
     db.execute('CREATE TABLE IF NOT EXISTS papers (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL, entries TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS aliases (root TEXT NOT NULL, owner TEXT NOT NULL, paper_id INTEGER NOT NULL REFERENCES papers(id), PRIMARY KEY(root, owner))')
     db.execute('CREATE TABLE IF NOT EXISTS personal (slot INTEGER PRIMARY KEY CHECK(slot=1), profile_id TEXT NOT NULL, revision INTEGER NOT NULL, entries TEXT NOT NULL)')
+    db.execute('CREATE TABLE IF NOT EXISTS paper_roles (paper_id INTEGER PRIMARY KEY REFERENCES papers(id), revision INTEGER NOT NULL, record TEXT NOT NULL)')
     return db
+
+
+def _paper_for_root(db, project):
+    rows = db.execute('SELECT DISTINCT paper_id FROM aliases WHERE root=?', (project,)).fetchall()
+    if len(rows) > 1:
+        raise ValueError('当前项目关联了多份论文资料，请先核对身份；未选择角色登记。')
+    return rows[0][0] if rows else None
+
+
+def read_roles(storage, root):
+    project = os.path.normcase(str(Path(root).resolve(strict=True)))
+    database = Path(storage) / 'paper-background.sqlite3'
+    if not database.exists() and not database.is_symlink():
+        return {'revision': 0, 'record': None}
+    with closing(connect(storage)) as db:
+        paper = _paper_for_root(db, project)
+        row = db.execute('SELECT revision,record FROM paper_roles WHERE paper_id=?', (paper,)).fetchone() if paper else None
+    return {'revision': row[0] if row else 0, 'record': json.loads(row[1]) if row else None}
+
+
+def write_roles(storage, root, review_owner, revision, record):
+    project, owner = identity(root, review_owner)
+    if type(revision) is not int or revision < 0 or not isinstance(record, dict) or set(record) != {'owner', 'files', 'structure'}:
+        raise ValueError('请提供当前角色版本与完整角色登记。')
+    if not isinstance(record['owner'], str) or not record['owner'] or not isinstance(record['files'], list) or not isinstance(record['structure'], list):
+        raise ValueError('角色登记缺少拥有文件或结构。')
+    with closing(connect(storage)) as db:
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            paper = _paper_for_root(db, project)
+            if paper is None:
+                paper = db.execute('INSERT INTO papers(revision,entries) VALUES(0,?)', ('[]',)).lastrowid
+                db.execute('INSERT INTO aliases(root,owner,paper_id) VALUES(?,?,?)', (project, owner, paper))
+            row = db.execute('SELECT revision,record FROM paper_roles WHERE paper_id=?', (paper,)).fetchone()
+            if (row[0] if row else 0) != revision:
+                raise ValueError('文件角色已变化，请重新读取后确认；未覆盖。')
+            if row and json.loads(row[1])['owner'] != record['owner']:
+                raise ValueError('已有角色登记保留原拥有文件；不能自动搬迁。')
+            db.execute('INSERT INTO paper_roles(paper_id,revision,record) VALUES(?,?,?) ON CONFLICT(paper_id) DO UPDATE SET revision=excluded.revision,record=excluded.record',
+                       (paper, revision + 1, json.dumps(record, ensure_ascii=False)))
+    return read_roles(storage, root)
 
 
 def read(storage, root, owner):

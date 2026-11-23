@@ -15,6 +15,23 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_paper_roles_share_identity_without_overwriting_background(self):
+        from paper_background import read, write, read_roles, write_roles
+        storage = self.server().registrations.parent
+        entry = {'kind':'constraints', 'text':'只用于本论文', 'evidence':'author', 'source':'作者'}
+        write(storage, self.root, 'reply.tex', 0, [entry])
+        record = {'owner':'main.tex', 'files':[{'file':'main.tex','roles':['manuscript'],'root':None}], 'structure':[]}
+        saved = write_roles(storage, self.root, 'reply.tex', 0, record)
+        self.assertEqual(saved, {'revision':1, 'record':record})
+        self.assertEqual(read(storage, self.root, 'reply.tex')['entries'], [entry])
+        write(storage, self.root, 'reply.tex', 1, [{**entry,'text':'更新的约定'}])
+        self.assertEqual(read_roles(storage, self.root), saved)
+        with self.assertRaisesRegex(ValueError, '角色已变化'):
+            write_roles(storage, self.root, 'reply.tex', 0, record)
+        with self.assertRaisesRegex(ValueError, '保留原拥有文件'):
+            write_roles(storage, self.root, 'reply.tex', 1, {**record, 'owner':'reply.tex'})
+        self.assertEqual(read_roles(storage, self.root), saved)
+
     def test_personal_prompts_are_shared_across_papers_and_revision_protected(self):
         server = self.server()
         base = {'project':str(self.root), 'state':'reply.tex'}

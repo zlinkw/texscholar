@@ -19,3 +19,6 @@ N1/N2 实现：审核页“更多 → 批注管理”支持范围多选、暂留
 正常 Development 隔离 UI：ui-n4 setup/prepare/stage/run 均 exit 0，真实宿主/观察器均 0；三条跨正文与回复批注全选暂留，删除确认取消零写，再准确删除一条、其余保留，源及范围外 stage 未变。前/中/后输入桌面 Default 与前台 HWND 20580124 一致，GUI 不在 Default，私有桌面关闭；截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-0c373d49b73042ab8a4ef1628f07d2ca.png 已实际查看。fixture 创建使用合成数据及 FakeHostSession，实际 UI 操作经正常 Development 宿主桥和 Python 后端；prepare 启动时 sitecustomize 曾报告模块搜索警告，进程实际 exit 0。旧 ui-n1/n2 的有效局部及其桌面状态见各自 logs，n1 前台窗口有变化不称一致。所有现场及首败保留，不删除文件。
 
 待总控 N3 以新样例核跨模式重建、完整进程重启、旧批注与范围外选择/迟到动作组合；用户真实论文、真实 P 数据库、配置、活动 VSCode/MCP、安装均未触碰。N3 前不发行、不安装、不重载或重启。此前 backup-first 至少三个隔离对象误删事件与未知总数保留，不能算合规覆盖。
+P2–P5：2026-11-23 用户批准继续，执行者 local/01a20284-4ad8-70b1-87ff-61225eaec6aa；context_status resolved/observed Terra 6.1/high match、continue，service_tier priority 仅记录。P 返修计数 0，持产品/测试/UI/隔离配置/Git 租约；不持真实论文或安装租约。基线 676a59b4487b486eb36fdbab955ad6fb1874aa0d，master、origin/master 一致且 clean。P 与已验收 N 分别记录，不重测不变 N。
+
+P2 首批只扩既有 paper-background.sqlite3：同一 paper_id 下独立角色记录及 revision CAS，论文背景 revision/entries 不受角色写入影响；根关联多份 paper_id 明确拒绝、原角色 owner 不自动搬迁。该批仅存储原语，角色确认、调用链及一次性迁移尚未接通，不能作为 P2 完成。隔离测试 p-db-first：既有 MCP 测试夹具内三项独立角色/背景 CAS、旧 P 保留与显式关联 exit 0；argv、cwd、env 和 stdout/stderr 在 D:/latex-writing-checks/paper-profile-20261123/p-db-first.*。真实资料未读取。
