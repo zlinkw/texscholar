@@ -840,6 +840,12 @@ def _preview(review, document, id_, version, latexdiff, latexmk, differences, st
         raise error_type(f"PDF {context['stage']}失败；文件 {context['file']}；候选 {context['id']}：{reason}{error}") from error
 
 
+def _project_options(review, edit, item, label):
+    options = item.get('options', [{'label': 'A', 'after': item['after'], 'reason': ''}])
+    return (review.option_effect(edit, item, edit['versions'][-1], label),
+            [review.option_view(edit, item, edit['versions'][-1], option) for option in options])
+
+
 def _render(review, document, id_, version, latexdiff, latexmk, differences, style, refresh_accepted, choices, compare_id, request_file, source_only, context):
     relative = document.relative_to(review.repo)
     data = {'edit': {'file': relative.as_posix()}} if source_only else review.inspect(id_, version, source=True)
@@ -903,9 +909,9 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
             choice = choices.get(item_id, {'version': edit['versions'][-1], 'option': 'A'})
             if choice.get('version') != edit['versions'][-1]:
                 raise ValueError('PDF 预览方案已陈旧，请刷新选择。')
-            item['after'] = review.option(item, choice.get('option'))['after']
+            item['after'], visible_options = _project_options(review, edit, item, choice.get('option'))
             if item_id == compare_id:
-                item['comparison_options'] = item.get('options', [{'label': 'A', 'after': item['after'], 'reason': ''}])
+                item['comparison_options'] = visible_options
             inputs['items'][item_id] = {'file': edit['file'], 'version': edit['versions'][-1],
                                        'payload': item, 'option': choice['option'], 'deferred': edit.get('deferred', False),
                                        'questions': edit.get('questions', [])}

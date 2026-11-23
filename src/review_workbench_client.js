@@ -498,7 +498,11 @@ function renderQuestionMode() {
                         button.textContent=label; if (intent!=='accept') button.className='secondary'; actions.appendChild(button);
                         button.disabled=cardButtonDisabled(button);
                     }
-                    node.append(heading,actions,text); comparison.appendChild(node); return {option,node,text};
+                    node.append(heading,actions,text);
+                    if(option.migration){const details=document.createElement('details'),summary=document.createElement('summary'),plan=document.createElement('pre');
+                        summary.textContent='此方案的旧版局部要求（未接收前仅作候选意图）';
+                        plan.textContent=option.migration.fragments.filter(f=>f.kind==='plan').map(f=>f.text).join('\n');details.append(summary,plan);node.appendChild(details);}
+                    comparison.appendChild(node); return {option,node,text};
                 });
                 const updateExcerpt=()=>{
                     const activeDraft=entry.id===current?.id && entry.version===current.version;
@@ -548,11 +552,14 @@ function renderOption(o) {
     article.className = [preview === o.label ? 'selected' : '', focused === o.label ? 'focused' : focused ? 'folded' : ''].join(' ');
     if (!article.children.length) article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
         + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small><p class="tradeoff"></p><p class="scopeSummary"></p><details class="factChanges"><summary></summary><pre></pre></details><details class="reason"><summary>详细取舍</summary><span></span></details>'
-        + '<div class="detail"><div class="review-text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
+        + '<details class="migrationIntent"><summary>查看此方案的旧版局部要求</summary><pre></pre></details><div class="detail"><div class="review-text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
         + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" title="保存此候选（Ctrl/Cmd+Enter）" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><button data-action="saveAccept" data-write data-option="' + o.label + '">保存并接收 ' + o.label + '</button><small>“保存”只更新待审版本；“保存并接收”替换正文并进入下一项。</small></div></div>';
     article.querySelector('.tradeoff').textContent = o.summary || o.reason;
     article.querySelector('.reason span').textContent = o.reason;
     article.querySelector('.reason').hidden = !o.summary || o.summary === o.reason;
+    const migration=article.querySelector('.migrationIntent');
+    migration.hidden=!o.migration;
+    migration.querySelector('pre').textContent=o.migration ? '此方案未接收前仅为候选意图。\n' + o.migration.fragments.filter(f=>f.kind==='plan').map(f=>f.text).join('\n') : '';
     const count = o.scope;
     article.querySelector('.scopeSummary').textContent = !count ? '' : count.error ? '修改范围暂无法统计：' + count.error
         : `相对原文的变动涉及：原文 ${count.old_sentences} 句 → 候选 ${count.new_sentences} 句`
@@ -788,15 +795,23 @@ function locateNote(id) {
         const offset = n => Array.from(ctx.text).slice(0, n).join('').replace(/\r\n/g, '\n').length;
         locateRanges(math.selectionRanges(model, offset(ctx.start), offset(ctx.end))); return;
     }
-    const raw = note.side === 'candidate' ? options.find(o => o.label === note.option)?.after : data.original;
-    if (raw === undefined || !Number.isInteger(note.start) || !Number.isInteger(note.end) || note.start < 0 || note.end <= note.start
-        || Array.from(raw).slice(note.start, note.end).join('') !== note.quote) {status('批注摘录与当前准确范围不一致，未猜测位置。', true); return;}
+    const candidate = note.side === 'candidate' ? options.find(o => o.label === note.option) : undefined;
+    const raw = note.side === 'candidate' ? candidate?.after : data.original;
+    let start=note.start, end=note.end;
+    if (candidate?.migration) {
+        const fragments=candidate.migration.fragments, spans=note.segments || [{start,end}];
+        const map=offset=>{let removed=0;for(const f of fragments){if(f.start<offset && offset<f.end)return undefined;if(f.end<=offset)removed+=f.end-f.start;}return offset-removed;};
+        if (spans.some(span=>fragments.some(f=>Math.max(span.start,f.start)<Math.min(span.end,f.end)))) {status('旧批注选区含迁移前注释；原始快照保留，不能猜测当前范围。',true);return;}
+        start=map(spans[0].start);end=map(spans.at(-1).end);
+    }
+    if (raw === undefined || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start
+        || Array.from(raw).slice(start, end).join('') !== note.quote) {status('批注摘录与当前准确范围不一致，未猜测位置。', true); return;}
     const label = note.side === 'candidate' ? note.option : undefined;
     if (label && hasDraft(options.find(o => o.label === label))) {status('该方案有未保存编辑，请先保存或恢复后定位批注。', true); return;}
     revealCandidate(label);
     const model = models.get($(label ? 'text-' + label : 'original'));
     const offset = n => Array.from(raw).slice(0, n).join('').replace(/\r\n/g, '\n').length;
-    locateRanges(math.selectionRanges(model, offset(note.start), offset(note.end)));
+    locateRanges(math.selectionRanges(model, offset(start), offset(end)));
 }
 function locateFulfillment(index) {
     const mapping=data.fulfillment?.[index], option=options.find(o=>o.label===mapping?.option);

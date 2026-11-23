@@ -165,6 +165,15 @@ def compact(r):
             edit.pop('accepted_option', None)
             edit['checkpoint'] = commit
             minimal.append(id_)
+    manifest = r.state.get('option_migration_manifest')
+    if manifest is not None:
+        for id_ in [*removed, *minimal]:
+            manifest.pop(id_, None)
+            if id_ in edits and not edits[id_]['versions']:
+                edits[id_].pop('option_migration', None)
+                edits[id_].pop('migration_item_id', None)
+        if not manifest:
+            r.state.pop('option_migration_manifest', None)
     for id_, version in saved['accepted'].items():
         if id_ in edits and edits[id_]['versions'] and edits[id_]['versions'][-1] == version:
             edits[id_]['published_version'] = version

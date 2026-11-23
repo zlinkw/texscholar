@@ -233,10 +233,17 @@ def feedback_packet(review, ids=None):
             key = (id_, version)
             if key not in groups:
                 payload = json.loads(review.contents(version, 'span.json'))
+                options = payload.get('options', [{'label': 'A', 'after': payload['after'], 'reason': '已有单方案'}])
                 groups[key] = {'id': id_, 'file': edit['file'], 'version': version, 'current_version': edit['versions'][-1],
                     'original': review.contents(version, 'original.tex'),
-                    'options': payload.get('options', [{'label': 'A', 'after': payload['after'], 'reason': '已有单方案'}]), 'requests': []}
+                    'options': [review.option_view(edit,payload,version,option) for option in options], 'requests': []}
             groups[key]['requests'].append({**note, 'purpose': note.get('purpose', 'revision')})
+            label = note.get('option')
+            if label and edit.get('option_migration', {}).get(version, {}).get(label):
+                payload = json.loads(review.contents(version, 'span.json'))
+                groups[key].setdefault('immutable_candidates_for_notes', {})[label] = {
+                    'text':review.option(payload, label)['after'],
+                    'scope':'仅用于核对批注原版选区；其中旧机器注释不是当前正文或已批准规则。'}
     verify_read(review)
     return {'items': list(groups.values()), 'sha256': digest(review.raw)}
 
@@ -334,7 +341,7 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
         if id_ not in included:
             continue
         edit = edits[id_]
-        item = {key: value for key, value in edit.items() if key not in ('versions', 'requests', 'questions', 'previous_feedback')}
+        item = {key: value for key, value in edit.items() if key not in ('versions', 'requests', 'questions', 'previous_feedback', 'option_migration')}
         item.update(id=id_, requests=[{**note, 'purpose':note.get('purpose', 'revision')} for note in edit.get('requests', []) if note['status'] == 'open'])
         item['question_refs'] = []
         for question in edit.get('questions', []):
@@ -349,8 +356,9 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
             item['archived'] = True
             continue
         payload = review.payload(edit)
+        options = payload.get('options', [{'label': 'A', 'after': payload['after'], 'reason': '已有单方案'}])
         item.update(version=edit['versions'][-1], original=payload['before'],
-                    options=payload.get('options', [{'label': 'A', 'after': payload['after'], 'reason': '已有单方案'}]),
+                    options=[review.option_view(edit,payload,edit['versions'][-1],option) for option in options],
                     intent=payload.get('intent'), fulfillment=payload.get('fulfillment', []), protected_terms=payload.get('protected_terms', []),
                     fact_evidence=review.evidence_status(payload.get('fact_evidence', [])), fewer_options_reason=payload.get('fewer_options_reason', ''),
                     left=payload['left'], right=payload['right'])

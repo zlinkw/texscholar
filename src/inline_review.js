@@ -213,6 +213,7 @@ function createInlineReview(vscode, context, execute = run) {
         trusted(c);
         const cfg = config(), argv = ['-X', 'utf8', path.join(__dirname, 'source_review.py'), '--project', c.repo,
             '--state', c.owner, '--git', cfg.get('gitPath', 'git')];
+        if (context.globalStorageUri?.fsPath) argv.push('--profile-storage', context.globalStorageUri.fsPath);
         if (expect) argv.push('--apply', '--expect', expect);
         const started = performance.now();
         const finishWriter = expect ? require('./backup').reviewWriter(c.repo) : undefined;
@@ -783,6 +784,7 @@ function createInlineReview(vscode, context, execute = run) {
             start: note.start, end: note.end, quote: note.quote, text, ...(note.option ? {option: note.option} : {}),
             ...(note.purpose !== undefined ? {purpose:note.purpose} : {}),
             ...(note.display_context ? {display_context: note.display_context} : {}),
+            ...(note.segments ? {segments:note.segments} : {}),
             ...(note.request_id ? {request_id: note.request_id, previous_text: note.previous_text, ...(note.previous_purpose !== undefined ? {previous_purpose:note.previous_purpose} : {})} : {})}, data.sha256);
         updateSaved(c, saved);
         vscode.window.showInformationMessage(`${c.id} 批注已保存，原文和编号保留；尚未发送给 Codex。`);
@@ -1201,8 +1203,9 @@ function createInlineReview(vscode, context, execute = run) {
         const notes = [...generations.values()].map(item => `审阅框编号：${item.id}\n方案：见每条批注范围\n文件：${item.file}\n批注基于版本：${item.version}\n当前候选版本：${item.current_version}`
             + `\n【原版完整内容】\n${item.original}`
             + (item.options ? '\n【本轮全部备选（本批注对应方案见上方）】\n' + JSON.stringify(item.options, null, 2) : '\n【修改版完整内容】\n' + item.candidate)
+            + (item.immutable_candidate_for_note ? '\n【批注原版快照：只用于核对选区】\n' + JSON.stringify(item.immutable_candidate_for_note, null, 2) : '')
             + '\n【作者返修批注】\n'
-            + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.display_context ? n.display_context.kind === 'translation' ? '中文译文' : '审稿问题' : n.side === 'original' ? '原文' : '候选'}选区：${n.display_context?.quote ?? n.quote}\n批注状态：${n.held ? '暂留' : '待处理'}\n意见用途：${n.purpose || 'revision'}\n返修要求：${n.text}\n定位：${JSON.stringify({id: n.id, version: n.version, side: n.side, option: n.option, start: n.start, end: n.end, display_context: n.display_context})}`).join('\n\n')
+            + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.display_context ? n.display_context.kind === 'translation' ? '中文译文' : '审稿问题' : n.side === 'original' ? '原文' : '候选'}选区：${n.display_context?.quote ?? n.quote}\n批注状态：${n.held ? '暂留' : '待处理'}\n意见用途：${n.purpose || 'revision'}\n返修要求：${n.text}\n定位：${JSON.stringify({id: n.id, version: n.version, side: n.side, option: n.option, start: n.start, end: n.end, segments: n.segments, display_context: n.display_context})}`).join('\n\n')
         );
         if (!notes.length) return vscode.window.showInformationMessage('没有待处理的批注。');
         if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread')) throw new Error('当前 Codex 插件没有可用的添加上下文命令；批注仍保留，未发送。');

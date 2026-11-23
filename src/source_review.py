@@ -352,6 +352,7 @@ class Review:
         self._raw_sources = {}
         self._source_digests = {}
         self._block_indexes = {}
+        self.migration_entries = None
         if self.state:
             backup = self.backup_status()
             for id_, version in backup.get('published', {}).items():
@@ -667,6 +668,10 @@ class Review:
         if result is None:
             return {}, {'id': id_, 'version': version, 'changed': False}
         start, end, before, options = result
+        try:
+            carried = self.carried_option_migration(edit, version, options)
+        except Conflict as error:
+            raise SyncConflict(str(error)) from error
         updated = {**item, 'before': before, 'after': options[0]['after'], 'options': options,
                    'left': text[max(0, row['start'] + start - 120):row['start'] + start],
                    'right': text[row['start'] + end:row['start'] + end + 120]}
@@ -676,6 +681,7 @@ class Review:
                                      'span.json': json.dumps(updated, ensure_ascii=False).encode('utf-8')}, 'synchronized review item ' + id_)
         edit['generation'] = edit.get('generation', len(edit['versions'])) + 1
         edit['versions'].append(new_version)
+        self.record_option_migration(edit, new_version, carried)
         self.bind(edit, text, row['start'] + start, row['start'] + end)
         self.mark_original_stale(edit, before, version, item['before'])
         self.retain_active_versions(edit)
@@ -843,8 +849,86 @@ class Review:
     def payload(self, edit):
         item = json.loads(self.contents(edit["versions"][-1], "span.json"))
         if edit.get('accepted_option'):
-            item['after'] = self.option(item, edit['accepted_option'])['after']
+            item['after'] = self.option_effect(edit, item, edit['versions'][-1], edit['accepted_option'])
         return item
+
+    def option_effect(self, edit, item, version, label):
+        """Read the exact visible effect of a legacy option without replacing its object."""
+        raw = self.option(item, label)['after']
+        migrations = edit.get('option_migration', {})
+        version_map = migrations.get(version)
+        manifest = self.state.get('option_migration_manifest', {})
+        matching = [key for key, versions in manifest.items() if version in versions and
+                    self.state['edits'].get(key, {}).get('block_id') == edit.get('block_id')]
+        item_id = edit.get('migration_item_id')
+        if (version_map is not None or matching) and (item_id not in matching or not isinstance(version_map, dict) or
+                                                     sorted(version_map) != sorted(manifest[item_id][version])):
+            raise Conflict('候选的旧注释迁移清单不完整；未执行。')
+        if version_map is None:
+            if (self.state.get('option_migration_complete') or migrations or item_id is not None) and version == edit['versions'][-1] and re.search(r'(?m)^\s*%\s*CODEX-', raw):
+                raise Conflict('候选的旧注释没有当前版本的精确迁移资料；未执行。')
+            return raw
+        proof = version_map.get(label)
+        if proof is None:
+            if re.search(r'(?m)^\s*%\s*CODEX-', raw):
+                raise Conflict('候选的旧注释缺少精确迁移资料；未执行。')
+            return raw
+        origin = proof.get('origin_version', version) if isinstance(proof, dict) else None
+        if not isinstance(proof, dict) or proof.get('rule_source') != f"candidate:{self.state['session']}:{item_id}:{origin}:{label}":
+            raise Conflict('候选的旧注释来源与版本或方案不一致；未执行。')
+        from review_option_migration import CandidateMigrationError, project
+        try:
+            visible = project(raw, {key: value for key, value in proof.items() if key not in ('rule_source', 'origin_version')})
+            if origin != version:
+                origin_proof = migrations.get(origin, {}).get(label)
+                if not origin_proof or origin not in edit['versions']:
+                    raise CandidateMigrationError('原候选及其迁移资料不可用')
+                original = json.loads(self.contents(origin, 'span.json'))
+                project(self.option(original, label)['after'], {key:value for key,value in origin_proof.items() if key != 'rule_source'})
+                if (origin_proof.get('rule_source') != proof['rule_source'] or
+                    [p['text'] for p in origin_proof['fragments']] != [p['text'] for p in proof['fragments']] or
+                    origin_proof['question'] != proof['question'] or origin_proof['dependencies'] != proof['dependencies']):
+                    raise CandidateMigrationError('候选规则或问题来源已变化')
+            return visible
+        except CandidateMigrationError as error:
+            raise Conflict(str(error)) from error
+
+    def carried_option_migration(self, edit, version, options):
+        """Retain only unchanged legacy intent, bound to its immutable original."""
+        from review_option_migration import CandidateMigrationError, prepare
+        existing = edit.get('option_migration', {}).get(version, {})
+        carried = {}
+        original_item = json.loads(self.contents(version, 'span.json')) if existing else None
+        for label, proof in existing.items():
+            self.option_effect(edit, original_item, version, label)
+            choice = next((item for item in options if item.get('label') == label), None)
+            if choice is None:
+                raise Conflict('候选方案已变化，无法保留其旧版规则。')
+            try:
+                candidate = prepare(choice['after'])
+            except CandidateMigrationError as error:
+                raise Conflict('候选旧版规则无法准确保留；未保存。') from error
+            if ([p['text'] for p in candidate['fragments']] != [p['text'] for p in proof['fragments']] or
+                candidate['question'] != proof['question'] or candidate['dependencies'] != proof['dependencies']):
+                raise Conflict('候选旧版规则或问题关系已变化；未保存。')
+            candidate['rule_source'] = proof['rule_source']
+            candidate['origin_version'] = proof.get('origin_version', version)
+            carried[label] = candidate
+        return carried
+
+    def record_option_migration(self, edit, version, carried):
+        if carried:
+            edit.setdefault('option_migration', {})[version] = carried
+            self.state['option_migration_manifest'][edit['migration_item_id']][version] = list(carried)
+
+    def option_view(self, edit, item, version, option):
+        result = {**option, 'after': self.option_effect(edit, item, version, option['label'])}
+        proof = edit.get('option_migration', {}).get(version, {}).get(option['label'])
+        if proof:
+            result['migration'] = {'rule_source':proof['rule_source'], 'fragments':copy.deepcopy(proof['fragments']),
+                                   'origin_version':proof.get('origin_version', version),
+                                   'status':'accepted' if edit.get('status') == 'accepted' and edit.get('accepted_option') == option['label'] else 'pending'}
+        return result
 
     @staticmethod
     def option(item, label):
@@ -991,6 +1075,8 @@ class Review:
             # Fixed-size batch identity keeps an old button/version from targeting
             # an identical candidate reissued as 1/a in a later batch.
             self.state.update(session=uuid.uuid4().hex, next=[1, 1], edits={}, rounds=[])
+            self.state.pop('option_migration_manifest', None)
+            self.state.pop('option_migration_complete', None)
         self.state["rounds"].append({"name": name, "baseline": base, "accepted_start": acc, "ids": [], "files": sorted(current)})
         self.state["accepted"] = acc
         return {}, {"round": name, "baseline": base, "accepted": acc}
@@ -1069,15 +1155,18 @@ class Review:
             raise Conflict('必须提交当前全部候选方案。')
         options = copy.deepcopy(original_options)
         for option, value in zip(options, values):
-            if option['after'].replace('\r\n', '\n') != value['after'].replace('\r\n', '\n'):
-                option['after'] = value['after']
+            proof = edit.get('option_migration', {}).get(version, {}).get(option['label'])
+            visible = self.option_effect(edit, old, version, option['label'])
+            if visible.replace('\r\n', '\n') != value['after'].replace('\r\n', '\n'):
+                option['after'] = (''.join(part['text'] for part in proof['fragments']) if proof else '') + value['after']
                 option['manually_edited'] = True
+        carried = self.carried_option_migration(edit, version, options)
         revised = {'options': options, 'fewer_options_reason': old.get('fewer_options_reason') or '人工更新已有候选'}
         if 'intent' in old:
             revised['intent'] = old['intent']
-        return self.propose(revised, id_, manual_anchor=spec)
+        return self.propose(revised, id_, manual_anchor=spec, migration_carry=carried)
 
-    def propose(self, spec, rework=None, manual_anchor=None):
+    def propose(self, spec, rework=None, manual_anchor=None, migration_carry=None):
         self.assert_ready()
         discard_annotations = spec.get('discard_annotations', False)
         if type(discard_annotations) is not bool or (discard_annotations and not rework):
@@ -1156,6 +1245,15 @@ class Review:
         if protected and (a < protected[1] and b > protected[0] or a == b and protected[0] <= a < protected[1]):
             raise Conflict('文件角色登记是项目配置，不是正文候选；请通过文件角色确认入口更新。')
         options = self.validate_options(spec)
+        if rework and (edit.get('option_migration') or self.state.get('option_migration_complete')):
+            if migration_carry is not None:
+                if options is None or self.carried_option_migration(edit, edit['versions'][-1], options) != migration_carry:
+                    raise Conflict('候选旧版规则与原方案不一致；未保存。')
+                if any(option['label'] not in migration_carry and re.search(r'(?m)^\s*%\s*CODEX-', option['after']) for option in options):
+                    raise Conflict('候选含未关联的旧版机器注释；未保存。')
+            elif any(isinstance(value, str) and re.search(r'(?m)^\s*%\s*CODEX-', value) for value in
+                     ([spec.get('after', '')] if options is None else [option['after'] for option in options])):
+                raise Conflict('新返修方案含旧版机器注释；请先明确方案内容，未替换候选。')
         after = options[0]['after'] if options else spec["after"]
         if self.sidecar and '\r\n' in text:
             def source_eol(value):
@@ -1163,7 +1261,16 @@ class Review:
             after = source_eol(after)
             if options:
                 for option in options:
-                    option['after'] = source_eol(option['after'])
+                    proof = (migration_carry or {}).get(option['label'])
+                    if proof:
+                        from review_option_migration import project
+                        visible = project(option['after'], {key:value for key,value in proof.items() if key not in ('rule_source', 'origin_version')})
+                        option['after'] = ''.join(part['text'] for part in proof['fragments']) + source_eol(visible)
+                    else:
+                        option['after'] = source_eol(option['after'])
+                after = options[0]['after']
+                if migration_carry:
+                    migration_carry = self.carried_option_migration(edit, edit['versions'][-1], options)
                 if len({option['after'] for option in options}) != len(options):
                     raise FieldConflict('spec.options', 'Options become identical with the source line endings')
         if any('% TS-BLOCK-' in value for value in [before, original, after, *[o['after'] for o in options or []]]):
@@ -1342,6 +1449,8 @@ class Review:
                 edit.pop('previous_feedback', None)
         edit['generation'] = edit.get('generation', len(edit['versions'])) + 1
         edit["versions"].append(commit)
+        if migration_carry:
+            self.record_option_migration(edit, commit, migration_carry)
         if deferred:
             self.bind(edit, text, a, b, len(item['left']), len(item['right']))
         edit.update({"deps": deps, "location": spec.get("location", edit.get("location", ""))})
@@ -1390,6 +1499,13 @@ class Review:
                     keep.add(note['addressed_version'])
         if edit.get('published_version'):
             keep.add(edit['published_version'])
+        for versions in edit.get('option_migration', {}).values():
+            keep.update(proof['origin_version'] for proof in versions.values() if proof.get('origin_version'))
+        if edit.get('option_migration', {}).get(edit['versions'][-1]):
+            keep.add(edit['versions'][-1])
+        for version, versions in edit.get('option_migration', {}).items():
+            if any(not proof.get('origin_version') for proof in versions.values()):
+                keep.add(version)
         edit['versions'] = [version for version in edit['versions'] if version in keep]
 
     def stale(self, changed):
@@ -1468,8 +1584,27 @@ class Review:
                         if item.get('options') and label is None:
                             raise Conflict('Choose an explicit option A/B/C before accepting')
                         if label is not None:
-                            item['after'] = self.option(item, label)['after']
+                            item['after'] = self.option_effect(edit, item, edit['versions'][-1], label)
                             edit['accepted_option'] = label
+                            proof = edit.get('option_migration', {}).get(edit['versions'][-1], {}).get(label)
+                            if proof:
+                                if self.migration_entries is None:
+                                    raise Conflict('接收旧注释候选需要当前论文资料；未接收。')
+                                entries = [entry for entry in self.migration_entries if entry.get('source') == proof['rule_source']]
+                                plans = [part['text'] for part in proof['fragments'] if part['kind'] == 'plan']
+                                origin_version = proof.get('origin_version', edit['versions'][-1])
+                                expected_scope = f"仅本论文审核批次 {self.state['session']} 的 {id_} 版本 {origin_version} 方案 {label}；作者未接收此方案前仅作候选意图，不是当前规则。"
+                                if (len(entries) != 1 or len(plans) != 1 or entries[0].get('text') != plans[0] or
+                                    entries[0].get('evidence') != 'source' or entries[0].get('kind') != 'other' or entries[0].get('scope') != expected_scope):
+                                    raise Conflict('候选的论文资料已变化或缺失；未接收。')
+                                if proof['question'] is not None:
+                                    if proof['question'] not in edit.get('questions', []) or proof['dependencies'] != edit.get('deps', []):
+                                        raise Conflict('候选的问题或依赖已变化；未接收。')
+                                    self.question_links([proof['question']])
+                                from paper_background import candidate_entry_digest
+                                edit['_migration_rule_approval'] = {'source':proof['rule_source'], 'session':self.state['session'],
+                                    'id':id_, 'version':edit['versions'][-1], 'origin_version':origin_version, 'option':label,
+                                    'entry_digest':candidate_entry_digest(entries[0])}
                     replacement = item['after'] if id_ in accept else item['before']
                     if id_ in accept and ('% TS-BLOCK-' in replacement or '% TS-BLOCK-' in text[a:b]):
                         raise Conflict('候选包含固定审核块标记；未接收。')
@@ -1571,6 +1706,10 @@ class Review:
                      for p in self.state['rounds'][-1]['files']}
             self.state['accepted'] = self.snapshot(files, 'explicit author acceptance ' + ','.join(accept))
         self.state['edits'].update(decisions)
+        for edit in decisions.values():
+            approval = edit.pop('_migration_rule_approval', None)
+            if approval:
+                self.state.setdefault('approved_migration_rules', {})[approval['source']] = approval
         if reject:
             self.stale(set(reject))
         return updated, {'accepted': accept, 'rejected': reject,
@@ -1611,7 +1750,8 @@ class Review:
         shown = json.loads(self.contents(version, 'span.json'))
         started = time.perf_counter()
         options = shown.get('options', [{'label': 'A', 'after': result['candidate'], 'reason': '已有单方案；可由 AI 重新生成三方案'}])
-        result['options'] = [dict(o) if reuse_diff else {**o, 'changes': word_changes(result['original'], o['after'])} for o in options]
+        projected = [self.option_view(edit, shown, version, o) for o in options]
+        result['options'] = [dict(o) if reuse_diff else {**o, 'changes': word_changes(result['original'], o['after'])} for o in projected]
         result['fewer_options_reason'] = shown.get('fewer_options_reason', '')
         result['intent'] = shown.get('intent')
         result['fulfillment'] = shown.get('fulfillment', [])
@@ -1625,7 +1765,9 @@ class Review:
                 option['fact_changes'] = fact_changes(result['original'], option['after'], shown.get('protected_terms', []))
         self.timings['diff_scope_s'] += time.perf_counter() - started
         if edit.get('accepted_option'):
-            result['candidate'] = self.option(shown, edit['accepted_option'])['after']
+            result['candidate'] = self.option_effect(edit, shown, version, edit['accepted_option'])
+        elif result['options']:
+            result['candidate'] = result['options'][0]['after']
         obj = self.payload(edit)
         if self.sidecar:
             text = self.read(edit['file'])
@@ -1671,11 +1813,24 @@ class Review:
         payload = self.payload(edit)
         if side == 'candidate' and payload.get('options') and option is None:
             raise Conflict('Candidate annotations must name their exact option')
-        selected = self.option(payload, option)['after'] if side == 'candidate' and option else self.contents(spec["version"], side + ".tex")
+        raw_selected = self.option(payload, option)['after'] if side == 'candidate' and option else self.contents(spec["version"], side + ".tex")
+        proof = edit.get('option_migration', {}).get(spec['version'], {}).get(option) if side == 'candidate' else None
+        editing = bool(spec.get('request_id'))
+        selected = self.option_effect(edit, payload, spec['version'], option) if proof and not editing else raw_selected
         start, end = spec["start"], spec["end"]
         if type(start) is not int or type(end) is not int or not 0 <= start <= end <= len(selected):
             raise Conflict("Invalid Unicode code-point selection offsets")
-        if selected[start:end] != spec["quote"]:
+        segments = spec.get('segments') if editing else None
+        if segments is not None:
+            if not proof or not isinstance(segments, list) or not segments or any(
+                    not isinstance(part, dict) or set(part) != {'start', 'end'} or
+                    type(part['start']) is not int or type(part['end']) is not int or
+                    not 0 <= part['start'] <= part['end'] <= len(raw_selected) for part in segments):
+                raise Conflict('Invalid immutable selection segments')
+            quoted = ''.join(raw_selected[part['start']:part['end']] for part in segments)
+        else:
+            quoted = selected[start:end]
+        if quoted != spec["quote"]:
             raise Conflict("Selection does not match the immutable excerpt")
         context = spec.get('display_context')
         if context is not None:
@@ -1689,7 +1844,9 @@ class Review:
                 self.question_links([question])
                 source = question['quote']
             elif source_side in ('original', 'candidate') and source_side == side:
-                source = selected
+                source = self.option_effect(edit, payload, spec['version'], option) if proof else selected
+                if editing and proof and context.get('source') == raw_selected:
+                    source = raw_selected
             else:
                 raise Conflict('Invalid annotation source context')
             if context.get('source') != source:
@@ -1724,14 +1881,23 @@ class Review:
                 raise Conflict('Feedback changed concurrently; reread before editing')
             if 'previous_purpose' in spec and request.get('purpose', 'revision') != spec['previous_purpose']:
                 raise Conflict('Feedback purpose changed concurrently; reread before editing')
-            if any(request.get(key) != spec.get(key) for key in ('side', 'start', 'end', 'quote', 'option', 'display_context')):
+            if any(request.get(key) != spec.get(key) for key in ('side', 'start', 'end', 'quote', 'option', 'display_context', 'segments')):
                 raise Conflict('Editing feedback must preserve its exact selection')
             request['text'] = text.strip()
             if 'purpose' in spec:
                 request['purpose'] = purpose
             return {}, {'id': id_, 'request': request, 'rewritten': False}
+        if proof:
+            from review_option_migration import CandidateMigrationError, selection_segments
+            try:
+                segments = selection_segments(raw_selected, {key:value for key,value in proof.items() if key not in ('rule_source', 'origin_version')}, start, end)
+            except CandidateMigrationError as error:
+                raise Conflict(str(error)) from error
+            start, end = segments[0]['start'], segments[-1]['end']
         request = {"id": uuid.uuid4().hex[:12], "text": text.strip(), "status": "open", "side": side,
                    "version": spec["version"], "start": start, "end": end, "quote": spec["quote"], 'purpose': purpose}
+        if segments is not None and len(segments) > 1:
+            request['segments'] = segments
         if option:
             self.option(payload, option)
             request['option'] = option
@@ -1766,7 +1932,7 @@ class Review:
             payload = self.payload(edit)
             option = item.get('option')
             side = 'candidate' if option else 'original'
-            anchor = self.option(payload, option)['after'] if option else payload['before']
+            anchor = self.option_effect(edit, payload, item['version'], option) if option else payload['before']
             _, result = self.feedback({'id': item['id'], 'version': item['version'], 'side': side,
                 'option': option, 'start': 0, 'end': len(anchor), 'quote': anchor, 'text': text, 'purpose': purpose})
             results.append(result)
@@ -2079,12 +2245,18 @@ class Review:
                 option = note.get('option')
                 key = (id_, version, option)
                 if key not in groups:
+                    saved = json.loads(self.contents(version, 'span.json'))
+                    saved_options = saved.get('options', [{'label':'A', 'after':saved['after'], 'reason':'已有单方案'}])
                     groups[key] = {'id': id_, 'file': edit['file'], 'version': version,
                                    'current_version': edit['versions'][-1],
                                    'original': self.contents(version, 'original.tex'),
-                                   'candidate': self.option(json.loads(self.contents(version, 'span.json')), option or 'A')['after'],
+                                   'candidate': self.option_effect(edit, saved, version, option or 'A'),
                                    'option': option, 'requests': []}
-                    groups[key]['options'] = json.loads(self.contents(version, 'span.json')).get('options')
+                    groups[key]['options'] = [self.option_view(edit,saved,version,o) for o in saved_options]
+                    if option and edit.get('option_migration', {}).get(version, {}).get(option):
+                        groups[key]['immutable_candidate_for_note'] = {
+                            'text':self.option(saved, option)['after'],
+                            'scope':'仅用于核对批注原版选区；其中旧机器注释不是当前正文或已批准规则。'}
                 groups[key]['requests'].append({**copy.deepcopy(note), 'purpose': note.get('purpose', 'revision')})
         if self.state_path.read_bytes() != self.raw:
             raise Conflict('Concurrent review modification while reading feedback context')
@@ -2101,8 +2273,9 @@ class Review:
         """Reuse only the full prose/notes actually included in a current feedback attachment."""
         edit = self.state['edits'][id_]
         payload = self.payload(edit)
+        options = payload.get('options')
         content = {'session': self.state.get('session'), 'id': id_, 'version': edit['versions'][-1],
-                   'original': payload['before'], 'options': payload.get('options'),
+                   'original': payload['before'], 'options': [self.option_view(edit,payload,edit['versions'][-1],o) for o in options] if options is not None else None,
                    'requests': [n for n in edit.get('requests', []) if n['status'] == 'open']}
         return {'id': id_, 'version': edit['versions'][-1],
                 'fingerprint': digest(json.dumps(content, ensure_ascii=False, sort_keys=True).encode('utf-8'))}
@@ -2137,6 +2310,7 @@ def main():
     parser.add_argument("--project", "--repo", dest="repo", required=True)
     parser.add_argument("--state", required=True)
     parser.add_argument("--git", default="git")
+    parser.add_argument('--profile-storage', help='Exact VS Code profile storage for migrated candidate rules')
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--expect")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2220,10 +2394,37 @@ def main():
         if args.apply:
             r = Review(args.repo, args.state, args.git, initialize=initialize)
         started = time.perf_counter()
-        result = dispatch(r, args)
+        with migration_paper_lock(r, args):
+            result = dispatch(r, args)
         if args.command != 'status':
             result['timings'] = {**r.timings, **result.get('timings', {}), 'operation_s': time.perf_counter() - started}
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@contextmanager
+def migration_paper_lock(review, args):
+    """Keep paper entries stable while a migrated option is decided and written."""
+    if args.command not in ('decide', 'decide-batch') or not args.profile_storage or not review.state.get('option_migration_manifest'):
+        yield
+        return
+    import sqlite3
+    from paper_background import identity
+    storage = Path(args.profile_storage).resolve(strict=True)
+    database = storage / 'paper-background.sqlite3'
+    if database.is_symlink() or database.is_junction() or not database.is_file():
+        raise Conflict('论文资料不可用；未接收旧注释候选。')
+    project, owner = identity(review.repo, review.state_rel)
+    db = sqlite3.connect(database)
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT p.entries FROM papers p JOIN aliases a ON a.paper_id=p.id WHERE a.root=? AND a.owner=?', (project, owner)).fetchone()
+        if row is None:
+            raise Conflict('论文资料身份未关联；未接收旧注释候选。')
+        review.migration_entries = json.loads(row[0])
+        yield
+    finally:
+        db.rollback()
+        db.close()
 
 
 def dispatch(r, args):
@@ -2279,8 +2480,10 @@ def dispatch(r, args):
                 selected = next((o for o in options if o['label'] == args.option), None)
                 if selected is None or not isinstance(spec.get('after'), str):
                     raise Conflict('Manual edit needs an existing option and after text')
-                selected['after'] = spec['after']
+                proof = edit.get('option_migration', {}).get(args.version, {}).get(args.option)
+                selected['after'] = (''.join(part['text'] for part in proof['fragments']) if proof else '') + spec['after']
                 selected['manually_edited'] = True
+                carried = r.carried_option_migration(edit, args.version, options)
                 spec = {'options': options, 'fewer_options_reason': (old.get('fewer_options_reason') or '手动编辑已有候选，不自动生成备选') if len(options) < 3 else ''}
                 if 'intent' in old:
                     spec['intent'] = old['intent']
@@ -2290,7 +2493,7 @@ def dispatch(r, args):
                 spec.setdefault("deferred", True)
                 if spec['deferred'] is False:
                     raise Conflict("新候选必须 deferred=true；接收后才替换正文。旧记录仍可读取。")
-            updated, result = r.propose(spec, args.id) if args.command == 'edit-option' else r.propose_options(spec, getattr(args, 'id', None), getattr(args, 'version', None))
+            updated, result = r.propose(spec, args.id, migration_carry=carried) if args.command == 'edit-option' else r.propose_options(spec, getattr(args, 'id', None), getattr(args, 'version', None))
         elif args.command == "feedback":
             updated, result = r.feedback(json.loads(sys.stdin.read()))
         elif args.command == 'feedback-batch':

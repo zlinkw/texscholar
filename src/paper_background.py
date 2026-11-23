@@ -2,12 +2,18 @@
 from pathlib import Path
 from contextlib import closing
 import json
+import hashlib
 import os
 import sqlite3
 import uuid
 
 KINDS = {'background', 'method', 'data', 'constraints', 'other'}
 EVIDENCE = {'author', 'source', 'unconfirmed'}
+
+
+def candidate_entry_digest(entry):
+    """Bind an approval to the exact paper entry seen at acceptance."""
+    return hashlib.sha256(json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
 
 
 def identity(root, owner):
@@ -94,8 +100,35 @@ def read(storage, root, owner):
             row = db.execute('SELECT p.revision, p.entries FROM papers p JOIN aliases a ON a.paper_id=p.id WHERE a.root=? AND a.owner=?', (project, owner)).fetchone()
             if row is None and _paper_for_root(db, project) is not None:
                 raise ValueError('该项目已有论文资料，但审核归属未明确关联；请先核对并显式关联。')
-    return {'project': project, 'state': owner, 'revision': row[0] if row else 0, 'entries': json.loads(row[1]) if row else [],
-            'scope': '本论文资料中作者明确约定按其适用范围执行；背景与待确认事实仅供参考，均不单独构成操作授权。'}
+    entries = json.loads(row[1]) if row else []
+    result = {'project': project, 'state': owner, 'revision': row[0] if row else 0, 'entries': entries,
+              'scope': '本论文资料中作者明确约定按其适用范围执行；背景与待确认事实仅供参考，均不单独构成操作授权。'}
+    state_path = Path(root) / owner
+    if owner == '.codex-review/state.json' and any(path.is_symlink() or path.is_junction() for path in (state_path.parent, state_path)):
+        raise ValueError('审核状态不能通过链接读取。')
+    if owner == '.codex-review/state.json' and state_path.is_file():
+        raw = state_path.read_bytes()
+        state = json.loads(raw)
+        approvals = state.get('approved_migration_rules', {})
+        if approvals:
+            if state.get('transaction'):
+                raise ValueError('审核事务尚未完成，不能判断已接收候选的规则状态。')
+            if not isinstance(approvals, dict):
+                raise ValueError('候选规则确认记录无效。')
+            confirmed = []
+            for source, approval in approvals.items():
+                if not isinstance(approval, dict) or approval.get('source') != source:
+                    raise ValueError('候选规则确认身份无效。')
+                matches = [entry for entry in entries if entry.get('source') == source]
+                confirmed.append({**approval, 'available':len(matches) == 1 and candidate_entry_digest(matches[0]) == approval.get('entry_digest')})
+            if state_path.read_bytes() != raw:
+                raise ValueError('审核状态读取期间发生变化；请重新读取。')
+            with closing(connect(storage)) as db:
+                current = db.execute('SELECT p.revision, p.entries FROM papers p JOIN aliases a ON a.paper_id=p.id WHERE a.root=? AND a.owner=?', (project, owner)).fetchone()
+            if current != row:
+                raise ValueError('论文资料读取期间发生变化；请重新读取。')
+            result['accepted_candidate_rules'] = confirmed
+    return result
 
 
 def write(storage, root, owner, revision, entries):

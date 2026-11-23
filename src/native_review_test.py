@@ -395,6 +395,10 @@ class NativeReview(unittest.TestCase):
         state['edits']['6']['status'] = 'pending'
         state['edits']['6']['deps'] = ['5']
         state['next'][0] = 7
+        edit['migration_item_id'] = id_
+        edit['option_migration'] = {version:{'A':{'source':'fixture'}}}
+        state['option_migration_manifest'] = {id_:{version:['A']}}
+        state['approved_migration_rules'] = {'fixture':{'source':'fixture', 'entry_digest':'proof'}}
         protected = copy.deepcopy({i: state['edits'][i] for i in ('2','3','4','5','6')})
         state['rounds'].insert(0, copy.deepcopy(state['rounds'][0]))
         state['pending_backup'] = {'commit': 'fixture-commit', 'files': {}, 'accepted': {id_: version},
@@ -406,6 +410,9 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(result['removed_ids'], [])
         self.assertEqual(len(r.state['rounds']), 1)
         self.assertEqual(r.state['edits'][id_]['versions'], [])
+        self.assertNotIn('option_migration', r.state['edits'][id_])
+        self.assertNotIn('option_migration_manifest', r.state)
+        self.assertEqual(r.state['approved_migration_rules']['fixture']['entry_digest'], 'proof')
         self.assertNotIn('requests', r.state['edits'][id_])
         self.assertEqual(r.state['edits'][id_]['questions'][0]['id'], 'Q1')
         self.assertEqual(r.state['edits'][id_]['checkpoint'], 'fixture-commit')
