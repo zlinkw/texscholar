@@ -59,13 +59,7 @@
 
 ## 原始问题关联
 
-在对应回复前的现有局部注释区写 `% CODEX-RESPONSE reviewer=R1-Q2 changes=1,3` 表示正文依赖；不要在此复制审核决定。需要插件查看原始意见时，同处写一行：
-
-```tex
-% CODEX-QUESTION {"id":"R1-Q2","file":"reviewer-comments.tex","quote":"Exact original reviewer wording."}
-```
-
-文件名只是格式示例，不要求创建该文件。`file` 指项目内真实原始意见的相对路径，`quote` 保留真实源码内容和换行，且必须唯一匹配。当前精确跳转支持 UTF-8 .tex / .txt / 已有 .md；PDF、Word 原件不伪造段落定位。编号保留作者约定，不由正文修订 ID 推导。为相关候选调用 propose-options / rework-options 时，在 `questions` 数组传入同样对象，保存在已有唯一状态中。一个候选可对应多个问题；未提供关系时显示未关联，不猜测。不得为导航生成一套新问题表。
+原始问题的 `id`、项目内真实源文件 `file` 和唯一精确摘录 `quote` 保存于审核项或问题容器的结构化 `questions`；回复依赖以结构化修改项 ID 保存。旧 `% CODEX-RESPONSE` 和 `% CODEX-QUESTION` 注释在明确迁移前继续读取，不新增同类源码注释。摘录保留真实源码内容和换行；当前精确跳转支持 UTF-8 .tex / .txt / 已有 .md，PDF、Word 原件不伪造段落定位。编号保留作者约定，不由正文修订 ID 推导。为相关候选调用 propose-options / rework-options 时，在 `questions` 数组传入完整对象，保存在已有唯一状态中。一个候选可对应多个问题；未提供关系时显示未关联，不猜测。不得为导航生成一套新问题表。
 
 ## 每批成果
 

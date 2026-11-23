@@ -210,6 +210,8 @@ def selected_ids(review, ids=None, files=None):
 def verify_read(review):
     if review.state_path.read_bytes() != review.raw or any(review.path(file).read_bytes() != raw for file, raw in review.original.items()):
         raise ToolConflict('Source or state changed during reading; reread the requested scope', 'context_changed', {'action': 'read_context', 'automatic_retry': False})
+    if any(review.question_source(file) != raw for file, raw in review.question_original.items()):
+        raise ToolConflict('Reviewer question changed during reading; reread the requested scope', 'context_changed', {'action': 'read_context', 'automatic_retry': False})
 
 
 def feedback_packet(review, ids=None):
@@ -388,7 +390,21 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
         result['blocks'], result['block_conflicts'] = {}, {}
         for file, text in texts.items():
             try:
-                result['blocks'][file] = list(index(text).values())
+                rows = list(index(text).values())
+                for row in rows:
+                    registered = review.state.get('blocks', {}).get(row['id'])
+                    if not registered:
+                        continue
+                    if registered.get('file') != file or registered.get('kind') != row['kind']:
+                        raise Conflict('审核块文件或类型不一致：' + row['id'])
+                    if 'questions' in registered:
+                        row['questions'] = review.question_links(registered['questions'])
+                    if 'response_dependencies' in registered:
+                        deps = registered['response_dependencies']
+                        if not isinstance(deps, list) or any(not isinstance(dep, str) or dep not in edits for dep in deps):
+                            raise Conflict('回复依赖项无效：' + row['id'])
+                        row['response_dependencies'] = deps
+                result['blocks'][file] = rows
             except ValueError as error:
                 result['block_conflicts'][file] = str(error)
     result['author_comments'] = comment_context(texts, spans, roles)

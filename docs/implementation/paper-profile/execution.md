@@ -14,6 +14,12 @@ P7-baseline-scan-first 只读检查全部561个复制对象，aq/ar完整左右�
 
 P7-anchor-proof-first exit 0，将三项不可变原左右上下文、候选、当前相邻双侧精确片段及所有匹配位置保存在外置证据；aq/ar有旧全源baseline，115仅有候选版本内原上下文而无完整旧源baseline，等总控判断语义唯一，不能把隔离relocate视作真实授权写入。P7-response-deps-first exit 0，14条RESPONSE中的依赖 ID 均可在状态中找到，同一问题对应多个不同响应项及依赖，不能按问题名整体合并。
 
+P7-question-validate-first exit 2 为外置命令拼错脚本路径，Python未启动调查脚本；second exit 0，14处QUESTION经真实 question_links 在隔离副本逐一精确验证原文唯一。P7-question-map-first exit 0，保存14个出现位置、关联原问题/邻近RESPONSE及EXCERPT、源版本和现有hover“取之前最后一条”的实际位置范围；同名两组各重复出现，位置范围不能当作者语义范围或自动合并。数据仅形成可核对映射，当前questions.js仍直接读源码注释，且RESPONSE/EXCERPT独立语义未在消费者中完整替代，故尚不允许删除这些标记。只读rg通配曾因Windows路径格式错误exit 1，改用-g后完成；无产品写入。
+
+问题关联后续实现：questions.js 支持读取既有审核状态中 question 块的 `questions`，按对应成对 TS 标记限定 hover 范围，旧源码注释入口保留，多个问题均显示；有缺失/重复标记或跨文件问题时明确拒绝，异步读取期间文档版本变化则不返回旧hover。MCP read_context 对登记块返回经过原 question_links 核验的完整问题及逐项 response_dependencies，关联问题源变化时复核拒绝；不新建第二问题库。writing/question 指南同步结构化关系与旧注释迁移前保留。P7-question-block-feasibility-first 在已转换隔离副本验证14处问题范围与已迁候选块未交叉；P7-question-deps-prototype-first 仅在新独立副本把14对QUESTION/紧邻RESPONSE映射为14个 question 块/精准依赖，保留13个EXCERPT，68项仍可定位、旧状态条目及原块不变。P7-question-deps-consume-first 和 P7-question-deps-exact-first 通过真实隔离Server.read_context核14组问题原文/文件/编号与依赖ID多重集合完全一致；prototype是直接写副本的转换研究，非已验证真实受保护事务。
+
+P7-questions-tests-first/second/third 定向问题测试 exit 0；fourth 连跑writing测试 exit 1，三项因未设置 LOCAL_LATEX_PYTHON，实际MCP子进程未启动；第五、六轮补正确Python及提前实核专属sitecustomize禁用HostSession，新根各15项 exit 0，sixth覆盖最后一次JS代码更改。p7-metadata-tests-first/second 后端各5项 exit 0，second覆盖最后一次后端更改，含实际隔离MCP调用；P7-question-prototype-check-first 的块读取在 earlier candidate 通过，最终原型以deps精确对照为准。尚未做正常Development问题hover及这些注释的受保护事务，13个EXCERPT仍在源码，故不能宣称源码清理或真实迁移完成。
+
 P7-local-context-preview-first/second 在新隔离 SQLite 分别保存87条局部插件注释并读回、核CAS；first以拆行重组未保留原换行，仅作失败设计证据，second改为逐字保留原换行，P7-local-context-consume-first 用隔离注册真实 Server.read_context 读取87条、P7-local-context-feedback-first 读取87条及21条open批注，均 exit 0。这些条目以source/other、精确相邻文本及源行记录，语义范围全部标待核，不声称已把作者要求正确分类或可删除注释；孤立END及其他机器注释仍保留。p7-shared-tests-first exit 0：同一实际行中两个候选迁入同一个块，模拟转换后接收一项，另一项版本和真实定位仍有效；使用隔离FakeHost，不作为正常Development组合通过。
 
 只读比较 v0.9.60 与当前实现：review_host_migration、registry、edit未变，可在实际存在合格旧宿主时继续用相同审核迁移保护；review_host_legacy 新增的 profile-metadata/profile-check/retired-review-header 和 profile_transition_check 在旧版不存在。不能用旧legacy宽事务假装具备资料权威校验，也不能仅靠离线文件CAS证明其他活Code进程无脏缓冲。实际宿主资格/草稿仍未核，资料源头切换与局部机器注释消除仍未完成。

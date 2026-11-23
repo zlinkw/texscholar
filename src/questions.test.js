@@ -3,7 +3,42 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const {links, validateTarget, jump, notifyProblem} = require('./questions');
+const {activate, links, blockLinks, validateTarget, jump, notifyProblem} = require('./questions');
+test('structured question containers preserve precise associations without source metadata comments', () => {
+    const id = '8b481c85-f8fa-46bb-88eb-c303a5e25a07';
+    const q = {id:'R1-Q2', file:'review.tex', quote:'Actual reviewer wording.'};
+    const text = `Before.\n% TS-BLOCK-BEGIN id=${id} kind=question\nReviewer comment.\nResponse.\n% TS-BLOCK-END id=${id}\nAfter.`;
+    const state = {schema:3, blocks:{[id]:{file:'reply.tex', kind:'question', questions:[q]}}};
+    const rows = blockLinks(text, 'reply.tex', state);
+    assert.equal(rows.length, 1); assert.deepEqual(rows[0].question, q);
+    assert(text.indexOf('Reviewer comment.') > rows[0].start);
+    assert(text.indexOf('Response.') < rows[0].end);
+    assert(text.indexOf('After.') > rows[0].end);
+    assert.deepEqual(blockLinks(text, 'other.tex', state), []);
+    assert.throws(() => blockLinks(text.replace(`% TS-BLOCK-END id=${id}`, ''), 'reply.tex', state), /标记缺失/);
+    assert.throws(() => blockLinks(text + '\n' + text, 'reply.tex', state), /标记缺失或重复/);
+    assert.equal(blockLinks(text, 'reply.tex', {schema:3, blocks:{[id]:{...state.blocks[id],questions:[q,q]}}}).length, 2);
+    assert.throws(() => blockLinks(text, 'reply.tex', {schema:3, blocks:{[id]:{...state.blocks[id],questions:'invalid'}}}), /无效/);
+});
+test('hover reads the registered question container from sidecar state', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'question-container-'));
+    fs.mkdirSync(path.join(root, '.codex-review'));
+    const id = '8b481c85-f8fa-46bb-88eb-c303a5e25a07';
+    const q = {id:'R1-Q2', file:'review.tex', quote:'Actual reviewer wording.'};
+    fs.writeFileSync(path.join(root, '.codex-review', 'state.json'), JSON.stringify({schema:3,blocks:{[id]:{file:'reply.tex',kind:'question',questions:[q]}}}), 'utf8');
+    const text = `% TS-BLOCK-BEGIN id=${id} kind=question\nReviewer Comment.\n% TS-BLOCK-END id=${id}\n`;
+    const document = {uri:{fsPath:path.join(root,'reply.tex')},getText:()=>text,
+        lineAt:()=>({text:'Reviewer Comment.'}),offsetAt:()=>text.indexOf('Reviewer Comment.')};
+    let provider;
+    const vscode = {commands:{registerCommand:()=>({})},languages:{registerHoverProvider:(_, p)=>(provider=p,{})},
+        workspace:{getWorkspaceFolder:()=>({uri:{fsPath:root}})},
+        MarkdownString:class {constructor(){this.value='';} appendText(s){this.value+=s;} appendMarkdown(s){this.value+=s;}},
+        Hover:class {constructor(value){this.value=value;}}};
+    activate({subscriptions:[]}, vscode);
+    const hover = await provider.provideHover(document, {line:1});
+    assert(hover.value.value.includes(q.id)); assert(hover.value.value.includes(q.quote));
+    assert(hover.value.value.includes('localLatex.jumpQuestion'));
+});
 test('AI-authored explicit question markers are recognized without guessing question numbering', async () => {
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'questions-'));
     const q = {id: 'Reviewer 2, Comment 3', file: '原始意见.txt', quote: 'Please clarify the selection rule.'};

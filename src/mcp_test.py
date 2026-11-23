@@ -15,6 +15,22 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_context_returns_structured_question_and_reply_dependencies(self):
+        result = self.apply('propose', {'file':'main.tex', 'kind':'manuscript',
+                                       'before':'The model is strong and fast.', 'after':'The model is reliable.'})
+        id_ = result['id']; fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
+        review = fixtures.Review(self.root, '.codex-review/state.json', 'missing-git')
+        source = review.read('main.tex'); start = source.index('The model'); end = source.index('\n', start) + 1
+        question = {'id':'R1-Q2', 'file':'reply.tex', 'quote':'Thank you.'}
+        updated, block = review.prepare_block({'file':'main.tex', 'kind':'question', 'start':start, 'end':end,
+                                               'source_revision':review.source_digest(source), 'questions':[question]})
+        review.state['blocks'][block['block_id']]['response_dependencies'] = [id_]
+        review.persist(updated, digest(review.raw))
+        packet = self.server().call('read_context', {'project':str(self.root), 'state':'.codex-review/state.json', 'ids':[]})
+        row = next(x for x in packet['context']['blocks']['main.tex'] if x['id'] == block['block_id'])
+        self.assertEqual(row['questions'], [question])
+        self.assertEqual(row['response_dependencies'], [id_])
+
     def test_read_feedback_includes_open_previous_note_on_decided_item(self):
         result = self.apply('propose', {'file':'main.tex', 'kind':'manuscript',
                                        'before':'The model is strong and fast.', 'after':'The model is reliable.'})
