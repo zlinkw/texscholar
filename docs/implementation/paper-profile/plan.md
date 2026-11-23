@@ -2,6 +2,22 @@
 
 ## 当前阶段与用户决定
 
+2026-11-23，P7真实迁移与适用验证已完成，0.9.61同一VSIX已安装并在唯一目标论文窗口重载一次；正式Release尚待P8。用户对“保护草稿→安装已备包→重载一次→迁移核对→正式发布”明确回复“允许”，不再沿用下列历史no-reload阻塞。构建输入仍为ee0e95dc1755526e0e7d98556d8ef55dc67da786，不重构建、不重复安装，不重载其他窗口。
+
+真实目标D:/Overleaf/TMI-DA-Marked-up Copy经新鲜源/对象/Git核对后，使用真实0.9.61宿主、显式管道、原writer锁、源及资料CAS与已审核恢复协议，依次完成三锚重绑、68项sidecar、角色/全篇资料、92条局部计划/13摘录/14结构化问题及依赖/22待接收方案意图、23条顶部资料。最终P为152条，两个编辑源不再有旧CODEX机器注释，仅保留新版必要定位符及作者正文/注释。未接收任何候选，候选意图未激活；原246项状态/版本、session/counter/round、全部26条原批注（21 open、5已处理）及561个原引用对象逐项保持。模板、9个范围外文件、原Git HEAD及暂存完全不变，无删除、编译、论文Git或上传。
+
+现场证据根D:/latex-writing-checks/paper-profile-20261123/controller-p7-live1。安装exit0见Terra execution；总控重载只执行一次Developer: Reload Window，原论文extension host10920结束、新71556启用，其他窗口host80960及Code主进程未重启。首次真实reserve因登记失效或多宿主拒绝，未写源/P；核无未完成事务且仅一个论文宿主后，用原公开“核对并恢复审核宿主登记”确认恢复，host-second真实profile-check/脏缓冲与源版本校验exit0，不以FakeHost或宽legacy绕过。anchors/sidecar/profile/metadata/header实际各exit0。verify首轮因检查器误要求零批准时存在可选accepted_candidate_rules而exit1；修正为实际空批准契约后仅只读verify-second exit0，未重放迁移。verify-result.json、verified-context/feedback/background/roles及每阶段批准快照/恢复日志完整保留。
+
+真实审核页只读打开95/v13，实际进度显示68待处理、定位冲突0，原上一轮批注与问题可见；未点击接收、重试备份或位置修复。旧后台备份失败提示仍可见，未将其称成功。ui-final-95.json保留实际UI文字；controller-p7-memory4为重载前原暂存107记录，memory5为迁移及实际GUI读回后稳定副本；final-protection.py exit0确认原暂存记录逐字相同，全部原批注/版本/对象、批准源结果、模板/范围外文件和Git HEAD/stage保持。真实当时三类输入为空而非三个非空草稿，不冒充隔离三稿用例；非空三稿保护沿用已通过的正常Development范围。一次UIA失效点击和工具参数错误无源写，原现场保留。
+
+迁移及上述新版独立Server核验完成后，桌面现有TeXScholar read_context以expected_plugin_version=0.9.61实际返回plugin_version_mismatch：连接仍0.9.60、server_pid44128/parent42324，要求重启拥有连接的Codex MCP，禁止混用旧MCP与新CLI或重复保存。desktop-mcp-mismatch.json保留事实；此后未作普通CLI回退或重复请求，未杀进程/改配置/自动化Codex界面。当前工具无该连接的受支持restart_mcp动作；该连接启用仍待重启，不称桌面MCP已升级。真实迁移和宿主GUI已独立通过，按原授权继续正式发行同一包；最终向用户说明该连接限制。
+
+现任总控local/01a20811-7c1e-7a50-908c-c59a658531a0，Sol6.1/high、priority。唯一现任Terra已自然接替为local/01a208d4-2ab9-7a93-9994-56e2c5dfc6c7，实核Terra6.1/high、match/continue；实际service_tier default仅记录、不作资格门槛。旧Terra释放租约、turn结束后已归档。当前源码HEAD==origin/master==f885979391ad10e069c087d320459e026eb20e51、clean，安装及真实迁移无在途；总控更新本计划/index后给现任Terra仅P8正式tag/Release、execution与Git租约，不给真实论文写租约。N返修0、P返修1，不新增代理或补做有效覆盖。
+
+## 历史阶段记录
+
+下列记录保留原调查、冻结、失败与当时授权边界；其中“未安装/未迁移/no-reload阻塞”等运行状态已由上节真实结果取代，不是当前待办。
+
 最新用户已对具体提议回复“允许”：先保护草稿，安装已备0.9.61同一包并重载一次，再真实迁移、核对通过后正式发布。该决定取代下文旧no-reload及迁移后才安装的运行限制；不扩大为论文Git/接收/编译、清理、重复构建或重启其他窗口许可。2026-11-23总控通过Computer Use只操作真实TeXScholar审核页：实际当前107/v2，更多菜单原“暂存并关闭”已执行并关闭审核页；本地controller-p7-memory2/3是操作前状态，无旧reviewDrafts，memory4实际读回107/session e74dbc117a5f4cf4991bfb17187ca9c9精确暂存记录，候选drafts为空、无blockDraft、note为空、purpose revision，原批注未改。相应完整workspace数据库/WAL及插件Memento、匹配hot-exit和UI依据保留D:/latex-writing-checks/paper-profile-20261123/controller-p7-live1与controller-p7-memory2/3/4。最初UIA菜单项点击落在旧滚动坐标未确认写入；刷新后用当前截图坐标执行，最终落盘读回才确认成功，不以空Memento推断活稿。接下来原Terra仅安装已核同一包并冻结，重载及真实迁移由总控继续协调；不自动重载其他窗口，不重建包，正式Release仍待真稿核对后。
 
 2026-11-23。用户已明确要求代理直接完成迁移、验证后按原流程发布安装最新版，完成后一次汇报；不要求用户经插件操作或先启用新版，不自动重载/重启。P7源码候选2af17bfc8c0416c0e7944f338278c700b7ebf02d已同步clean，原R1拒绝保留、P返修1。总控已审真实diff、一次性协议及必要调用链，独占隔离组合的跨进程恢复、候选接收及批注/资料/源/stage读回通过；小验收按有效输入复用。真实源/P/批注尚未写，N/P尚未发行安装，P7/P8仍未完成。现场具体阻塞见下文，不能以隔离成功冒充真稿完成。普通Windows本地master跟踪origin/master。
@@ -82,14 +98,14 @@ ai_context及writing/collaboration/question指南统一说明作者确认的论�
 - [x] N1 原Terra先核真实批注模型、全部展示/交接/草稿/旧格式消费者，按下述批量功能范围实现最小完整修改，不接管其他待审范围。
 - [x] N2 原Terra受影响局部回归与正常Development无感UI小验收，真实批量暂留/恢复/取消/精确删除、过期整批拒绝、批注外数据及三稿/stage保护，完整冻结交包。
 - [x] N3 总控核实际diff/原证据，仅补跨模式/跨进程、旧批注及所选子集精确性组合；失败交原Terra，不把无文件删除检查换成cleanup，不操作真实论文。
-- [ ] N4 N随P8统一发布安装已获用户授权；用户可在支持的批注列表人工选择处理，本轮不代用户删除任何真实批注，不自动重载。
+- [ ] N4 N已随0.9.61同包安装并在目标窗口启用，正式发布随P8；本轮不代用户删除任何真实批注。
 - [x] P2 获准后原Terra实现论文资料结构/身份与角色读写及受影响后台/上下文，按内聚批验证同步；不直接处理真实论文。
 - [x] P3 原Terra接通助手角色复用/调整、多文件选择和既有GUI/MCP编辑、文案/指南；无新增清理功能，普通快速入口保留。
 - [x] P4 原Terra局部检查：新/旧/已迁身份、无审核状态、多根/同名根、角色和背景CAS、保留旧P、编译null/结构变化、后台Git许可和导出不泄露、取消与草稿/stage；加入跨多旧版/批次未决批注、同文不同位置、未显式暂留的旧open项及上一版/暂留并存的保留与可见性用例。正常Development验证实际场景与附件、修改读回和无顶注回插。迁移转换仅用新隔离合成样例，不跑cleanup。按silent-ui-screenshot无感启动/交互/截图；无性能测试。
 - [x] P5 原Terra完整冻结交包，明确所有有效输入/实际退出/首败/未测、范围外保护、无在途并交回租约，不自签最终验证。
 - [x] P6 原最终组合与R1冲突写前拒绝复验通过；后续P7必要转换实现若变更受影响链再定向补验，不重做未变覆盖。
-- [ ] P7 仅对用户明确的D:/Overleaf/TMI-DA-Marked-up Copy核定数据现场，经已验证的一次性提交协议完成已授权范围的数据迁移和核对，逐项证明所有旧未决批注仍保留且可继续处理；不以旧宿主版本本身阻塞，不自动重载/重启，不用失配旧MCP或FakeHost绕过真实写入保护。
-- [ ] P8 用户现已明确授权：真实迁移和适用验证完成后，原Terra按总控明确派单做必要版本/发行检查、一次构建/正式Release及同VSIX安装，总控核元数据并结案；不提前发行，不自动reload/restart。
+- [x] P7 唯一真实目标按用户允许的单次重载及受保护真实宿主协议完成迁移；68项定位、26条原批注/561对象、152条资料、14问题及原稿/暂存/草稿保护核对通过，桌面旧MCP连接限制单独保留。
+- [ ] P8 已获授权且0.9.61唯一构建/同包安装完成；现任Terra仅对已备双包和校验文件正式tag/Release，总控核元数据后结案，不重构建、重复安装或再重载。
 
 ### N. 批注多选、批量暂留与明确删除（用户新增，先实施）
 
