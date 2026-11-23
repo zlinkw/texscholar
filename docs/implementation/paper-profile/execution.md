@@ -114,3 +114,20 @@ P7-option-once-third、proof-second、unit-eighth、edit-fifth、rebase-third、
 正常 Development P7-option-ui-fourth 以新隔离project/profile/pipe/私有未切桌面，先资料 CAS、受控中断及恢复，再真实点击95/A接收；host/observer/外层及独立 P7-option-notes-ui-first 均 exit 0。23条头资料以另一已验证阶段接入；本轮实际证明候选规划不在源中重插、只批准选中来源、P读回有效，26条批注记录与counter和范围外stage保持。截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-67571ec58af944b8bcf5574da2470623.png 已查看，明确显示旧方案要求在接收前仅为候选意图；用户前台和输入桌面具体记录见run-result。之前 ui-first/second/third 亦通过，图片均查看；不得称这些隔离宿主验证真实活动宿主安全。P7-option-header-validator-first 将新候选P及原头资料共同核对，原独立 P7-header-ui-fourth 是实际受保护头转换；全链头转换与新候选状态的真实组合留总控验收。
 
 保留首败：once-first因新夹具名已存在在复制前拒绝；unit-third因错误cwd找不到模块、unit-sixth因测试构造缺必需after字段；edit-first预览使用占位版本、edit-second未传状态摘要；sync-first的隔离作者添加破坏问题原文而被拒绝，sync-second破坏固定标记而被拒绝；feedback-exact-first暴露旧版本批注读取被当前版防线误拒绝，修后精确21条读回；effect-third仅覆盖当时临时同步拒绝而非最终版本传递。PowerShell构造脚本的一次引号错误未写目标。以上均保留原日志，不把失败称通过；各后续独立新根结果按上述名称记录。此前默认管道拒绝和至少三个隔离对象误删事件仍保留，未运行cleanup。真实项目和真实 P 本阶段未写，仍不得以旧0.9.60活动宿主、离线CAS或空持久草稿推断活缓冲安全；真实资料/源切换须由总控核实具备正确受保护新宿主能力并受锁/CAS及恢复协议保护，不能绕过不重载约束。未执行真实迁移、正式构建/发行/安装，未验证实网AI、翻译或真实PDF完整链。
+
+
+## 0.9.61 候选包准备
+
+总控隔离最终组合 controller-p7-final2 已通过，真实迁移仍受活动旧宿主和活草稿保护约束阻断。本阶段只准备可复用交付包，未操作真实论文或真实 P，未建立 tag、Release、安装、重载或重启。P 返修仍为 1；P7/P8 未完成。
+
+版本预核 P7-prep-preflight-first exit 0：本地和远端 v0.9.61 标签不存在，Release API 返回预期 404，目标输出目录不存在。P7-package-dependencies-first exit 1 暴露构建清单漏掉实际导入的 review_option_migration.py；该检查另误报由独立 vendor 清单打包的 diff.min.js。修正有界检查并补入实际运行依赖 review_option_migration.py、review_header_migration.py、profile_transition_check.py 及相应源码测试后，P7-package-dependencies-second exit 0。新增发行工具测试核实际导入方及依赖清单；版本声明改为 0.9.61，功能源码未改。
+
+P7-prep-version-first exit 0，package 与 MCP 版本一致；P7-prep-mcp-first 2 项 exit 0，事先校验隔离 FakeHostSession 及专属 pipe；P7-prep-release-first 13 项 exit 0。各日志、argv/cwd/env/真实退出位于 D:/latex-writing-checks/review-efficiency-20261122 对应前缀；无 cleanup 或完整 backup 组。版本源码提交 ee0e95dc1755526e0e7d98556d8ef55dc67da786 已普通 push/fetch 同步。
+
+唯一构建 P7-prep-build-first exit 0，cwd D:/GitRepo/texscholar，命令 C:/Python314/python.exe -B -X utf8 scripts/build.py --output dist/v0.9.61，构建输入提交 ee0e95dc1755526e0e7d98556d8ef55dc67da786。P7-prep-hashes-first exit 0，比较构建输出与 SHA256SUMS：
+
+- D:/GitRepo/texscholar/dist/v0.9.61/texscholar-0.9.61.vsix：c348c96cceda535190c1014a8b29abcddfec4f4e0c5a5c32570bcb8536d12fd4
+- D:/GitRepo/texscholar/dist/v0.9.61/texscholar-0.9.61-source.zip：c5350c04bd58945f55d2db9d30afacc8ff47b518eedcbdb320eaea7055f62383
+- D:/GitRepo/texscholar/dist/v0.9.61/SHA256SUMS.txt：34e0219d5b3ea99fea706c7febe5eb68bd8b4dcb5b302f979f07f5e5f90b58bf
+
+说明草案 D:/latex-writing-checks/paper-profile-20261123/P7-0.9.61-release-draft.md；候选包尚未发布或安装，未做包后冒烟。真实旧宿主对活输入的保护缺口、未完成真实迁移与原有未测项和全部首败/保护事件继续有效；后续需总控协调实际安全切换，不能凭此包声称真实迁移通过。
