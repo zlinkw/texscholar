@@ -12,6 +12,12 @@ P7-baseline-scan-first 只读检查全部561个复制对象，aq/ar完整左右�
 
 按用户保护所有旧open批注的已批准范围，source_review.feedback_context 与 MCP feedback_packet 对真实open批注不再因所属项已决定而排除；已关闭且未暂留不纳入。p7-feedback-tests-first 定向4项 exit 0，second 定向5项 exit 0并增加真实隔离Server.call；P7-relocate-consumers-second 新副本重验68项可定位、20组共21条open，P7-feedback-exact-first 对 MCP 与本地交接逐项核完整 ID/version/全部原字段和21条源记录一致，均 exit 0；五条closed仍保留于状态。仅受控副本，未调用真实MCP或写真实论文。旧真实结果的3条缺口保留，不抹写；仍需宿主UI与其他消费者组合核验。
 
+P7-anchor-proof-first exit 0，将三项不可变原左右上下文、候选、当前相邻双侧精确片段及所有匹配位置保存在外置证据；aq/ar有旧全源baseline，115仅有候选版本内原上下文而无完整旧源baseline，等总控判断语义唯一，不能把隔离relocate视作真实授权写入。P7-response-deps-first exit 0，14条RESPONSE中的依赖 ID 均可在状态中找到，同一问题对应多个不同响应项及依赖，不能按问题名整体合并。
+
+P7-local-context-preview-first/second 在新隔离 SQLite 分别保存87条局部插件注释并读回、核CAS；first以拆行重组未保留原换行，仅作失败设计证据，second改为逐字保留原换行，P7-local-context-consume-first 用隔离注册真实 Server.read_context 读取87条、P7-local-context-feedback-first 读取87条及21条open批注，均 exit 0。这些条目以source/other、精确相邻文本及源行记录，语义范围全部标待核，不声称已把作者要求正确分类或可删除注释；孤立END及其他机器注释仍保留。p7-shared-tests-first exit 0：同一实际行中两个候选迁入同一个块，模拟转换后接收一项，另一项版本和真实定位仍有效；使用隔离FakeHost，不作为正常Development组合通过。
+
+只读比较 v0.9.60 与当前实现：review_host_migration、registry、edit未变，可在实际存在合格旧宿主时继续用相同审核迁移保护；review_host_legacy 新增的 profile-metadata/profile-check/retired-review-header 和 profile_transition_check 在旧版不存在。不能用旧legacy宽事务假装具备资料权威校验，也不能仅靠离线文件CAS证明其他活Code进程无脏缓冲。实际宿主资格/草稿仍未核，资料源头切换与局部机器注释消除仍未完成。
+
 现任执行 local/01a20284-4ad8-70b1-87ff-61225eaec6aa；P 返修 1。总控移交产品/测试/UI/隔离配置/Git 租约，仅修迁移冲突写入边界；真实论文和真实资料库仍无写租约。用户已明确由代理一次性迁移，完成验证后再发行安装；本阶段不重载、不重启、不发行。
 
 只读调查基于 controller-p7-preview1 冻结副本，HostSession 显式禁用。P7-analysis-first/second/third 均 exit 0，脚本、process、stdout/stderr 和逐项结果保存在 D:/latex-writing-checks/paper-profile-20261123/P7-analysis*。68 个待审/返修项中 65 项现有精确锚点可核：以最近合法独立行边界构造的 65 个候选块互不交叠，纯内存 prepare 全部成功，最大 12 行；这不是现有迁移器支持的映射，也不是源写入或完整迁移通过。原 29 项宽段落范围交叠实际分 7 组，原始精确编辑片段无交叠；bg/bh 两处行内插入和 dy/dz/ea/ef 四处边界可在保留精确偏移下置于独立行块。aq/ar/115 原文均为空插入、120 字符左右上下文不能同时匹配：前两项仅左上下文各唯一，115 仅右上下文唯一，单侧证据不足以确定插入点，不可猜测或静默丢弃。

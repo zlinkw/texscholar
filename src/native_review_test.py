@@ -724,6 +724,25 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(anchor['start'], len('Before '))
         self.assertEqual(anchor['start'], anchor['end'])
 
+    def test_migration_shared_line_accept_preserves_other_item(self):
+        from review_migration import preview, prepare
+        source = self.root / 'main.tex'
+        source.write_bytes(b'\\documentclass{article}\n\\begin{document}\nAlpha is clear. Beta is precise.\n\\end{document}\n')
+        one = self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'Alpha is clear.', 'after':'Alpha is clearer.'})['id']
+        two = self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'Beta is precise.', 'after':'Beta is more precise.'})['id']
+        r = self.review(); packet = preview(r)
+        self.assertEqual(packet['conflicts'], [])
+        prepared = prepare(r, packet)
+        self.assertEqual(prepared['state']['edits'][one]['block_id'], prepared['state']['edits'][two]['block_id'])
+        for name, raw in prepared['sources'].items(): (self.root / name).write_bytes(raw)
+        (self.root / '.codex-review' / 'state.json').write_bytes(prepared['state_raw'])
+        r = Review(self.root, '.codex-review/state.json', 'missing-git')
+        first = r.state['edits'][one]['versions'][-1]; second = r.state['edits'][two]['versions'][-1]
+        updated, _ = r.decide([one], [], {one:first}); r.persist(updated, digest(r.raw))
+        r = Review(self.root, '.codex-review/state.json', 'missing-git')
+        self.assertEqual(r.state['edits'][two]['versions'][-1], second)
+        self.assertTrue(r.inspect(two, source=True)['source_match'])
+
     def test_migration_refuses_stale_preview_and_existing_sidecar(self):
         from review_migration import preview, prepare
         self.proposal(); r = self.review(); packet = preview(r)
