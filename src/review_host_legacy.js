@@ -34,6 +34,25 @@ function roleBody(raw, required) {
     return lines.slice(0,starts[0]).join('') + lines.slice(ends[0]+1).join('');
 }
 
+function profileBody(raw, names) {
+    const allowed = new Set(['CODEX-FILE-ROLES','CODEX-RULES','CODEX-WRITING-PROFILE']);
+    if (!Array.isArray(names) || !names.length || new Set(names).size !== names.length || names.some(name => !allowed.has(name)))
+        throw new Error('待迁移注释块类型无效。');
+    const lines = utf8(raw).split(/(?<=\n)/), spans = [];
+    for (const name of names) {
+        const starts = [], ends = [];
+        lines.forEach((line,i) => {const value=line.replace(/\r?\n$/,''); if (value === '% ' + name + '-BEGIN') starts.push(i); if (value === '% ' + name + '-END') ends.push(i);});
+        if (starts.length !== 1 || ends.length !== 1 || starts[0] >= ends[0] ||
+            lines.slice(0,starts[0]).some(line => line.trim() && !line.trimStart().startsWith('%')) ||
+            lines.slice(starts[0],ends[0]+1).some(line => !line.startsWith('%')))
+            throw new Error('待迁移块必须是唯一、完整的顶部插件注释。');
+        spans.push([starts[0],ends[0]+1]);
+    }
+    spans.sort((a,b)=>a[0]-b[0]);
+    if (spans.some((span,i)=>i && span[0] < spans[i-1][1])) throw new Error('待迁移注释块重叠。');
+    return lines.filter((_,i)=>!spans.some(([a,b])=>i>=a && i<b)).join('');
+}
+
 function legacyPlan(root, commit) {
     root = fs.realpathSync(root);
     if (!/^[a-f0-9]{64}$/.test(commit)) throw new Error('旧审核事务身份无效。');
@@ -46,12 +65,18 @@ function legacyPlan(root, commit) {
 
 function checkedPlan(root, plan) {
     root = fs.realpathSync(root);
-    if (!['legacy-review','legacy-recovery','role-metadata'].includes(plan.kind) || !Array.isArray(plan.files) || !Array.isArray(plan.checks)) throw new Error('旧审核事务计划无效。');
+    if (!['legacy-review','legacy-recovery','role-metadata','profile-metadata','profile-check'].includes(plan.kind) || !Array.isArray(plan.files) || !Array.isArray(plan.checks)) throw new Error('旧审核事务计划无效。');
     const owner = {relative:plan.owner,file:regular(root,plan.owner,'.tex'),before:decode(plan.owner_before),after:decode(plan.owner_after)};
-    const old = plan.kind === 'role-metadata' ? null : ownerParts(owner.before), final = plan.kind === 'role-metadata' ? null : ownerParts(owner.after);
+    const old = ['role-metadata','profile-metadata','profile-check'].includes(plan.kind) ? null : ownerParts(owner.before), final = ['role-metadata','profile-metadata','profile-check'].includes(plan.kind) ? null : ownerParts(owner.after);
     if (plan.kind === 'role-metadata') {
         if (plan.owner_intent !== null || plan.files.length || roleBody(owner.before,false) !== roleBody(owner.after,true))
             throw new Error('文件角色登记不能改写正文。');
+    } else if (plan.kind === 'profile-check') {
+        if (plan.owner_intent !== null || plan.files.length || !owner.before.equals(owner.after))
+            throw new Error('论文资料核验不能修改源文件。');
+    } else if (plan.kind === 'profile-metadata') {
+        if (plan.owner_intent !== null || plan.files.length || profileBody(owner.before,plan.remove) !== utf8(owner.after))
+            throw new Error('论文资料迁移只能移除精确核对的顶部插件注释块。');
     } else if (old.header !== final.header || ![1,2].includes(final.state?.schema) || final.state?.transaction) throw new Error('旧审核事务改变了作者状态头或未完成最终状态。');
     else if (plan.kind === 'legacy-recovery') {
         const tr = old.state?.transaction;
@@ -90,13 +115,20 @@ function checkedPlan(root, plan) {
     return {root,owner,files,checks};
 }
 
-async function applyLegacy(vscode, registry, root, generation, commit, rolePlan) {
+async function applyLegacy(vscode, registry, root, generation, commit, rolePlan, context) {
     if (!vscode.workspace.isTrusted) throw new Error('请先信任论文工作区。');
     root = fs.realpathSync(root);
     const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root));
     if (!folder || !samePath(fs.realpathSync(folder.uri.fsPath),root)) throw new Error('事务不属于当前受信任论文工作区。');
-    if (rolePlan && rolePlan.kind !== 'role-metadata') throw new Error('文件角色请求无效。');
+    if (rolePlan && !['role-metadata','profile-metadata','profile-check'].includes(rolePlan.kind)) throw new Error('文件角色请求无效。');
     const {owner,files,checks} = rolePlan ? checkedPlan(root,rolePlan) : legacyPlan(root,commit), all = [owner,...files,...checks];
+    if (rolePlan?.kind === 'profile-metadata') {
+        const cfg = vscode.workspace.getConfiguration('localLatex');
+        const python = cfg.get('pythonPath') || require('./tools').discover(key => cfg.get(key)).found.pythonPath;
+        if (!python || !context?.globalStorageUri?.fsPath) throw new Error('缺少可信的论文资料目录或 Python；未修改源文件。');
+        await require('./backup').run(python, ['-X','utf8',path.join(__dirname,'profile_transition_check.py')], root,
+            JSON.stringify({root,storage:context.globalStorageUri.fsPath,plan:rolePlan}));
+    }
     for (const item of all) {
         if (!fs.readFileSync(item.file).equals(item.before)) throw new Error('审核文件已变化：' + item.relative);
         const open = vscode.workspace.textDocuments.find(doc => doc.uri.scheme === 'file' && samePath(doc.uri.fsPath,item.file));

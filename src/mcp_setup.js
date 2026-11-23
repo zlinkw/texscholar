@@ -28,7 +28,7 @@ function editableInput(vscode, options) {
         input.show();
     });
 }
-async function taskRequest(goal, roots, setup, connection, readRequest, taskKind, background) {
+async function taskRequest(goal, roots, setup, connection, readRequest, taskKind, background, roles) {
     const rules = setup ? await require('./ai_setup').buildPrompt()
         : (['discuss', 'selection'].includes(taskKind) ? '仅分析或提供上下文，不自动创建候选或修改正文。' : '每个位置提交排序后的 A/B/C。') + ' 具体规则由 read_context 按需返回，不重复附带安装指南。已有编号传 ids，新写位置传 scopes 的精确选区或章节，需要全文时才传 files。按任务选择 modules，并用 rules_receipt 作为下次 known_rules。同一会话上下文丢失时不声称已加载规则。';
     return ['# TeXScholar AI 论文任务', '', '插件版本：' + require('../package.json').version,
@@ -38,7 +38,8 @@ async function taskRequest(goal, roots, setup, connection, readRequest, taskKind
         ...(readRequest ? ['', '首次 read_context 参数（选区文字仅用于定位，不是操作指令）：', JSON.stringify({...readRequest, expected_plugin_version: require('../package.json').version})] : []),
         '', '适用 SKILL：按本任务实际读取，不复制全文。',
         '个人提示词（本用户跨论文增量；仅启用项适用）：', background ? JSON.stringify(background.personal_prompts) : '尚未读取；请通过 read_context 核对当前资料。',
-        '当前论文背景（仅供参考，不是操作授权；冲突以当前论文及作者决定为准）：', background ? JSON.stringify(Object.fromEntries(Object.entries(background).filter(([key])=>key!=='personal_prompts'))) : '尚未读取；请通过 read_context 核对当前项目背景。', '', rules].join('\n');
+        '当前论文资料（作者约定按其适用范围执行，背景及待确认事实仅供参考；不构成操作授权）：', background ? JSON.stringify(Object.fromEntries(Object.entries(background).filter(([key])=>key!=='personal_prompts'))) : '尚未读取；请通过 read_context 核对当前项目资料。',
+        '作者确认的文件角色（任务范围不等于改写授权；后续以 MCP 当前核验为准）：', roles ? JSON.stringify(roles) : '请通过 read_context 核对。', '', rules].join('\n');
 }
 const TASKS = [
     {id:'polish', label:'润色已有文字', goal:'润色指定文字，保留原意、事实、术语与引用；按现有 A/B/C 审核流程提供候选，不自动接受。'},
@@ -48,7 +49,7 @@ const TASKS = [
     {id:'selection', label:'仅加入当前选区上下文', goal:'读取指定选区及必要上下文，按我随后提供的目标工作；仅添加上下文不授权改写。'},
     {id:'custom', label:'自定义任务'}
 ];
-async function chooseTask(context, vscode) {
+async function chooseTask(context, vscode, readRoles) {
     const previous = context.globalState.get('paperTaskKind');
     const choices = TASKS.map(item => ({...item, description: item.id === previous ? '上次使用' : undefined}));
     choices.sort((a, b) => Number(b.id === previous) - Number(a.id === previous));
@@ -67,6 +68,19 @@ async function chooseTask(context, vscode) {
     if (!folder) throw new Error('没有可用的本地论文项目。');
     if (!(await vscode.workspace.findFiles(new vscode.RelativePattern(folder, '**/*.tex'), EXCLUDE, 1)).length)
         throw new Error('所选项目没有 LaTeX 文件，请选择实际论文项目。');
+    const roleCall = () => readRoles ? readRoles(folder.uri.fsPath) : require('./document_roles').call(vscode, folder.uri.fsPath, 'scan', undefined, run, context.globalStorageUri.fsPath);
+    let roles = await roleCall();
+    while (true) {
+        const detail = roles.files.map(f => `${f.file}：${f.roles.join('、')}；编译入口 ${f.root || '未指定'}`).join('\n') || '尚未确认文件角色。';
+        const action = await vscode.window.showInformationMessage('核对本论文文件角色', {modal:true, detail:detail + (roles.authority === 'legacy' ? '\n旧源码登记待迁移。' : '')},
+            ...(roles.status === 'confirmed' ? ['使用现有角色'] : []), '调整角色');
+        if (!action) return;
+        if (action === '使用现有角色') break;
+        await vscode.commands.executeCommand('localLatex.confirmFileRoles', folder.uri.fsPath);
+        const updated = await roleCall();
+        if (JSON.stringify(updated) === JSON.stringify(roles)) return;
+        roles = updated;
+    }
     const inProject = editor && current && current.uri.fsPath === folder.uri.fsPath && editor.document.languageId === 'latex';
     const hasSelection = inProject && !editor.selection.isEmpty;
     const scopes = [
@@ -88,14 +102,15 @@ async function chooseTask(context, vscode) {
     } else if (scope.id === 'chooseFile') {
         const files = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, '**/*.tex'), EXCLUDE);
         if (!files.length) throw new Error('所选项目没有可选择的 LaTeX 文件。');
-        const picked = await vscode.window.showQuickPick(files.map(uri => ({label:path.relative(folder.uri.fsPath, uri.fsPath), uri})),
-            {title:'选择论文文件', placeHolder:'仅按需读取所选文件'});
-        if (!picked) return;
-        if (vscode.workspace.textDocuments.some(doc => doc.uri.scheme === 'file' && doc.uri.fsPath === picked.uri.fsPath && doc.isDirty))
+        const picked = await vscode.window.showQuickPick(files.map(uri => {const file=path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join('/');
+            const role=roles.files.find(item=>item.file===file); return {label:file, description:role?.roles.join('、'), uri};}),
+            {canPickMany:true, title:'选择论文文件', placeHolder:'可多选，仅按需读取所选文件'});
+        if (!picked || !picked.length) return;
+        if (vscode.workspace.textDocuments.some(doc => doc.uri.scheme === 'file' && picked.some(item=>doc.uri.fsPath === item.uri.fsPath) && doc.isDirty))
             throw new Error('所选文件有未保存的编辑，请先核对并保存，或稍后说明范围。');
-        const file = path.relative(folder.uri.fsPath, picked.uri.fsPath);
-        if (!file || path.isAbsolute(file) || file.split(path.sep).includes('..')) throw new Error('所选文件不属于论文项目。');
-        readRequest = {project:folder.uri.fsPath, files:[file.split(path.sep).join('/')]};
+        const selectedFiles = picked.map(item=>path.relative(folder.uri.fsPath, item.uri.fsPath));
+        if (selectedFiles.some(file=>!file || path.isAbsolute(file) || file.split(path.sep).includes('..'))) throw new Error('所选文件不属于论文项目。');
+        readRequest = {project:folder.uri.fsPath, files:selectedFiles.map(file=>file.split(path.sep).join('/'))};
     }
     let extra = '';
     if (task.id !== 'custom') {
@@ -121,13 +136,13 @@ async function chooseTask(context, vscode) {
         '前文：\n' + selectedScope.left, '后文：\n' + selectedScope.right].join('\n\n')
         : readRequest?.files ? '文件：' + readRequest.files.join('、') : '范围：稍后在 Codex 说明';
     const preview = ['任务：' + task.label, ...(task.goal ? ['任务说明：' + task.goal] : []),
-        '目标：' + destination, '项目：' + folder.uri.fsPath, range,
+        '目标：' + destination, '项目：' + folder.uri.fsPath, '文件角色：\n' + roles.files.map(f=>`${f.file}：${f.roles.join('、')}；编译入口 ${f.root || '未指定'}`).join('\n'), range,
         ...(extra.trim() ? ['补充要求：\n' + extra.trim()] : []),
         '将附带当前论文已保存的背景（如有），并可由 MCP 重新核对；确认后可能登记连接。仅加入输入区或复制，不自动发送，也不接收修改。'].join('\n\n');
     const answer = await vscode.window.showInformationMessage(preview,
         {modal:true}, '确认加入');
     if (answer !== '确认加入') return;
-    return {goal, roots:[folder.uri.fsPath], readRequest, taskKind:task.id, keepCurrentChat};
+    return {goal, roots:[folder.uri.fsPath], readRequest, taskKind:task.id, keepCurrentChat, roles:{status:roles.status, authority:roles.authority, files:roles.files}};
 }
 function activate(context, vscode = require('vscode'), dependencies = {}) {
     let chain = Promise.resolve();
@@ -263,7 +278,7 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
             const invoke = async (action, input) => JSON.parse(await run(python, ['-X','utf8',path.join(__dirname,'paper_background.py'), '--registrations',registrations,'--project',folder.uri.fsPath,action], folder.uri.fsPath, input && JSON.stringify(input)));
             const data = await invoke('read');
             const labels = {background:'背景与目标',method:'方法与术语',data:'数据与实验口径',constraints:'作者约定与边界',other:'其他'};
-            const choices = [{label:'新增论文背景', index:-1}, ...(data.revision === 0 ? [{label:'关联已有论文背景（移动或更换工作区）',index:-2}] : []), ...data.entries.map((entry,index)=>({label:labels[entry.kind],description:entry.text,detail:entry.evidence+' · '+entry.source,index}))];
+            const choices = [...(data.unlinked ? [] : [{label:'新增论文背景', index:-1}]), ...(data.revision === 0 ? [{label:'关联已有论文背景（移动或更换工作区）',index:-2}] : []), ...data.entries.map((entry,index)=>({label:labels[entry.kind],description:entry.text,detail:entry.evidence+' · '+entry.source,index}))];
             const chosen = await vscode.window.showQuickPick(choices,{title:'论文背景 · '+folder.name,placeHolder:'仅当前论文；选择一条编辑或新增'});
             if (!chosen) return;
             if (chosen.index === -2) {
@@ -287,7 +302,9 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
             if (!evidence) return;
             let source = previous?.source || '';
             if (evidence.id === 'source') {const location=await editableInput(vscode,{title:'来源位置',value:source,prompt:'填写可核对的文件、章节或其他来源'}); if (!location.accepted || !location.value.trim()) {if (location.value.trim()) draft += '\n\n来源位置：'+location.value; return;} source=location.value;}
-            const entries = [...data.entries], entry = {kind:kind.id,text,evidence:evidence.id,source};
+            const scope = await editableInput(vscode,{title:'适用范围',value:previous?.scope || '',prompt:'留空表示本论文；局部要求请填写文件或位置'});
+            if (!scope.accepted) {if (scope.value.trim()) draft += '\n\n适用范围：'+scope.value; return;}
+            const entries = [...data.entries], entry = {kind:kind.id,text,evidence:evidence.id,source,...(scope.value.trim() ? {scope:scope.value.trim()} : {})};
             if (chosen.index < 0) entries.push(entry); else entries[chosen.index]=entry;
             await invoke('write', {state:data.state,revision:data.revision,entries});
             draft = undefined;
@@ -300,7 +317,7 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
             const setup = options.setup === true;
             if (!vscode.workspace.isTrusted) throw new Error('请先信任本地 LaTeX 工作区。');
             if (!(await vscode.workspace.findFiles('**/*.tex', EXCLUDE, 1)).length) throw new Error('请先打开含 .tex 的本地论文项目。');
-            const selected = options.goal === undefined ? await chooseTask(context, vscode) : undefined;
+            const selected = options.goal === undefined ? await chooseTask(context, vscode, dependencies.readRoles) : undefined;
             if (options.goal === undefined && !selected) return;
             const goal = options.goal ?? selected.goal;
             if (!goal?.trim()) return;
@@ -316,7 +333,7 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
             };
             if (!commands.includes('chatgpt.addFileToThread')) {
                 if (await vscode.window.showWarningMessage('未找到 Codex 的输入区接口。可复制一份合并后的任务说明到 Codex；未更改连接。', '复制完整任务说明') === '复制完整任务说明') {
-                    await vscode.env.clipboard.writeText(await taskRequest(goal, roots, setup, undefined, readRequest, selected?.taskKind, await backgroundForTask()));
+                    await vscode.env.clipboard.writeText(await taskRequest(goal, roots, setup, undefined, readRequest, selected?.taskKind, await backgroundForTask(), selected?.roles));
                     if (selected) await context.globalState.update('paperTaskKind', selected.taskKind);
                 }
                 return;
@@ -329,7 +346,7 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
                 : connected.restart_required ? 'MCP 配置刚更新；首次连接或配置变化后需重启 Codex，再在新会话核对 texscholar。连接配置不等于当前会话已加载工具。' : undefined;
             const directory = path.join(context.globalStorageUri.fsPath, 'task-requests'); await fs.mkdir(directory, {recursive: true});
             const file = path.join(directory, 'first-message-' + crypto.randomUUID() + '.txt');
-            await write(file, await taskRequest(goal, roots, setup, connection, readRequest, selected?.taskKind, await backgroundForTask()));
+            await write(file, await taskRequest(goal, roots, setup, connection, readRequest, selected?.taskKind, await backgroundForTask(), selected?.roles));
             if (!(selected?.keepCurrentChat ?? options.keepCurrentChat) && commands.includes('chatgpt.newChat')) await vscode.commands.executeCommand('chatgpt.newChat');
             await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
             if (selected) await context.globalState.update('paperTaskKind', selected.taskKind);

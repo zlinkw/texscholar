@@ -163,10 +163,11 @@ test('task choices retain exact selection, project identity and distinct instruc
     const vscode = {RelativePattern:class {}, workspace:{workspaceFolders:[folder], getWorkspaceFolder:() => folder, findFiles:async () => ['main.tex']},
         commands:{getCommands:async () => ['chatgpt.addFileToThread']},
         window:{activeTextEditor:editor, showQuickPick:async choices => {if (choices[0].edit === false) return choices[0]; const id = picks.shift(); return choices.find(c => c.id === id);},
-            showInputBox:async () => '', showInformationMessage:async value => {preview=value; return '确认加入';}}};
+            showInputBox:async () => '', showInformationMessage:async value => {if (value === '核对本论文文件角色') return '使用现有角色'; preview=value; return '确认加入';}}};
     const context = {globalState:{get:() => undefined}};
+    const readRoles = async () => ({status:'confirmed',authority:'paper',files:[{file:'main.tex',roles:['manuscript'],root:'main.tex'}]});
     picks = ['polish','selection'];
-    const polish = await chooseTask(context, vscode);
+    const polish = await chooseTask(context, vscode, readRoles);
     assert.equal(polish.readRequest.scopes[0].quote, '原文');
     assert(preview.includes('/paper/main.tex') || preview.includes('main.tex'));
     assert(preview.includes('保留原意'));
@@ -175,25 +176,35 @@ test('task choices retain exact selection, project identity and distinct instruc
     const packet = await taskRequest(polish.goal, polish.roots, false, undefined, polish.readRequest, polish.taskKind);
     assert(packet.includes('read_context') && packet.includes('expected_plugin_version') && packet.includes('"quote":"原文"'));
     picks = ['discuss','later'];
-    const discuss = await chooseTask(context, vscode);
+    const discuss = await chooseTask(context, vscode, readRoles);
     assert.notEqual(discuss.goal, polish.goal);
     assert((await taskRequest(discuss.goal, discuss.roots, false, undefined, undefined, discuss.taskKind)).includes('不自动创建候选'));
+    const oldFind = vscode.workspace.findFiles, oldPick = vscode.window.showQuickPick;
+    vscode.workspace.findFiles = async () => [{fsPath:'/paper/main.tex'}, {fsPath:'/paper/reply.tex'}];
+    vscode.workspace.textDocuments = [];
+    vscode.window.showQuickPick = async (choices, options) => options?.canPickMany ? choices : oldPick(choices, options);
+    picks = ['response','chooseFile'];
+    const multi = await chooseTask(context, vscode, async () => ({status:'confirmed',authority:'paper',files:[
+        {file:'main.tex',roles:['manuscript'],root:'main.tex'}, {file:'reply.tex',roles:['response'],root:null}]}));
+    assert.deepEqual(multi.readRequest.files, ['main.tex','reply.tex']);
+    assert((await taskRequest(multi.goal, multi.roots, false, undefined, multi.readRequest, multi.taskKind, undefined, multi.roles)).includes('reply.tex'));
+    vscode.workspace.findFiles = oldFind; vscode.window.showQuickPick = oldPick;
     picks = ['custom','later']; vscode.window.showInputBox = async () => undefined;
-    assert.equal(await chooseTask(context, vscode), undefined);
+    assert.equal(await chooseTask(context, vscode, readRoles), undefined);
     vscode.window.showInputBox = async () => '请讨论局限';
     for (const id of ['rewrite','response','selection','custom']) {
         picks = id === 'selection' ? [id] : [id,'later'];
-        const value = await chooseTask(context, vscode);
+        const value = await chooseTask(context, vscode, readRoles);
         assert(value && value.goal.length, id + ' has a real instruction');
         if (id === 'selection') assert.equal(value.readRequest.scopes[0].quote,'原文');
         if (id === 'response') assert(value.goal.includes('审稿意见'));
     }
     editor.selection.isEmpty = true;
     picks = ['selection'];
-    await assert.rejects(chooseTask(context, vscode), /请先.*选中文字/);
+    await assert.rejects(chooseTask(context, vscode, readRoles), /请先.*选中文字/);
     editor.document.isDirty = true;
     picks = ['polish','file'];
-    await assert.rejects(chooseTask(context, vscode), /未保存/);
+    await assert.rejects(chooseTask(context, vscode, readRoles), /未保存/);
 });
 
 test('AI setup prompt is portable, complete and reuses one configuration/shortcut authority', async () => {
@@ -269,7 +280,8 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         globalState: {get: (key, fallback) => state.get(key) ?? fallback, update: async (key, value) => state.set(key, value)},
         workspaceState: {get: key => workspaceState.get(key), update: async (key, value) => workspaceState.set(key, value)}};
     try {
-        await require('./mcp_setup').activate(context, vscode, {scanClients: async () => ({available: true, clients: [{pid: process.pid, client: desktopClient ? 'desktop' : 'vscode'}]})}).ready;
+        await require('./mcp_setup').activate(context, vscode, {scanClients: async () => ({available: true, clients: [{pid: process.pid, client: desktopClient ? 'desktop' : 'vscode'}]}),
+            readRoles:async () => ({status:'confirmed',authority:'paper',files:[{file:'paper.tex',roles:['manuscript'],root:'paper.tex'}]})}).ready;
         assert(!notices.some(text => text.includes('MCP 运行版本待核验')), 'startup without a report is a quiet pending state');
         const start = handlers.get('localLatex.startPaperTask');
         await start({goal:''});
@@ -288,7 +300,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         const messages = vscode.window.showInformationMessage;
         let steps = ['discuss','later','无需补充，继续','加入当前聊天'];
         vscode.window.showQuickPick = async options => {const item=steps.shift(); return options.find(option => option.id === item || option.label === item);};
-        vscode.window.showInformationMessage = async (text, options) => options?.modal ? '确认加入' : messages(text);
+        vscode.window.showInformationMessage = async (text, options) => text === '核对本论文文件角色' ? '使用现有角色' : options?.modal ? '确认加入' : messages(text);
         await start();
         const prepared = await fs.readFile(calls.filter(c => c[0] === 'chatgpt.addFileToThread').at(-1)[1].fsPath,'utf8');
         assert(prepared.includes('先分析并讨论')); assert(prepared.includes('不自动创建候选'));

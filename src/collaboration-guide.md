@@ -33,14 +33,14 @@
 - 每个原文位置提交完整、实质不同且排序后的 A/B/C；不凑同义版本。确实不足三个合理选项时写 fewer_options_reason。普通单元最多一个自然段；公式、图注、表注单独处理。最小充分修改，不为一句重写整段；新写或实质重写内容一句一行。
 - 三方案共享真实事实、数值和限定条件，不编造实验、引文或因果。intent.goal/preserve 简述本次目的与保留内容，不新增计划审批；作者明确要求先确认时除外。reason 默认一句实际取舍，只有较长依据才另填 summary；after 始终完整。
 - 手改候选的 manually_edited 说明原理由和排名可能过时；返修使用实际保存内容重新排序，不照搬内部标记。当前旧候选和批注可被新版替换，但不能自动接收、覆盖已接收成果或手动正文。
-- 全局科研要求放顶部 CODEX-RULES，局部逻辑放对应段前。新格式的审核状态由插件保存在 `.codex-review/state.json` 和对象目录；旧格式继续读取已有 CODEX-REVIEW-STATE。不能双写，也不另建跟踪文档。详细格式请求 writing，问题关联请求 questions；角色结构、界面和备份分别请求 roles、interface、backup。
+- 本论文作者约定及局部适用范围保存在论文资料中；背景事实与作者明确约束分开，不把背景当作操作授权。旧源码中的规则在明确迁移前仍需读取。新格式的审核状态由插件保存在 `.codex-review/state.json` 和对象目录；旧格式继续读取已有 CODEX-REVIEW-STATE。不能双写，也不另建跟踪文档。详细格式请求 writing，问题关联请求 questions；角色结构、界面和备份分别请求 roles、interface、backup。
 - 只处理当前目标及必要依赖。跨章节判断补读相关内容；无证据结论标待核验。缺少当前插件版本信息或版本不匹配时重启实际 MCP 宿主，不改用另一个版本 CLI。
 
 ## 文件角色细节
 
 每次论文任务先读 read_context 返回的 file_roles。插件按实际 TeX 内容、documentclass、input/include/subfile/import 和 !TeX root 提供建议，不要求特定文件名。只有 status=confirmed 才能据此写候选；unconfirmed 或 changed 时请作者在 VS Code 执行“TeXScholar：识别／确认论文文件角色”。不要自行伪造确认、猜测用途或绕过 MCP 检查。首次新项目可在作者授权下先创建必要模板骨架，但不能将草稿直接冒充已接收正文。
 
-确认后项目只保留一个顶部 CODEX-FILE-ROLES-BEGIN/END 注释块，其中 JSON schema=1 的 files 数组逐项记录 file、roles、root，structure 保存用于检测变更的编译关系。file/root 均为项目相对路径，root=null 表示未指定编译入口。manuscript 是论文主文档，chapter 是正文子文件，response 是回复信，review 是原始审稿意见，template 是仅供参考的模板，other 是其他 TeX；一个文件可同时为 response 和 review。不要把结构快照当正文、批注或候选，也不另建 Markdown／JSON 登记副本。该稳定配置不同于唯一审核状态，不初始化审核、不改变编号或审核决定。
+文件角色由插件本地论文资料保存，包含登记拥有文件和 files，structure 保存结构快照；file/root 均为项目相对路径，root=null 表示未指定编译入口。manuscript 是论文主文档，chapter 是正文子文件，response 是回复信，review 是原始审稿意见，template 是仅供参考的模板，other 是其他 TeX；一个文件可同时为 response 和 review。AI 仅在作者明确要求后以 read_file_roles 读取当前版本和结构，再用 write_file_roles 保存作者确认的完整角色；未经确认不猜角色、不搬迁 owner。旧源码角色块在明确迁移前仍按原契约读取，不会自动清除；与新登记冲突时停止核对。角色登记不初始化审核、不改变编号或审核决定。
 
 增删改名、documentclass、包含关系或 !TeX root 改变才需重新确认；普通正文润色、保存、接收和批注不重做首次确认。动态宏和共享子文件可能无法唯一解析，按作者实际指定入口，不做模糊自动配对。template 不作为论文改写目标；确实需改模板，先请作者在文件角色中调整用途。confirmed 映射也是插件选择审核 PDF 主文档的依据。
 

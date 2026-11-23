@@ -15,6 +15,25 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_ai_confirms_structured_roles_without_source_injection(self):
+        from document_roles import without_block
+        owner = self.root / 'main.tex'
+        owner.write_text(without_block(owner.read_text(encoding='utf-8')), encoding='utf-8')
+        server = self.server(); base = {'project':str(self.root)}
+        data = server.call('read_file_roles', base)
+        self.assertEqual(data['status'], 'unconfirmed')
+        spec = {'owner':'main.tex', 'previous_owner':data['owner'], 'previous_files':data['files'],
+                'owner_sha256':data['file_sha256']['main.tex'], 'structure':data['structure'],
+                'files':[{k: item[k] for k in ('file','roles','root')} for item in data['suggested']], 'revision':data['revision']}
+        before = owner.read_bytes()
+        saved = server.call('write_file_roles', {**base, 'spec':spec})
+        self.assertEqual(saved['revision'], 1)
+        self.assertEqual(owner.read_bytes(), before)
+        self.assertEqual(server.call('read_file_roles', base)['authority'], 'paper')
+        with self.assertRaises(ValueError):
+            server.call('write_file_roles', {**base, 'spec':spec})
+        self.assertEqual(owner.read_bytes(), before)
+
     def test_paper_roles_share_identity_without_overwriting_background(self):
         from paper_background import read, write, read_roles, write_roles
         storage = self.server().registrations.parent
@@ -26,11 +45,19 @@ class MCP(unittest.TestCase):
         self.assertEqual(read(storage, self.root, 'reply.tex')['entries'], [entry])
         write(storage, self.root, 'reply.tex', 1, [{**entry,'text':'更新的约定'}])
         self.assertEqual(read_roles(storage, self.root), saved)
+        self.assertEqual(read_roles(storage.parent / 'other-profile', self.root), {'revision':0, 'record':None})
+        different = self.root / 'other' / self.root.name
+        different.mkdir(parents=True)
+        self.assertEqual(read_roles(storage, different), {'revision':0, 'record':None})
         with self.assertRaisesRegex(ValueError, '角色已变化'):
             write_roles(storage, self.root, 'reply.tex', 0, record)
         with self.assertRaisesRegex(ValueError, '保留原拥有文件'):
             write_roles(storage, self.root, 'reply.tex', 1, {**record, 'owner':'reply.tex'})
         self.assertEqual(read_roles(storage, self.root), saved)
+        with self.assertRaisesRegex(ValueError, '未明确关联'):
+            read(storage, self.root, '.codex-review/state.json')
+        with self.assertRaisesRegex(ValueError, '未明确关联'):
+            write_roles(storage, self.root, '.codex-review/state.json', 1, record)
 
     def test_personal_prompts_are_shared_across_papers_and_revision_protected(self):
         server = self.server()
@@ -56,7 +83,7 @@ class MCP(unittest.TestCase):
         base = {'project':str(self.root), 'state':'reply.tex'}
         empty = server.call('read_paper_background', base)
         self.assertEqual(empty['revision'], 0)
-        entry = {'kind':'method','text':'本论文术语甲','evidence':'author','source':'作者说明'}
+        entry = {'kind':'method','text':'本论文术语甲','evidence':'author','source':'作者说明','scope':'main.tex 第 2 节'}
         saved = server.call('write_paper_background', {**base,'revision':0,'entries':[entry]})
         self.assertEqual(saved['revision'], 1)
         with self.assertRaisesRegex(ValueError, '背景已变化'):

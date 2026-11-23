@@ -10,6 +10,80 @@ from chktex_filter import ledger_lines
 
 
 class FileRoles(unittest.TestCase):
+    def test_paper_role_confirmation_preserves_sources_and_rejects_conflicts(self):
+        from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
+        from paper_background import read_roles
+        storage = self.root.parent / ('profile-' + self.root.name)
+        before = {p:p.read_bytes() for p in self.root.rglob('*.tex')}
+        data = scan(self.root, storage)
+        self.assertEqual(data['status'], 'unconfirmed')
+        spec = {**self.spec(data), 'revision':data['revision']}
+        with patch('review_host_client.HostSession', FakeHostSession):
+            saved = save(self.root, spec, storage)
+        self.assertEqual(saved['revision'], 1)
+        self.assertEqual(scan(self.root, storage)['status'], 'confirmed')
+        self.assertEqual(scan(self.root, storage)['authority'], 'paper')
+        self.assertEqual(selected_root(self.root, '章节/method.tex', storage)['root'], '任意名称.tex')
+        self.assertEqual({p:p.read_bytes() for p in before}, before)
+        with self.assertRaises(RoleError):
+            save(self.root, spec, storage)
+        self.assertEqual(read_roles(storage, self.root)['revision'], 1)
+        self.write('new.tex', 'Additional content.\n')
+        self.assertEqual(scan(self.root, storage)['status'], 'changed')
+
+    def test_legacy_source_role_is_not_implicitly_rewritten(self):
+        from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
+        storage = self.root.parent / ('profile-' + self.root.name)
+        with patch('review_host_client.HostSession', FakeHostSession):
+            save(self.root, self.spec())
+            data = scan(self.root, storage)
+            self.assertEqual(data['authority'], 'legacy')
+            before = (self.root / '任意名称.tex').read_bytes()
+            with self.assertRaisesRegex(RoleError, '旧角色登记'):
+                save(self.root, {**self.spec(data), 'revision':data['revision']}, storage)
+        self.assertEqual((self.root / '任意名称.tex').read_bytes(), before)
+
+    def test_only_explicit_matching_migration_verification_reads_pending_roles(self):
+        from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
+        from paper_background import write_roles
+        storage = self.root.parent / ('profile-' + self.root.name)
+        with patch('review_host_client.HostSession', FakeHostSession):
+            save(self.root, self.spec())
+        old = scan(self.root, storage)
+        record = {'owner':old['owner'], 'files':old['files'], 'structure':old['structure']}
+        write_roles(storage, self.root, old['review_owner'], 0, record)
+        with self.assertRaisesRegex(RoleError, '同时存在'):
+            scan(self.root, storage)
+        self.assertEqual(scan(self.root, storage, record)['authority'], 'paper-pending')
+        self.assertEqual(selected_root(self.root, '章节/method.tex', storage, record)['root'], '任意名称.tex')
+        with self.assertRaisesRegex(RoleError, '同时存在'):
+            scan(self.root, storage, {**record, 'owner':'letter.tex'})
+
+    def test_host_transition_requires_exact_rules_already_in_paper_profile(self):
+        import base64
+        from unittest.mock import patch
+        from review_host_test_support import FakeHostSession
+        from paper_background import write, write_roles
+        from profile_transition_check import verify
+        storage = self.root.parent / ('profile-' + self.root.name)
+        with patch('review_host_client.HostSession', FakeHostSession):
+            save(self.root, self.spec())
+        path = self.root / '任意名称.tex'
+        rules = '% CODEX-RULES-BEGIN\n% 必须保留数值。\n% CODEX-RULES-END\n'
+        path.write_text(rules + path.read_text(encoding='utf-8'), encoding='utf-8', newline='')
+        data = scan(self.root, storage)
+        record = {'owner':data['owner'], 'files':data['files'], 'structure':data['structure']}
+        write_roles(storage, self.root, data['review_owner'], 0, record)
+        plan = {'owner':data['owner'], 'owner_before':base64.b64encode(path.read_bytes()).decode(), 'remove':['CODEX-FILE-ROLES','CODEX-RULES']}
+        with self.assertRaisesRegex(ValueError, '缺少精确迁移'):
+            verify(self.root, storage, plan)
+        entry = {'kind':'constraints','text':rules,'evidence':'author','source':data['owner'] + ':CODEX-RULES'}
+        write(storage, self.root, data['review_owner'], 0, [entry])
+        self.assertTrue(verify(self.root, storage, plan)['verified'])
+
     def setUp(self):
         parent = Path(os.environ['SOURCE_REVIEW_FIXTURES']); parent.mkdir(parents=True, exist_ok=True)
         self.root = Path(tempfile.mkdtemp(prefix='roles-', dir=parent))

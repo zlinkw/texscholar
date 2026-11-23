@@ -3,11 +3,11 @@ const path = require('node:path'), fs = require('node:fs/promises'), crypto = re
 const {run} = require('./backup');
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,node_modules,clean_dir}/**';
 const LABELS = {manuscript: '论文主文档', chapter: '章节／正文子文件', response: '回复信', review: '原始审稿意见', template: '参考模板', other: '其他 TeX 文件'};
-async function call(vscode, repo, operation, input, execute = run) {
+async function call(vscode, repo, operation, input, execute = run, storage) {
     const cfg = vscode.workspace.getConfiguration('localLatex');
     const python = cfg.get('pythonPath') || require('./tools').discover(k => cfg.get(k)).found.pythonPath;
     if (!python) throw new Error('文件角色识别需要 Python 3.12+，请先配置本地工具。');
-    return JSON.parse(await execute(python, ['-X', 'utf8', path.join(__dirname, 'document_roles.py'), '--project', repo, operation], repo,
+    return JSON.parse(await execute(python, ['-X', 'utf8', path.join(__dirname, 'document_roles.py'), '--project', repo, ...(storage ? ['--storage', storage] : []), operation], repo,
         input === undefined ? undefined : JSON.stringify(input)));
 }
 function structuralText(text) {
@@ -16,8 +16,8 @@ function structuralText(text) {
     return (text.match(/^% CODEX-FILE-ROLES-BEGIN\r?\n[\s\S]*?^% CODEX-FILE-ROLES-END\r?$/gm) || []).join('\n') + '\n' +
         (text.match(/\\(?:documentclass\s*(?:\[[^\]]*\]\s*)?\{[^{}]*\}|(?:input|include|subfile)\s*(?:\{[^{}]*\}|[^\s{}%]+)|(?:subimport|import)\s*\{[^{}]*\}\s*\{[^{}]*\})|^\s*%\s*!\s*TeX\s+root\s*=.*$/gmi) || []).join('\n');
 }
-async function confirmedRoot(vscode, repo, file, execute = run) {
-    const data = await call(vscode, repo, 'scan', undefined, execute);
+async function confirmedRoot(vscode, repo, file, execute = run, storage) {
+    const data = await call(vscode, repo, 'scan', undefined, execute, storage);
     if (data.status === 'changed') throw new Error('文件或编译关系已变化，请先执行“识别／确认论文文件角色”，未猜测 PDF 入口。');
     if (data.status !== 'confirmed') return;
     const entry = data.files.find(item => item.file === path.relative(repo, file).split(path.sep).join('/'));
@@ -29,7 +29,7 @@ function activate(context, vscode = require('vscode'), execute = run) {
     let chain = Promise.resolve(), prompting = false;
     const trusted = () => vscode.workspace.isTrusted;
     async function scan(repo) {
-        return call(vscode, repo, 'scan', undefined, execute);
+        return call(vscode, repo, 'scan', undefined, execute, context.globalStorageUri?.fsPath);
     }
     function clean(repo) {
         for (const doc of vscode.workspace.textDocuments) if (doc.isDirty && doc.uri.scheme === 'file'
@@ -52,13 +52,13 @@ function activate(context, vscode = require('vscode'), execute = run) {
             });
             let ownerChoice = {file: data.owner || entries.find(e => e.roles.includes('manuscript'))?.file || entries[0].file};
             while (true) {
-                const detail = '保存位置：' + ownerChoice.file + ' 顶部注释\n\n' + entries.map(e => e.file + '\n  ' + e.roles.map(r => LABELS[r]).join('、') + ' ｜ 编译：' + (e.root || '未指定／不编译')).join('\n\n')
+                const detail = '角色登记拥有文件：' + ownerChoice.file + '；保存到插件论文资料\n\n' + entries.map(e => e.file + '\n  ' + e.roles.map(r => LABELS[r]).join('、') + ' ｜ 编译：' + (e.root || '未指定／不编译')).join('\n\n')
                     + '\n\n自动识别只是建议。原始意见与回复可以同文件；动态宏／共享子文件的入口请核对。不会修改正文或审核决定。';
                 const action = await vscode.window.showInformationMessage('确认论文文件角色与编译入口', {modal: true, detail}, '确认并保存', '逐项调整');
                 if (action === '确认并保存') break;
                 if (action !== '逐项调整') return;
                 const selected = await vscode.window.showQuickPick([...entries.map(e => ({label: e.file, file: e.file})),
-                    {label: '调整顶部登记拥有文件', owner: true}], {title: '选择要调整的文件'});
+                    {label: '调整角色登记拥有文件', owner: true}], {title: '选择要调整的文件'});
                 if (!selected) continue;
                 if (selected.owner) {
                     if (data.owner) {vscode.window.showInformationMessage('已有登记继续使用 ' + data.owner + '，不会自动搬移或创建重复登记。'); continue;}
@@ -79,9 +79,9 @@ function activate(context, vscode = require('vscode'), execute = run) {
             clean(repo);
             const owner = path.join(repo, ownerChoice.file), raw = await fs.readFile(owner);
             const result = await call(vscode, repo, 'save', {owner: ownerChoice.file, previous_owner: data.owner,
-                previous_files: data.files, owner_sha256: crypto.createHash('sha256').update(raw).digest('hex'), structure: data.structure, files: entries}, execute);
+                previous_files: data.files, owner_sha256: crypto.createHash('sha256').update(raw).digest('hex'), structure: data.structure, files: entries, revision:data.revision}, execute, context.globalStorageUri?.fsPath);
             notifications.delete(repo);
-            vscode.window.showInformationMessage('文件角色已确认并保存至 ' + result.owner + ' 顶部注释。未接收候选、初始化审核批次或操作 Git。');
+            vscode.window.showInformationMessage('文件角色已确认并保存至论文资料，登记拥有文件：' + result.owner + '。未接收候选、初始化审核批次或操作 Git。');
             return result;
         } finally {prompting = false;}
     }
@@ -131,12 +131,12 @@ function activate(context, vscode = require('vscode'), execute = run) {
     const handle = (file, force) => changed(file, force).catch(error => vscode.window.showErrorMessage(error.message));
     context.subscriptions.push(watcher, watcher.onDidChange(file => handle(file, false)), watcher.onDidCreate(file => handle(file, true)), watcher.onDidDelete(file => handle(file, true)),
         vscode.workspace.onDidChangeWorkspaceFolders(() => initialize().catch(error => vscode.window.showErrorMessage(error.message))),
-        vscode.commands.registerCommand('localLatex.confirmFileRoles', async () => {
+        vscode.commands.registerCommand('localLatex.confirmFileRoles', async requested => {
             const folders = (vscode.workspace.workspaceFolders || []).filter(f => f.uri.scheme === 'file');
-            const folder = folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick({placeHolder: '选择要识别文件角色的论文项目'});
+            const folder = requested ? folders.find(f => require('./tools').samePath(f.uri.fsPath, requested)) : folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick({placeHolder: '选择要识别文件角色的论文项目'});
             if (folder) try {return await confirm(folder.uri.fsPath);} catch (error) {vscode.window.showErrorMessage(error.message);}
         }));
     return {ready: initialize().catch(error => vscode.window.showErrorMessage('文件角色识别未完成：' + error.message)), confirm,
         whenIdle: () => chain};
 }
-module.exports = {activate, confirmedRoot, structuralText};
+module.exports = {activate, confirmedRoot, structuralText, call};

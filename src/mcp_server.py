@@ -49,7 +49,7 @@ FULFILLMENT = schema({'request': STRING, 'request_version': STRING, 'request_tex
     ['request','request_version','request_text','option','start','end','quote','explanation','status'])
 EVIDENCE_SCOPES = {'type':'array', 'items':schema({'file':STRING, 'start':{'type':'integer'}, 'end':{'type':'integer'}}, ['file','start','end'])}
 BACKGROUND_ENTRY = schema({'kind':{'type':'string','enum':['background','method','data','constraints','other']}, 'text':STRING,
-    'evidence':{'type':'string','enum':['author','source','unconfirmed']}, 'source':STRING}, ['kind','text','evidence','source'])
+    'evidence':{'type':'string','enum':['author','source','unconfirmed']}, 'source':STRING, 'scope':STRING}, ['kind','text','evidence','source'])
 PERSONAL_ENTRY = schema({'category':{'type':'string','enum':['writing','response','review','other']}, 'text':STRING, 'enabled':{'type':'boolean'}}, ['category','text','enabled'])
 READ = {**BASE, **RULES, 'ids': STRINGS, 'files': STRINGS, 'scopes': SCOPES, 'known_feedback': FEEDBACK_RECEIPTS, 'references': REFERENCES, 'evidence_scopes':EVIDENCE_SCOPES}
 FACT_EVIDENCE = schema({'option':{'type':'string','enum':['A','B','C']}, 'change_index':{'type':'integer'},
@@ -73,6 +73,8 @@ TOOLS = [
     ('read_feedback', 'Read missing feedback generations, grouped once per ID/version; every note retains its exact option/selection. Optional ids scope.', schema({**BASE, 'ids': STRINGS}, ['project', 'state']), True),
     ('read_paper_background', 'Read only this registered paper and exact review owner background; not an authorization or scientific verification.', schema(BASE, ['project','state']), True),
     ('write_paper_background', 'Replace this paper background only with the last read revision; record author/source/unconfirmed and never copy a paper, secrets or review state.', schema({**BASE, 'revision':{'type':'integer','minimum':0}, 'entries':{'type':'array','items':BACKGROUND_ENTRY}}, ['project','state','revision','entries']), False),
+    ('read_file_roles', 'Read exact registered project file roles and structure before author-confirmed changes.', schema(BASE, ['project']), True),
+    ('write_file_roles', 'Save only the complete author-confirmed file map, using the exact prior scan, owner file digest and revision; never infer author approval.', schema({**BASE, 'spec':{'type':'object'}}, ['project','spec']), False),
     ('read_personal_prompts', 'Read this VS Code profile’s personal cross-paper preferences; inherit general SKILL rules rather than copying them.', schema(BASE, ['project']), True),
     ('write_personal_prompts', 'Update this profile only when the author explicitly requests a cross-paper preference; pass exact profile_id and revision, preserve other entries.', schema({**BASE, 'profile_id':{'type':['string','null']}, 'revision':{'type':'integer','minimum':0}, 'entries':{'type':'array','items':PERSONAL_ENTRY}}, ['project','profile_id','revision','entries']), False),
     ('begin_review', 'Explicit new batch only, after protecting unbacked accepted results. Reuses an existing author-approved state header; never silently starts a batch.',
@@ -394,8 +396,9 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
     return result
 
 class Server:
-    def __init__(self, registrations):
+    def __init__(self, registrations, migration_record=None):
         self.registrations = Path(registrations)
+        self.migration_record = migration_record
 
     def project(self, requested):
         root = Path(requested).resolve(strict=True)
@@ -423,6 +426,19 @@ class Server:
         if name == 'submit_options':
             return self.submit(args)
         root, git = self.project(args['project'])
+        if name == 'read_file_roles':
+            result = scan_roles(root, self.registrations.parent)
+            result['file_sha256'] = {fact['file']:digest(relative_file(root, fact['file']).read_bytes()) for fact in result['structure']}
+            if result['owner']:
+                result['owner_sha256'] = digest(relative_file(root, result['owner']).read_bytes())
+            else:
+                result['owner_sha256'] = None
+            return result
+        if name == 'write_file_roles':
+            from document_roles import save as save_roles
+            if not isinstance(args.get('spec'), dict):
+                raise Conflict('请先读取完整角色登记并提供作者确认的内容。')
+            return save_roles(root, args['spec'], self.registrations.parent)
         if name in ('read_personal_prompts', 'write_personal_prompts'):
             from paper_background import read_personal, write_personal
             if name == 'read_personal_prompts':
@@ -467,7 +483,7 @@ class Server:
                     or not s['file'] or any(not isinstance(s[k], str) for k in ('quote', 'section', 'left', 'right') if k in s)
                     for s in args['scopes']):
                     raise Conflict('scopes must be an array of file and string selectors')
-        roles = scan_roles(root) if name == 'read_context' else None
+        roles = scan_roles(root, self.registrations.parent, self.migration_record) if name == 'read_context' else None
         state = args.get('state')
         if name == 'read_context' and not state:
             owners, sources = [], []
@@ -588,7 +604,7 @@ class Server:
                 spec = args['spec']
                 if name == 'rework_options' and not r.sidecar and 'discard_annotations' not in spec and not spec.get('resolve_requests'):
                     spec = {**spec, 'discard_annotations': True}
-                actual_roles = scan_roles(root)
+                actual_roles = scan_roles(root, self.registrations.parent)
                 if actual_roles['status'] != 'confirmed':
                     raise ToolConflict('请先在 VS Code 执行“识别／确认论文文件角色”；文件映射未确认或结构已变化，不能猜测正文与回复信。',
                                        'roles_unconfirmed', {'action': 'confirm_file_roles_in_vscode', 'automatic_retry': False})

@@ -7,7 +7,7 @@ const {run} = require('./backup');
 process.env.PYTHONPATH = [path.join(__dirname, '..', 'scripts', 'test-support'), __dirname].join(path.delimiter);
 const dispose = () => ({dispose() {}});
 
-async function fixture(tex = true) {
+async function fixture(tex = true, withProfile = false) {
     const root = await fs.mkdtemp(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'role-ui-'));
     const file = path.join(root, tex ? 'arbitrary.tex' : 'draft.typ');
     const text = tex ? '% !TeX program = pdflatex\n\\documentclass{article}\n\\begin{document}\nOriginal sentence.\n\\end{document}\n' : '= Typst stays unchanged\n';
@@ -27,11 +27,21 @@ async function fixture(tex = true) {
         }, showErrorMessage: message => notices.push({error: message}), showQuickPick: async () => undefined},
         commands: {registerCommand: (id, handler) => {handlers.set(id, handler); return dispose();}}};
     const execute = (...args) => {calls.push(args); return run(...args);};
-    const ui = activate({subscriptions: []}, vscode, execute);
+    const ui = activate({subscriptions: [], ...(withProfile ? {globalStorageUri:{fsPath:path.join(root,'profile')}} : {})}, vscode, execute);
     await ui.ready;
     return {root, file, text, notices, calls, handlers, document, vscode, ui, execute,
         change: () => changed(uri(file)), set action(value) {action = value;}, set modalHook(value) {modalHook = value;}};
 }
+
+test('confirmation stores roles in profile without injecting source comments', async () => {
+    const f = await fixture(true, true);
+    await f.ui.confirm(f.root);
+    assert.equal(await fs.readFile(f.file, 'utf8'), f.text);
+    const data = await require('./document_roles').call(f.vscode, f.root, 'scan', undefined, f.execute, path.join(f.root,'profile'));
+    assert.equal(data.authority, 'paper');
+    assert.equal(data.status, 'confirmed');
+    assert.equal(await confirmedRoot(f.vscode, f.root, f.file, f.execute, path.join(f.root,'profile')), f.file);
+});
 
 test('first confirmation persists one top comment map; only structural changes request confirmation again', async () => {
     const f = await fixture();

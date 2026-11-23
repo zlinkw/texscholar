@@ -14,7 +14,7 @@ async function activate(context, open = openRegistry) {
         pending.catch(error => vscode.window.showErrorMessage('审核宿主登记失败，源码受控写入已停止：' + error.message));
         return pending;
     };
-    registry.onTransaction(message => message.role ? applyLegacy(vscode, registry, message.root, message.generation, null, message.role_plan) : message.migration ? applyMigration(vscode, registry, message.root, message.generation, message.commit, message.recover) : message.legacy ? applyLegacy(vscode, registry, message.root, message.generation, message.commit) :
+    registry.onTransaction(message => message.role ? applyLegacy(vscode, registry, message.root, message.generation, null, message.role_plan, context) : message.migration ? applyMigration(vscode, registry, message.root, message.generation, message.commit, message.recover) : message.legacy ? applyLegacy(vscode, registry, message.root, message.generation, message.commit) :
         applyTransaction(vscode, registry, message.root, message.generation, message.state_sha, message.commit, message.recover));
     try {await update();}
     catch (error) {await registry.close(); throw error;}

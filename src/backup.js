@@ -101,7 +101,7 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
     const git = args => execute(options.git || 'git', args, root);
     const helper = async (operation, input, independent = false) => {
         const invoke = () => execute(options.python || 'python',
-            ['-X','utf8',path.join(__dirname,'auto_backup.py'),'--project',root,'--git',options.git || 'git',operation],
+            ['-X','utf8',path.join(__dirname,'auto_backup.py'),'--project',root,'--git',options.git || 'git',...(options.storage ? ['--storage',options.storage] : []),operation],
             root, input === undefined ? undefined : JSON.stringify(input));
         const recover = operation === 'saved-local' ? async () => {
             const state = JSON.parse(await execute(options.python || 'python',
@@ -142,7 +142,8 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
             ])].filter(name => name && /\.tex$/i.test(name) && paperPath(name));
             let newFiles = [];
             if (untracked.length) {
-                const roles = JSON.parse(await execute(options.python || 'python', ['-X','utf8',path.join(__dirname,'document_roles.py'),'--project',root,'scan'], root));
+                const roles = JSON.parse(await execute(options.python || 'python', ['-X','utf8',path.join(__dirname,'document_roles.py'),'--project',root,...(options.storage ? ['--storage',options.storage] : []),'scan'], root));
+                if (roles.status !== 'confirmed') throw new Error('新增论文文件的角色未确认或已变化；未提交。');
                 const registered = new Set(roles.files.map(entry => entry.file));
                 newFiles = untracked.filter(name => registered.has(name));
                 files.push(...newFiles);
@@ -473,7 +474,7 @@ function activateAutomatic(vscode, context, enqueue = enqueueAutomatic, timers =
     context.subscriptions.push(output);
     const options = () => {
         const cfg = vscode.workspace.getConfiguration('localLatex');
-        return {git:cfg.get('gitPath','git'),gh:cfg.get('ghPath','gh'),python:cfg.get('pythonPath','python')};
+        return {git:cfg.get('gitPath','git'),gh:cfg.get('ghPath','gh'),python:cfg.get('pythonPath','python'),storage:context.globalStorageUri?.fsPath};
     };
     async function ownerFor(root) {
         if (fs.existsSync(path.join(root,'.codex-review','state.json'))) return '.codex-review/state.json';

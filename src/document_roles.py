@@ -140,7 +140,7 @@ def infer(text, rel, fact, parents):
             'root_choices': possible, 'reason': '；'.join(reasons)}
 
 
-def scan(project):
+def scan(project, storage=None, pending_record=None):
     root = Path(project).resolve(strict=True)
     texts, owners = {}, []
     for directory, folders, files in os.walk(root, followlinks=False):
@@ -169,13 +169,39 @@ def scan(project):
         seen.add(entry)
         return any(contains(child, file, seen) for child in by_file[entry]['includes'])
     suggested = [infer(text, rel, by_file[rel], [r for r in roots if contains(r, rel)]) for rel, text in texts.items()]
+    stored = None
+    if storage is not None:
+        from paper_background import read_roles
+        stored = read_roles(storage, root)
+        if owners and stored['record']:
+            old_owner, old_record = owners[0]
+            expected = {'owner':old_owner, 'files':old_record['files'], 'structure':old_record['structure']}
+            if pending_record != expected or stored['record'] != expected:
+                raise RoleError('源文件与论文资料同时存在角色登记；请核对迁移状态，不自动选择。')
     owner, saved = owners[0] if owners else (None, None)
+    authority = 'legacy' if saved else None
+    if stored and stored['record']:
+        saved = stored['record']
+        owner = saved['owner']
+        authority = 'paper-pending' if owners else 'paper'
+    review_owner = None
+    if storage is not None:
+        review_owners = [name for name, text in texts.items() if '% CODEX-REVIEW-STATE-BEGIN' in text and '% CODEX-REVIEW-STATE-END' in text]
+        sidecar = root / '.codex-review' / 'state.json'
+        if sidecar.exists():
+            if not any(re.search(r'(?m)^% CODEX-REVIEW-DATA ', texts[name]) for name in review_owners):
+                review_owner = '.codex-review/state.json'
+        elif len(review_owners) > 1:
+            review_owner = None
+        else:
+            review_owner = review_owners[0] if review_owners else '.codex-review/state.json'
     expected = saved.get('structure') if saved else None
     changed = expected != facts
     entries = saved['files'] if saved else []
     validate_entries(entries, by_file, allow_missing=changed)
     return {'status': 'changed' if saved and changed else 'confirmed' if saved else 'unconfirmed',
             'owner': owner, 'files': entries, 'structure': facts, 'suggested': suggested,
+            **({'authority':authority, 'revision':stored['revision'], 'review_owner':review_owner} if stored is not None else {}),
             'roots': roots, 'changes': [f for f in sorted(set(by_file) | {f['file'] for f in expected or []})
                                       if next((x for x in expected or [] if x['file'] == f), None) != by_file.get(f)]}
 
@@ -199,13 +225,13 @@ def validate_entries(entries, facts, allow_missing=False):
         raise RoleError('请逐项确认当前项目的全部 TeX 文件。')
 
 
-def save(project, spec):
+def save(project, spec, storage=None):
     # Same lock as review candidates/checkpoints; no review state is initialized.
     from source_review import writer_lock_at
     from review_host_client import HostError, HostSession
     root = Path(project).resolve(strict=True)
     with writer_lock_at(root / '.codex-review'):
-        current = scan(root)
+        current = scan(root, storage)
         if current['structure'] != spec['structure'] or current['owner'] != spec.get('previous_owner') or current['files'] != spec['previous_files']:
             raise RoleError('确认期间文件或编译关系变化，请重新读取后确认；未写入。')
         owner = spec['owner']
@@ -215,6 +241,33 @@ def save(project, spec):
         facts = {f['file']: f for f in current['structure']}
         entries = spec['files']
         validate_entries(entries, facts)
+        if storage is not None:
+            if current['review_owner'] is None:
+                raise RoleError('审核状态拥有文件不唯一或存在冲突；请先核对归属。')
+            if current['authority'] == 'legacy':
+                raise RoleError('旧角色登记仍在源码中，请先按明确迁移流程处理；未写入。')
+            if spec.get('revision') != current['revision']:
+                raise RoleError('文件角色已变化，请重新读取后确认；未写入。')
+            if hashlib.sha256(path.read_bytes()).hexdigest() != spec['owner_sha256']:
+                raise RoleError('拥有文件已改变，请重新确认；未覆盖手动编辑。')
+            encode = lambda value: base64.b64encode(value).decode('ascii')
+            owner_raw = path.read_bytes()
+            checks = [(name, relative_file(root,name).read_bytes()) for name in facts if name != owner]
+            plan = {'kind':'profile-check', 'owner':owner, 'owner_before':encode(owner_raw), 'owner_intent':None,
+                    'owner_after':encode(owner_raw), 'files':[], 'checks':[{'file':name,'before':encode(raw)} for name,raw in checks]}
+            try:
+                with HostSession(root) as host:
+                    host.check()
+                    host.apply_roles(plan)
+                    fresh = scan(root, storage)
+                    if fresh['structure'] != current['structure'] or fresh['revision'] != current['revision'] or fresh['review_owner'] != current['review_owner'] or path.read_bytes() != owner_raw or any(relative_file(root,name).read_bytes() != raw for name,raw in checks):
+                        raise RoleError('确认期间文件或角色变化，请重新核对；未写入。')
+            except (HostError, OSError) as error:
+                raise RoleError('文件角色宿主核验失败，未完成登记：' + str(error)) from error
+            from paper_background import write_roles
+            record = {'owner':owner, 'files':entries, 'structure':current['structure']}
+            return {'owner':owner, 'saved':True, 'files':entries,
+                    **write_roles(storage, root, current['review_owner'], current['revision'], record)}
         raw = path.read_bytes()
         if hashlib.sha256(raw).hexdigest() != spec['owner_sha256']:
             raise RoleError('拥有文件已改变，请重新确认；未覆盖手动编辑。')
@@ -245,8 +298,8 @@ def save(project, spec):
         return {'owner': owner, 'saved': True, 'files': entries}
 
 
-def selected_root(project, file):
-    result = scan(project)
+def selected_root(project, file, storage=None, pending_record=None):
+    result = scan(project, storage, pending_record)
     if result['status'] != 'confirmed':
         return {'status': result['status'], 'root': None}
     entry = next((f for f in result['files'] if f['file'] == file), None)
@@ -256,10 +309,11 @@ def selected_root(project, file):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project', required=True)
+    parser.add_argument('--storage')
     parser.add_argument('operation', choices=['scan', 'save', 'root'])
     parser.add_argument('--file')
     args = parser.parse_args()
-    result = save(args.project, json.load(sys.stdin)) if args.operation == 'save' else selected_root(args.project, args.file) if args.operation == 'root' else scan(args.project)
+    result = save(args.project, json.load(sys.stdin), args.storage) if args.operation == 'save' else selected_root(args.project, args.file, args.storage) if args.operation == 'root' else scan(args.project, args.storage)
     print(json.dumps(result, ensure_ascii=False))
 
 

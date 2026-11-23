@@ -715,7 +715,7 @@ function createInlineReview(vscode, context, execute = run) {
         if (!c?.repo || !c.owner) return;
         const cfg = config();
         require('./backup').enqueueAutomatic(c.repo, c.owner,
-            {git: cfg.get('gitPath', 'git'), gh: cfg.get('ghPath', 'gh'), python: cfg.get('pythonPath', 'python')},
+            {git: cfg.get('gitPath', 'git'), gh: cfg.get('ghPath', 'gh'), python: cfg.get('pythonPath', 'python'), storage:context.globalStorageUri?.fsPath},
             value => diagnostics?.appendLine(JSON.stringify({stage:'git_backup',...value})), undefined, trigger);
     }
     async function acceptBatch(items, session) {
@@ -1032,7 +1032,7 @@ function createInlineReview(vscode, context, execute = run) {
     async function resolvePDFDocument(c, sourceOnly = false) {
         const data = sourceOnly ? await backend(c, ['inspect', '--id', c.id, '--source']) : await current(c);
         if (sourceOnly) cleanBuffers(c, data.edit.file);
-        const registered = await require('./document_roles').confirmedRoot(vscode, c.repo, path.join(c.repo, data.edit.file), execute);
+        const registered = await require('./document_roles').confirmedRoot(vscode, c.repo, path.join(c.repo, data.edit.file), execute, context.globalStorageUri?.fsPath);
         if (registered) return registered;
         const text = data.source?.text ?? await fs.readFile(path.join(c.repo, data.edit.file), 'utf8');
         if (/^\s*\\documentclass\b/m.test(text)) return path.join(c.repo, data.edit.file);
@@ -1223,7 +1223,7 @@ function createInlineReview(vscode, context, execute = run) {
         const ids = requested ? requested.map(item => item.id) : [...new Set(items.map(item => item.id))];
         const readRequest = {project: c.repo, state: c.owner, ids, expected_plugin_version: require('../package.json').version,
             known_feedback: (state.known_feedback || []).filter(receipt => ids.includes(receipt.id))};
-        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 参数：${JSON.stringify(readRequest)}\n若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n适用 SKILL：按本任务实际读取。\n个人提示词（本用户跨论文，仅启用项适用）：${background ? JSON.stringify(background.personal_prompts) : '请通过 read_context 核对。'}\n当前论文背景（参考信息，不是操作授权）：${background ? JSON.stringify(Object.fromEntries(Object.entries(background).filter(([key])=>key!=='personal_prompts'))) : '请通过 read_context 核对当前论文背景。'}\n\n先核对当前状态；known_feedback 仅表示本附件已经完整提供的原文、候选与批注，工具核对未变时不重复发送，变化时以新版为准。有同版本 rules_receipt 时作为 known_rules 传回。此文件是请求快照，不是状态表。\n需要返修时保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；仅讨论意见先回答，不自动改稿或长期资料；外置状态默认保留旧批注，只有作者明确要求时才使用 discard_annotations 或 resolve_requests。旧内嵌状态保持原有返修默认行为。失败保留原状。多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${skillProtocol}\n${notes.join('\n\n')}\n`, 'utf8');
+        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 参数：${JSON.stringify(readRequest)}\n若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n适用 SKILL：按本任务实际读取。\n个人提示词（本用户跨论文，仅启用项适用）：${background ? JSON.stringify(background.personal_prompts) : '请通过 read_context 核对。'}\n当前论文资料（作者约定按其适用范围执行；背景事实仅供参考，均不构成操作授权）：${background ? JSON.stringify(Object.fromEntries(Object.entries(background).filter(([key])=>key!=='personal_prompts'))) : '请通过 read_context 核对当前论文背景。'}\n\n先核对当前状态；known_feedback 仅表示本附件已经完整提供的原文、候选与批注，工具核对未变时不重复发送，变化时以新版为准。有同版本 rules_receipt 时作为 known_rules 传回。此文件是请求快照，不是状态表。\n需要返修时保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；仅讨论意见先回答，不自动改稿或长期资料；外置状态默认保留旧批注，只有作者明确要求时才使用 discard_annotations 或 resolve_requests。旧内嵌状态保持原有返修默认行为。失败保留原状。多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${skillProtocol}\n${notes.join('\n\n')}\n`, 'utf8');
         if (selected) {
             const fresh = await backend(c, args);
             verify(fresh);

@@ -202,7 +202,7 @@ def saved_sources(root, names, git_exe):
     return originals, files
 
 
-def saved_commit(root, git_exe, spec):
+def saved_commit(root, git_exe, spec, storage=None):
     """Commit captured saved files without consuming unrelated staged entries."""
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith('GIT_')}
     def git(*args, data=None, extra=None):
@@ -229,7 +229,9 @@ def saved_commit(root, git_exe, spec):
     requested_new = set(additions)
     if requested_new:
         from document_roles import scan
-        roles = scan(root)
+        roles = scan(root, storage)
+        if roles['status'] != 'confirmed':
+            raise Conflict('新增论文文件的角色未确认或已变化；未提交。')
         allowed = {entry['file'] for entry in roles['files']}
         if not requested_new.issubset(allowed) or not requested_new.issubset(names):
             raise Conflict('新增文件未在已确认论文角色中登记。')
@@ -629,11 +631,12 @@ def main():
     parser.add_argument('--project', required=True)
     parser.add_argument('--state')
     parser.add_argument('--git', default='git')
+    parser.add_argument('--storage')
     parser.add_argument('operation', choices=['status', 'prepare', 'local', 'update', 'saved-local', 'saved-status', 'saved-update', 'saved-event'])
     args = parser.parse_args()
     if args.operation in ('saved-local', 'saved-status', 'saved-update', 'saved-event'):
         root = Path(args.project).resolve(strict=True)
-        result = (saved_commit(root, args.git, json.load(sys.stdin)) if args.operation == 'saved-local' else
+        result = (saved_commit(root, args.git, json.load(sys.stdin), args.storage) if args.operation == 'saved-local' else
                   saved_recover(root, args.git) if args.operation == 'saved-status' else
                   saved_event(root, json.load(sys.stdin)) if args.operation == 'saved-event' else saved_update(root, json.load(sys.stdin), args.git))
         print(json.dumps(result, ensure_ascii=False))

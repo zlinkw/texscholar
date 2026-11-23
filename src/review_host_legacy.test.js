@@ -49,3 +49,36 @@ test('role metadata transactions preserve all non-role source bytes', () => {
     fs.writeFileSync(path.join(f.root,'.codex-review','objects',badId+'.json'),bad);
     assert.throws(()=>legacyPlan(f.root,badId),/不能改写正文/);
 });
+
+test('profile transition removes only explicitly named complete top blocks', () => {
+    const f = fixture('profile-transition');
+    const role = '% CODEX-FILE-ROLES-BEGIN\n% {"schema":1}\n% CODEX-FILE-ROLES-END\n';
+    const rules = '% CODEX-RULES-BEGIN\n% Keep data unchanged.\n% CODEX-RULES-END\n';
+    const body = '% Author comment.\n\\begin{document}\nAuthor.\n\\end{document}\n';
+    const before = role + rules + body;
+    fs.writeFileSync(path.join(f.root,'reply.tex'),before);
+    const plan = {kind:'profile-metadata',owner:'reply.tex',owner_before:b64(before),owner_intent:null,
+        owner_after:b64(body),remove:['CODEX-FILE-ROLES','CODEX-RULES'],files:[],checks:[]};
+    function check(value) {
+        const raw = Buffer.from(JSON.stringify({files:{'host-plan':b64(JSON.stringify(value))}})), commit = sha(raw);
+        fs.writeFileSync(path.join(f.root,'.codex-review','objects',commit+'.json'),raw);
+        return legacyPlan(f.root,commit);
+    }
+    assert.equal(check(plan).owner.relative,'reply.tex');
+    assert.throws(()=>check({...plan,owner_after:b64(body.replace('Author.', 'Changed.'))}),/只能移除/);
+    assert.throws(()=>check({...plan,remove:['CODEX-REVIEW-STATE']}),/类型无效/);
+    const verify = {...plan,kind:'profile-check',owner_after:b64(before)};
+    assert.equal(check(verify).owner.relative,'reply.tex');
+    assert.throws(()=>check({...verify,owner_after:b64(body)}),/不能修改/);
+});
+
+test('profile confirmation refuses a dirty project file before metadata write', async () => {
+    const f = fixture('metadata'), registry = {state:()=>({eligible:true,generation:1}),check:async()=>{}};
+    const before = fs.readFileSync(path.join(f.root,'reply.tex'));
+    const other = fs.readFileSync(path.join(f.root,'main.tex'));
+    f.vscode.workspace.textDocuments = [{uri:{scheme:'file',fsPath:path.join(f.root,'main.tex')},isDirty:true}];
+    const plan = {kind:'profile-check',owner:'reply.tex',owner_before:b64(before),owner_intent:null,owner_after:b64(before),
+        files:[],checks:[{file:'main.tex',before:b64(other)}]};
+    await assert.rejects(applyLegacy(f.vscode,registry,f.root,1,null,plan),/未保存编辑/);
+    assert.deepEqual(fs.readFileSync(path.join(f.root,'reply.tex')),before);
+});
