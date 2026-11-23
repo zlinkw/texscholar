@@ -1,5 +1,7 @@
 # TeXScholar 实施索引
 
+当前计划：[问题审核翻译修复](question-translation/plan.md)。修复用户报告的问题模式自动/手动翻译失效、每卡翻译入口缺失以及变更片段无译文；复用原总控与唯一Terra，隔离复现/实现/必要UI验证，不操作真实论文或旧批注。
+
 最新完成计划：[论文资料统一与助手角色选择](paper-profile/plan.md)。按用户允许的具体顺序，真实论文D:/Overleaf/TMI-DA-Marked-up Copy已由真实新宿主完成受保护迁移，68项定位、全部26条原批注/561引用对象、152条资料及14问题核对通过；原暂存107草稿记录、模板、范围外文件和Git HEAD/stage保持。[0.9.61已正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.61)并同包安装，目标窗口按授权仅重载一次。总控已核远端附注tag及构建目标ee0e95dc、Release三附件API摘要和本机0.9.61manifest/登记；无重复构建、安装或包后冒烟。唯一Terra local/01a208d4-2ab9-7a93-9994-56e2c5dfc6c7已冻结交回全部租约，无在途。
 
 桌面当前TeXScholar MCP实读仍返回0.9.60版本拒绝；迁移及新版独立Server核验已在此前完成，此后未混用CLI回退或重复保存。该客户端连接需单独重启，当前无受支持自动重启工具，不声称已刷新。真实迁移/GUI与最终保护证据和原失败均见计划及controller-p7-live1；该连接启用限制在最终交付中保留。
