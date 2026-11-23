@@ -18,13 +18,17 @@
 
 ## 连续步骤与租约
 
-- [ ] Q1 Terra在现有workbench真实协议/DOM入口建立最小可重复失败信号，保留自动、手动、多卡及片段症状；源码和现有测试先读闭包，再最小实现，优先扩展现有review_workbench.test.js，必要覆盖实际客户端渲染。未知结构不得靠浅层源码字符串断言冒充通过。
-- [ ] Q2 Terra局部回归和正常Development私有未切桌面真实UI：默认自动与关闭自动后单卡手动、原文/ABC/问题、全文/片段、换问题/版本/来源/迟到、草稿保护和可见错误。供应商以合成文本/确定性受控服务为主，不外发真稿；合成供应商协议验证与实网质量严格区分。运行按build-test-delivery，独立检查可并行，UI/共享资源独占；无性能测试。真实UI按silent-ui-screenshot创建独立profile/专属pipe/CreateDesktopW并核不在Default，不抢用户焦点。
+- [x] Q1 Terra在现有workbench真实协议/DOM入口建立失败信号，Q-ui-red/Q-host-red保留，e4b4773实现当前修复；总控审实际8文件diff及负责调用链。
+- [x] Q2 局部Q-editor-final5 90项、Q-feedback-final 10项及正常Development Q-ui-green4/5/6/7均exit0；单卡手动/全文片段/429/跨卡译文批注保存定位/可见自动/收起及全局按钮通过，合成供应商不称实网质量。各原失败和独立profile/pipe/私有桌面证据见execution。
 - [ ] Q3 完整冻结交包给总控，明确实际diff、有效输入/日志/退出、首败、未测、资源无在途并交回产品/测试/UI/隔离配置/Git租约。总控审真实diff/调用链及必要消费者，仅补未覆盖的跨模式/跨卡组合，不重复相同小验收。
 - [ ] Q4 最终通过后沿已有交付授权/规范处理具体版本包；必要检查、唯一构建、同包发布安装范围由总控一次派清，不把源码修复或模拟译文通过说成已安装或实网通过。
 
 每个内聚批最多2至3个相关问题、8个源码/测试/文档文件，优先负责边界而非新增框架。普通精确stage/commit/push origin master/fetch核一致，远端前移等停止不reset/rebase/merge/force。UTF8、pwsh7、Python -B -X utf8；完整日志和首败保存新证据根，不覆盖/删除。总控计划/index与Terra执行源码写入必须按租约串行；派单成功后总控无独立工作则角色空闲，按必要消息续接。
 
 ## 已知边界
+
+2026-11-24总控最终审核发现Q-R1：问题模式questionTranslations按卡片身份缓存，未接上原(provider,text,kind,option)成功结果复用；README同时移除了原有跨有效卡片相同内容及问题复用说明，不能仅为新实现改变已有支持契约。外置controller-cache-check2.cjs实际调用当前createWorkbench，同一问题下两张有效卡的同文同方案A，消息各自精确路由2条但供应商调用2次，期望1次，真实exit1。证据D:/latex-writing-checks/question-translation-20261123/controller-cache-check2.cjs及.result.json/.stdout.log/.stderr.log。首个check夹具漏workspaceState，questionTable为空，断言0条exit1，不当作产品缺陷；新check2按实际协议补齐才证明重复调用。此为既有请求复用契约的正确性核对，无新增性能测试/阈值。
+
+Q3尚未通过，Q返修1。最小修复须将可复用成功翻译内容与卡片显示/批注的精确身份区分，优先复用原缓存及translationKey，不混用不同来源/内容类型/方案，不缓存失败为成功、不去掉旧版/迟到/草稿保护。问题与段落两个模式可复用同样的有效结果，仍逐卡精确返回；README恢复准确原有契约。仅重验受影响复用与路由链，既有GUI和后端有效覆盖按未变输入复用；总控跨模式/跨卡最终组合待返修冻结后补，不提前交付。
 
 初次rg向Windows传字面通配src/review_workbench*.js报路径语法错误；后用rg -g实际枚举定位。猜测独立translation/questions模块路径不存在，已纠正为review_workbench.js/client及review_translate.py实际链，不以失败读取当证据。全局规则不另新增AGENTS/issue tracker/triage或领域框架；本轮只修当前功能。旧代全部失败/默认管道拒绝/隔离对象误删事实仍在原execution保留，本轮不重放相关组。
