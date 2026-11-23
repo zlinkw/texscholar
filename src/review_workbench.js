@@ -24,7 +24,7 @@ function filterItems(items, filter) {
 }
 
 function staleBatchSelections(selection, directory) {
-    return [...selection.values()].filter(selected => !directory.some(item => item.id === selected.id && item.version === selected.version && (item.options || ['A','B','C']).includes(selected.option)));
+    return [...selection.values()].filter(selected => !directory.some(item => item.id === selected.id && item.version === selected.version && !item.postponed && item.source_match !== false && (item.options || ['A','B','C']).includes(selected.option)));
 }
 
 function sameQuestionSnapshot(previous, current) {
@@ -1095,6 +1095,8 @@ function createWorkbench(vscode, context, services) {
                 const session = services.session(c);
                 if (!session || message.session !== session) throw new Error('审核批次已变化，请重新选择；未接收任何项。');
                 if (!Array.isArray(items) || !items.length || items.some(i => !lastRecords.has(i.id) || lastRecords.get(i.id).c.version !== i.version)) throw new Error('选中项已过期，请重新核对。');
+                const deferred=context.workspaceState ? postponed(c) : [];
+                if (items.some(i=>deferred.includes(i.id) || lastRecords.get(i.id).data.source_match===false)) throw new Error('所选项已暂缓或定位冲突；请先恢复或修复，未接收任何项。');
                 const question = message.questionKey && questionTable(c).find(row => row.key === message.questionKey);
                 const questionIds = message.questionKey === '__unbound__' ? new Set(directory().filter(item => !questionTable(c).some(row => row.entries.some(entry => entry.id === item.id))).map(item=>item.id)) : new Set(question?.entries.map(entry=>entry.id) || []);
                 if (message.questionOnly && (!message.questionKey || items.some(item=>!questionIds.has(item.id)))) throw new Error('问题范围已变化，请重新选择；未接收任何项。');

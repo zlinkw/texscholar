@@ -228,6 +228,8 @@ test('hidden stale batch choices remain selected until explicitly reconsidered',
     assert.deepEqual(staleBatchSelections(selection,directory).map(item=>item.id),['3']);
     assert.equal(selection.get('3').version,'v1');
     assert.deepEqual(staleBatchSelections(selection,directory.filter(item=>item.id!=='a')).map(item=>item.id),['3','a']);
+    assert.deepEqual(staleBatchSelections(new Map([['b',{id:'b',version:'v1',option:'A'}]]),[{id:'b',version:'v1',options:['A'],postponed:true}]).map(item=>item.id),['b']);
+    assert.deepEqual(staleBatchSelections(new Map([['b',{id:'b',version:'v1',option:'A'}]]),[{id:'b',version:'v1',options:['A'],source_match:false}]).map(item=>item.id),['b']);
 });
 
 test('coordination follows the active scope and old completion cannot release a newer operation', async () => {
@@ -847,6 +849,8 @@ test('postponed queue persists per project and session without changing review s
     await receive({type:'postpone',instance:'page',id:'1',version:'v1'});
     assert.equal(view.active.id,'2'); assert.equal(d1.edit.status,'pending');
     assert.deepEqual(values.reviewPostponed[JSON.stringify(['/fixture','state','round-one'])],['1']);
+    await receive({type:'acceptBatch',instance:'page',id:'2',version:'v1',session:'round-one',items:[{id:'1',version:'v1',option:'A'}]});
+    assert(messages.some(m=>m.error && m.message.includes('已暂缓或定位冲突')));
     await receive({type:'filter',filter:{query:'',kind:'',notes:false,queue:'deferred'}});
     await receive({type:'switch',instance:'page',id:'2',version:'v1',target:'1'});
     assert.equal(view.active.id,'1');

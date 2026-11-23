@@ -362,10 +362,11 @@ function filterDirectory() {
         const saved = batchSelection.get(item.id);
         if (saved && saved.version !== item.version) node.textContent += ' · 已选旧版，需重核';
         check.checked = batchSelection.has(item.id);
+        check.disabled = !check.checked && (item.postponed || item.source_match===false);
         for (const label of (item.options || ['A','B','C'])) {const option = document.createElement('option'); option.value = label; option.textContent = label + (item.manual_options?.includes(label) ? '（已手改）' : ''); choice.appendChild(option);}
         choice.value = batchSelection.get(item.id)?.option || (item.id === current.id ? preview : item.option) || 'A';
         choice.setAttribute('aria-label', item.id + ' 接收方案');
-        check.addEventListener('change', () => {if (check.checked) batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); else batchSelection.delete(item.id); saveBatchSelection(); selectedCount();});
+        check.addEventListener('change', () => {if (check.checked) batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); else batchSelection.delete(item.id); check.disabled=!check.checked && (item.postponed || item.source_match===false); saveBatchSelection(); selectedCount();});
         choice.addEventListener('change', () => {if (check.checked && batchSelection.get(item.id)?.version === item.version) {batchSelection.set(item.id,{id:item.id,version:item.version,option:choice.value}); saveBatchSelection(); selectedCount();}});
         row.append(check, choice, node); $('directoryResults').appendChild(row);
     }
@@ -385,7 +386,7 @@ function selectedCount() {
         const origins = questionRows.filter(row=>row.entries.some(entry=>entry.id===selected.id)).map(row=>[row.question.id,row.question.file,row.question.quote].join(' · '));
         const row = document.createElement('div');
         const button = document.createElement('button'); button.className = 'secondary'; button.dataset.action = 'switch'; button.dataset.target = selected.id;
-        button.textContent = selected.id + ' · ' + (item?.file || '位置不可用') + ' · ' + (origins.join(' / ') || '未绑定问题') + (invalid ? ' · 已选旧版，需重核' : ' · 有效'); button.disabled = !item || !!waiting;
+        button.textContent = selected.id + ' · ' + (item?.file || '位置不可用') + ' · ' + (origins.join(' / ') || '未绑定问题') + (invalid ? ' · 已变化、暂缓或冲突，需重核' : ' · 有效'); button.disabled = !item || !!waiting;
         const choice = document.createElement('select'); choice.setAttribute('aria-label', selected.id + ' 已选方案');
         for (const label of item?.options || [selected.option]) {const option=document.createElement('option');option.value=label;option.textContent=label;choice.appendChild(option);}
         choice.value=selected.option;choice.disabled=invalid || !!waiting || coordinating;
@@ -551,8 +552,8 @@ function renderQuestionMode() {
                 for (const o of entry.card.options) {const option=document.createElement('option');option.value=o.label;option.textContent=o.label;select.appendChild(option);}
                 select.value=batchSelection.get(entry.id)?.option || entry.card.options[0]?.label;
                 select.setAttribute('aria-label',entry.id+' 接收方案');
-                check.disabled = entry.conflict || entry.card.postponed;
-                check.addEventListener('change',()=>{if(check.checked) batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value}); else batchSelection.delete(entry.id); saveBatchSelection(); selectedCount();});
+                check.disabled = !check.checked && (entry.conflict || entry.source_match===false || entry.card.postponed);
+                check.addEventListener('change',()=>{if(check.checked) batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value}); else batchSelection.delete(entry.id); check.disabled=!check.checked && (entry.conflict || entry.source_match===false || entry.card.postponed); saveBatchSelection(); selectedCount();});
                 const reference=document.createElement('div'), referenceTitle=document.createElement('strong'), referenceText=document.createElement('pre'), referenceWarning=document.createElement('small');
                 reference.className='questionReference'; referenceTitle.textContent='原文'; referenceText.className='review-text'; reference.append(referenceTitle,referenceText,referenceWarning);
                 const comparison=document.createElement('div'); comparison.className='questionOptions';
