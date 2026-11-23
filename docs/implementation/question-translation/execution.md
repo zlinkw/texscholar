@@ -19,3 +19,17 @@ Q-editor-final5 在 D:/GitRepo/texscholar 执行 `node --test src/review_workben
 补充核验：Q-editor-final4 exit 1，因为新指定的隔离测试根目录尚未创建，测试夹具 mkdtemp 报 ENOENT；创建新测试根后 Q-editor-final5 90 项 exit 0。Q-ui-green7 exit 0，在自动翻译关闭、中文隐藏后，通过全局翻译按钮实际显示当前可见问题译文；私有桌面隔离、宿主及观察器结果保存在同名日志，截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-8bf616506a644b1db7b170a4d7f2ad03.png 已查看保留。
 
 Q 返修 1：总控实证同文两卡各自路由但重复调用供应商；controller-cache-check 首例因缺 workspaceState 夹具失败，check2 才复现产品缺口。起点 cc710cf3e95c07f36c1f33d65803ce4086a79d25，工作区干净。Q1-cache-red 复制 check2 使用独立名称执行，exit 1；Q1-unit-red 新增真实 workbench 调用链断言，exit 1。问题模式改用既有 provider/text/kind/option 成功内容缓存，仍单独记录每卡精确身份供消息和批注核验；失败仍按原卡保留，不作为共享成功，恢复 README 复用说明。Q1-cache-green 相同反例 exit 0；Q1-unit-green2 exit 0；Q1-workbench-final 执行 node --test src/review_workbench.test.js，45 项 exit 0，覆盖跨卡和双向跨模式复用、相同片段、不同来源/类型/方案隔离、第二卡批注身份与原迟到及 429 测试。日志在 D:/latex-writing-checks/review-efficiency-20261122/Q1-*，真实 argv/cwd/相关环境及退出均保留。一次 rg 向 Windows 传字面通配报路径语法错误，无写入。既有 UI/后端/TeX 检查对应文件及输入未变，复用 Q 局部结果；实网未测，未操作真实论文、用户窗口、默认管道或 MCP，未构建、安装、发布、重载或清理。
+
+## Q4 0.9.62 正式交付
+
+总控最终核验通过，功能源码冻结 e180098f6bf008da94aa0b86db5ff42da0020e44；实核交付起点 ca871a1299dfc7150cc1e30424acfc506a339d08 与 origin/master 相同、干净。本地及远端 v0.9.62 标签不存在、目标目录不存在；Release API 预检 Q-delivery-release-preflight 真实 exit 1 为预期 HTTP 404。版本改为 0.9.62，Q-delivery-version、Q-delivery-closure、Q-delivery-mcp（2 项，隔离 FakeHostSession 专属管道）及 Q-delivery-release-test（13 项）均 exit 0；沿用原 90/10、返修 45 项及总控未重叠真实界面组合，不重复执行。版本提交即唯一构建输入 f7ab6dc7f0df11bc0da30e7beaee0cc56b61a3a5，已普通 push/fetch 同步。
+
+唯一 Q-delivery-build 在 D:/GitRepo/texscholar 执行 C:/Python314/python.exe -B -X utf8 scripts/build.py --output dist/v0.9.62，exit 0。三文件核算及校验清单一致：
+
+- dist/v0.9.62/texscholar-0.9.62.vsix：17e4c46755457c01745818c256fefe68c59d7b3b8d7d60f4f46c6b6c47dc0cc5
+- dist/v0.9.62/texscholar-0.9.62-source.zip：93690cb8ba25485ff340a13ce4c9a902ca6b0f30a652f3ee65444d359dde13b2
+- dist/v0.9.62/SHA256SUMS.txt：629be5b2d7b479a43dc597c445eb1843a5007ea23ee55c3c970f1dbc10072557
+
+附注标签 v0.9.62 对象 f7ea2bdf29980fc3d3f2f31d2e796f3e5394dd16 指向构建输入 f7ab6dc7f0df11bc0da30e7beaee0cc56b61a3a5，附注含 SOURCE-COMMIT、VSIX-SHA256、SOURCE-SHA256，标签创建及普通推送 exit 0、远端对象和目标一致。Q-delivery-publish 执行 C:/Python314/python.exe -B -X utf8 scripts/publish_release.py --tag v0.9.62 --repo zlinkw/texscholar --artifacts dist/v0.9.62，exit 0；[正式 Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.62) API 显示 draft=false、prerelease=false，三附件 digest 分别与上述本地摘要一致。
+
+Q-delivery-install 执行 C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.62/texscholar-0.9.62.vsix，未使用 force，exit 0；stderr 有 Node DEP0169 弃用警告。CLI 登记及实际安装 manifest 均为 local-research.latex-writing-tools 0.9.62，extensions.json 的 source=vsix、pinned=true。安装不证明旧活动宿主已加载新版，未重载或重启窗口、MCP 或服务；旧桌面 MCP 0.9.60 拒绝事实保持未知后续状态，未探测或绕过。未测实网翻译，未触真实论文/P、默认 pipe，未执行包后冒烟或清理。日志 D:/latex-writing-checks/review-efficiency-20261122/Q-delivery-* 保留真实 argv/cwd/选定环境/stdout/stderr/exit，runner 并非完整环境快照。额外一次只读 rg 包含不存在的 package-lock.json 报错；一次工具脚本因缺 btoa 未启动命令，均无业务写入。旧失败和保护事件继续保留。
