@@ -139,4 +139,4 @@ function activate(context, vscode = require('vscode'), execute = run) {
     return {ready: initialize().catch(error => vscode.window.showErrorMessage('文件角色识别未完成：' + error.message)), confirm,
         whenIdle: () => chain};
 }
-module.exports = {activate, confirmedRoot, structuralText, call};
+module.exports = {activate, confirmedRoot, structuralText, call, LABELS};

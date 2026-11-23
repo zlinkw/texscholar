@@ -1,6 +1,8 @@
 'use strict';
 const fs = require('node:fs/promises'), path = require('node:path'), os = require('node:os'), crypto = require('node:crypto');
 const {run} = require('./backup');
+const {LABELS} = require('./document_roles');
+const roleLabels = roles => roles.map(role => LABELS[role]).join('、');
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,node_modules,clean_dir}/**';
 const launcher = `from pathlib import Path
 import json, runpy, sys
@@ -71,7 +73,7 @@ async function chooseTask(context, vscode, readRoles) {
     const roleCall = () => readRoles ? readRoles(folder.uri.fsPath) : require('./document_roles').call(vscode, folder.uri.fsPath, 'scan', undefined, run, context.globalStorageUri.fsPath);
     let roles = await roleCall();
     while (true) {
-        const detail = roles.files.map(f => `${f.file}：${f.roles.join('、')}；编译入口 ${f.root || '未指定'}`).join('\n') || '尚未确认文件角色。';
+        const detail = roles.files.map(f => `${f.file}：${roleLabels(f.roles)}；编译入口 ${f.root || '未指定'}`).join('\n') || '尚未确认文件角色。';
         const action = await vscode.window.showInformationMessage('核对本论文文件角色', {modal:true, detail:detail + (roles.authority === 'legacy' ? '\n旧源码登记待迁移。' : '')},
             ...(roles.status === 'confirmed' ? ['使用现有角色'] : []), '调整角色');
         if (!action) return;
@@ -103,7 +105,7 @@ async function chooseTask(context, vscode, readRoles) {
         const files = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, '**/*.tex'), EXCLUDE);
         if (!files.length) throw new Error('所选项目没有可选择的 LaTeX 文件。');
         const picked = await vscode.window.showQuickPick(files.map(uri => {const file=path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join('/');
-            const role=roles.files.find(item=>item.file===file); return {label:file, description:role?.roles.join('、'), uri};}),
+            const role=roles.files.find(item=>item.file===file); return {label:file, description:role && roleLabels(role.roles), uri};}),
             {canPickMany:true, title:'选择论文文件', placeHolder:'可多选，仅按需读取所选文件'});
         if (!picked || !picked.length) return;
         if (vscode.workspace.textDocuments.some(doc => doc.uri.scheme === 'file' && picked.some(item=>doc.uri.fsPath === item.uri.fsPath) && doc.isDirty))
@@ -136,7 +138,7 @@ async function chooseTask(context, vscode, readRoles) {
         '前文：\n' + selectedScope.left, '后文：\n' + selectedScope.right].join('\n\n')
         : readRequest?.files ? '文件：' + readRequest.files.join('、') : '范围：稍后在 Codex 说明';
     const preview = ['任务：' + task.label, ...(task.goal ? ['任务说明：' + task.goal] : []),
-        '目标：' + destination, '项目：' + folder.uri.fsPath, '文件角色：\n' + roles.files.map(f=>`${f.file}：${f.roles.join('、')}；编译入口 ${f.root || '未指定'}`).join('\n'), range,
+        '目标：' + destination, '项目：' + folder.uri.fsPath, '文件角色：\n' + roles.files.map(f=>`${f.file}：${roleLabels(f.roles)}；编译入口 ${f.root || '未指定'}`).join('\n'), range,
         ...(extra.trim() ? ['补充要求：\n' + extra.trim()] : []),
         '将附带当前论文已保存的背景（如有），并可由 MCP 重新核对；确认后可能登记连接。仅加入输入区或复制，不自动发送，也不接收修改。'].join('\n\n');
     const answer = await vscode.window.showInformationMessage(preview,

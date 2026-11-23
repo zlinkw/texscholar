@@ -186,6 +186,7 @@ test('task choices retain exact selection, project identity and distinct instruc
     picks = ['response','chooseFile'];
     const multi = await chooseTask(context, vscode, async () => ({status:'confirmed',authority:'paper',files:[
         {file:'main.tex',roles:['manuscript'],root:'main.tex'}, {file:'reply.tex',roles:['response'],root:null}]}));
+    assert.match(preview, /reply\.tex：回复信/);
     assert.deepEqual(multi.readRequest.files, ['main.tex','reply.tex']);
     assert((await taskRequest(multi.goal, multi.roots, false, undefined, multi.readRequest, multi.taskKind, undefined, multi.roles)).includes('reply.tex'));
     vscode.workspace.findFiles = oldFind; vscode.window.showQuickPick = oldPick;
