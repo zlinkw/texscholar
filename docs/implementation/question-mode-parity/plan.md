@@ -34,7 +34,7 @@ Terra先在唯一execution中建立下表入口母集，按真实实现/现有�
 - [x] M1 Terra完成上述母集的真实入口对照；对发现的当前缺陷建立最小运行失败信号，按负责模块归并。execution记录全量对照和实际缺陷，不另造平行报告。作者语义/权限的真正不可替代决定才升级，其他常规修法直接连续实施。
 - [x] M2 Terra按每批2至3个强相关问题、最多8源码/测试/文档文件完成所有已确认范围内修复，必要测试与文案同批。优先扩现有测试，局部功能/路由与保护小验收由Terra；正常Development UI使用独立profile/专属pipe、CreateDesktopW私有未切桌面，核不在Default及前台/输入桌面，截图TEMP/CodexUiCaptures实看保留。翻译合成供应商，不称实网质量；不新增性能测试/阈值，不自动变更既有测试超时/覆盖。build-test-delivery按变更闭包复用有效Q/N/P证据，未执行不称通过。
 - [x] M3 Terra完成整份实施与小验收后一次完整冻结交包并交回租约。总控审真实diff、全部母集结论及原日志/失败，只补未重叠跨模块/跨模式最终组合；任何必修一次交原Terra，不总控实现自签。必要最终组合重点为带草稿和批注的跨卡/跨问题路由、差异/取舍/决定信息与真实目标一致、共享项/批选和历史批注保护；具体以实际缺陷及既有局部覆盖定界，不重跑相同清单。
-- [ ] M4 最终通过后由原Terra按明确派单做必要版本/MCP/发行检查、唯一构建、正式tag/Release及同VSIX安装；总控只核元数据结案。沿既有用户项目发布安装授权，不在最终批准前build/install/publish，不自动reload/restart或包后冒烟。
+- [x] M4 最终通过后由原Terra按明确派单做必要版本/MCP/发行检查、唯一构建、正式tag/Release及同VSIX安装；总控只核元数据结案。沿既有用户项目发布安装授权，不在最终批准前build/install/publish，不自动reload/restart或包后冒烟。
 
 总控先独占plan/index文档批，完成普通同步后给Terra整份产品/测试/UI/隔离配置/Git租约；租约期间不并行写计划。成功内聚批精确stage/commit/普通push origin master/fetch核一致，远端前移等停相关动作，不reset/rebase/merge/force/改remote或绕hook。UTF8、pwsh7、Python -B -X utf8；新证据根建议D:/latex-writing-checks/question-mode-parity-20261124，完整argv/cwd/相关环境/stdout/stderr/真实exit及首败保留，复用现有runner。无在途才冻结移交，阶段消息按全局事件协调：整包、必要决定/实质阻断才唤醒，不普通回执/重复等待。总控无独立待办时角色空闲，任务由必要消息续接。
 
@@ -51,3 +51,11 @@ M-R1由原Terra做最小响应式布局修复：在受影响窄窗口让问题�
 M-R1最终通过：027ac726源码只在现有max-width:600px查询中将.questionOptions设单列，总控已审完整两文件diff、M-r2-ui/done及精确持久化读回，实看窄窗ui-60c3f581503944c99623370269414890.png：文本、用途、保存/取消均清楚可用；同一宿主1035px恢复三列。真实键盘保存跨卡1/A [0,9)和46项workbench均0，复用总控刷新及之前未变覆盖。无额外产品返修，M返修1；M1-M3完成。完整键盘支持只声明已测方向/Tab/保存路径，不夸为全部快捷键；实网翻译质量未测。
 
 M4现授权原Terra按既有流程预核0.9.63无本地/远端tag、Release或输出冲突后，必要版本/MCP/运行依赖闭包/发行工具检查；复用最终有效功能覆盖，唯一scripts/build.py构建双包及SHA256SUMS，附注tag指向实际构建输入并含双摘要，普通推送、正式Release三附件API摘要核对、同一VSIX实际CLI安装并核manifest/登记。发布安装已获原项目流程授权，不重复询问，不自动重载/重启或包后冒烟，不接触真实论文/P/用户窗口或任何删除。若版本确冲突则按真实事实停该操作交总控，不盲覆盖或重构建。交包后总控只核元数据结案。
+
+## 最终交付
+
+M全阶段完成，返修1。0.9.63正式Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.63 已发布，同一VSIX CLI安装exit0；版本/隔离MCP/依赖闭包/发行工具必要检查通过，仅构建一次。构建输入77cf48704e85f1e750443498ce596e1bc9b7f25b，执行尾2b7bd320均普通同步；附注tag对象792c122b3d668d9da4b9bfb105239da72f04be92指向构建输入，SOURCE-COMMIT及双包摘要准确。
+
+总控以远端ls-remote核tag对象和目标，controller-final-meta.py实读Release API确认非draft/非prerelease、三附件digest与本地同包一致：VSIX 7153c48e18a40fc71ed2fc843f37e08138b69758d239cbdef580c104d3a83645，source.zip 1da3fab8244c1ed14cc4346f6f6e08df37b6dfd7fe8222ae972b9153c41014f5，SHA256SUMS c7f4b0e28b649c66a30b6b5f7ea7cceccbe74800870b3a65ca5af6ed349c4d0c；本机manifest和extensions登记publisher/name/version精确0.9.63、source=vsix/pinned=true。元数据脚本exit0，原API stdout/stderr/process在D:/latex-writing-checks/question-mode-parity-20261124/controller-final-release.*，未重构建或包后冒烟。
+
+本轮新增优化为跨卡原文/方案/问题划词与精确片段范围、保存并切换的批注目标、跨模式草稿可见、推荐取舍/事实依据/范围、段落深审明确入口、暂缓/冲突/未保存稿接收限制及窄窗纵向ABC。现有差异导航、方案对照、历史和恢复经明确打开本项保留。有效覆盖按前述组合复用，所有首败/未测及旧保护事件保留；未测实网翻译质量或所有快捷键。真实论文/P/旧批注/用户窗口未触，未自动reload/restart；安装不代表活动宿主加载，用户重载对应VSCode窗口后启用。桌面MCP旧拒绝仅历史事实，本轮现状未知且未操作。唯一Terra冻结交回全部租约，无在途。
