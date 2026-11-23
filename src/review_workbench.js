@@ -628,6 +628,8 @@ function createWorkbench(vscode, context, services) {
             const epoch = translationEpoch, provider = services.provider(), origin = {...active};
             const originalSnapshot=record.data.original, candidateSnapshot=option?.after;
             const identity = JSON.stringify([message.session,message.questionKey,message.target,message.targetVersion,message.side,message.option || '',message.viewStyle,source,provider]);
+            const item = {text:source, ...(message.side === 'candidate' ? {kind:'candidate',option:message.option} : {})};
+            const cacheKey = translationKey(provider,item);
             questionTranslationRun = questionTranslationRun.then(async () => {
                 const stillValid = () => {
                     if (!valid(origin) || epoch!==translationEpoch || !panel?.visible || provider!==services.provider() || services.session(active)!==message.session || questionView!==view) return false;
@@ -642,13 +644,16 @@ function createWorkbench(vscode, context, services) {
                         (!message.option || options(latest.data).find(item=>item.label===message.option)?.after===candidateSnapshot);
                 };
                 if (!stillValid()) return;
-                let result = questionTranslations.get(identity);
+                let result = translations.get(cacheKey);
+                if (result?.error) result = undefined;
+                result ||= questionTranslations.get(identity);
                 if (!result || message.retry && result.error) {
-                    try {const value = await services.translate(source, provider, message.side === 'candidate' ? {kind:'candidate',option:message.option} : {}); result = typeof value === 'string' ? {text:value} : value;}
+                    try {const value = await services.translate(source, provider, item); result = typeof value === 'string' ? {text:value} : value;}
                     catch (error) {result = {error:error.message};}
                     if (!stillValid()) return;
-                    questionTranslations.set(identity,result);
+                    if (!result.error) translations.set(cacheKey,result);
                 }
+                questionTranslations.set(identity,result);
                 post({type:'questionTranslation', questionKey:message.questionKey,target:message.target,targetVersion:message.targetVersion,
                     side:message.side,option:message.option,viewStyle:message.viewStyle,source,provider,displayKey,view,...result});
             });

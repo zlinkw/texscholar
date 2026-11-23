@@ -152,6 +152,40 @@ test('question translation discards late results and retries a visible provider 
     assert.equal(attempt,4);assert(messages.some(message=>message.type==='questionTranslation' && message.provider==='other'));
 });
 
+test('successful translations are reused across cards and modes with exact note identities', async () => {
+    let receive, provider='fixture'; const messages=[], calls=[], notes=[];
+    const one={repo:'/fixture',owner:'state',id:'1',version:'v1'}, two={...one,id:'2',version:'v2'};
+    const question={id:'Q',file:'review.txt',quote:'Shared text'}, questionKey=JSON.stringify([question.id,question.file,question.quote]);
+    const make=version=>({version,original:'Shared text',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:[version],requests:[],questions:[question]},options:[{label:'A',after:'Shared text',reason:'A',changes:[]},{label:'B',after:'Shared text',reason:'B',changes:[]}]});
+    const records=new Map([['1',{c:one,data:make('v1')}],['2',{c:two,data:make('v2')}]]);
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={read:async c=>records.get(c.id).data,session:()=> 'session',style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,provider:()=>provider,directory:()=>[],questions:()=>[{key:questionKey,question,entries:[{id:'1',version:'v1'},{id:'2',version:'v2'}],snapshot:'[]'}],translate:async(text,p,item)=>{calls.push([text,p,item.kind||'',item.option||'']);return {text:'中文 '+text};},note:async(...args)=>{notes.push(args);return {};}};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState:{get:(_k,fallback)=>fallback,update:async()=>{}}},services);view.setRecords(records);await view.show(one);await receive({type:'ready',instance:'page'});
+    await receive({type:'translateCard',instance:'page',...one,option:'A'});
+    assert.equal(calls.length,1);
+    await receive({type:'reviewMode',instance:'page',...one,mode:'question',questionKey,viewStyle:'full'});
+    const current=JSON.stringify(['session',questionKey,'full','question']);
+    const req=(target,side='candidate',option='A')=>{const displayKey=JSON.stringify(['session',questionKey,target.id,target.version,side,option,'full','Shared text']);return {type:'questionTranslate',instance:'page',...one,session:'session',questionKey,target:target.id,targetVersion:target.version,side,option,viewStyle:'full',source:'Shared text',view:current,displayKey,retry:true};};
+    await receive({type:'questionTranslationView',instance:'page',...one,session:'session',view:current,visible:[]});
+    const a=req(one),b=req(two);await receive(a);await receive(b);
+    assert.equal(calls.length,1,'paragraph success is reused by both valid cards');
+    assert.deepEqual(messages.filter(m=>m.type==='questionTranslation').map(m=>[m.target,m.targetVersion,m.option,m.displayKey]),[['1','v1','A',a.displayKey],['2','v2','A',b.displayKey]]);
+    await receive({type:'note',instance:'page',...one,side:'translation',provider:'fixture',questionTranslationKey:b.displayKey,questionTarget:'2',questionTargetVersion:'v2',questionKey,questionSide:'candidate',option:'A',questionSource:'Shared text',questionViewStyle:'full',session:'session',value:'中文 Shared text',start:0,end:2,text:'核对'});
+    assert.equal(notes[0][0].id,'2');assert.equal(notes[0][0].version,'v2');assert.equal(notes[0][1].option,'A');assert.deepEqual(notes[0][1].display_context.review_question,question);
+    await receive(req(one,'candidate','B'));await receive(req(one,'original',''));
+    assert.deepEqual(calls.map(call=>call.slice(2)),[['candidate','A'],['candidate','B'],['','']]);
+    const snippets=JSON.stringify(['session',questionKey,'snippets','question']);
+    await receive({type:'questionTranslationView',instance:'page',...one,session:'session',view:snippets,visible:[]});
+    const snippet={...a,viewStyle:'snippets',view:snippets,displayKey:JSON.stringify(['session',questionKey,'1','v1','candidate','A','snippets','Shared text'])};
+    await receive(snippet);assert.equal(calls.length,3,'identical snippet text shares successful content');
+    await receive({type:'reviewMode',instance:'page',...one,mode:'paragraph'});
+    await receive({type:'translateCard',instance:'page',...one,option:'B'});
+    assert.equal(calls.length,3,'question success is reused by paragraph mode');
+    await receive({type:'reviewMode',instance:'page',...one,mode:'question',questionKey,viewStyle:'full'});
+    await receive({type:'questionTranslationView',instance:'page',...one,session:'session',view:current,visible:[]});
+    provider='other';await receive(a);assert.equal(calls.length,4,'different providers cannot share results');
+});
+
 test('question excerpts retain complete multiline math and Unicode change coordinates', () => {
     const math=require('./review_math'), excerpt=math.questionExcerpt;
     const old='远处 😀\nunchanged\n\\begin{alignat*}{2}\nx &= 1 \\\\\n+y &= 2\n\\end{alignat*}\nnear end\nfar end\n';

@@ -17,3 +17,5 @@ Q-editor-final5 在 D:/GitRepo/texscholar 执行 `node --test src/review_workben
 未使用真实论文、真实 P、默认管道或桌面 MCP，未重载用户窗口、构建、安装、发行或清理；实网供应商质量未测。旧默认管道拒绝和隔离对象误删事件仍按先前执行记录披露。本阶段为执行者局部验证，尚待总控独立核对受影响跨模式和跨卡组合。
 
 补充核验：Q-editor-final4 exit 1，因为新指定的隔离测试根目录尚未创建，测试夹具 mkdtemp 报 ENOENT；创建新测试根后 Q-editor-final5 90 项 exit 0。Q-ui-green7 exit 0，在自动翻译关闭、中文隐藏后，通过全局翻译按钮实际显示当前可见问题译文；私有桌面隔离、宿主及观察器结果保存在同名日志，截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-8bf616506a644b1db7b170a4d7f2ad03.png 已查看保留。
+
+Q 返修 1：总控实证同文两卡各自路由但重复调用供应商；controller-cache-check 首例因缺 workspaceState 夹具失败，check2 才复现产品缺口。起点 cc710cf3e95c07f36c1f33d65803ce4086a79d25，工作区干净。Q1-cache-red 复制 check2 使用独立名称执行，exit 1；Q1-unit-red 新增真实 workbench 调用链断言，exit 1。问题模式改用既有 provider/text/kind/option 成功内容缓存，仍单独记录每卡精确身份供消息和批注核验；失败仍按原卡保留，不作为共享成功，恢复 README 复用说明。Q1-cache-green 相同反例 exit 0；Q1-unit-green2 exit 0；Q1-workbench-final 执行 node --test src/review_workbench.test.js，45 项 exit 0，覆盖跨卡和双向跨模式复用、相同片段、不同来源/类型/方案隔离、第二卡批注身份与原迟到及 429 测试。日志在 D:/latex-writing-checks/review-efficiency-20261122/Q1-*，真实 argv/cwd/相关环境及退出均保留。一次 rg 向 Windows 传字面通配报路径语法错误，无写入。既有 UI/后端/TeX 检查对应文件及输入未变，复用 Q 局部结果；实网未测，未操作真实论文、用户窗口、默认管道或 MCP，未构建、安装、发布、重载或清理。
