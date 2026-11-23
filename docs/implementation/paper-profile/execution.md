@@ -22,6 +22,12 @@ P7-questions-tests-first/second/third 定向问题测试 exit 0；fourth 连跑w
 
 正常 Development 问题 hover：P7-hover-ui-first 与 second 的宿主断言未考虑 MarkdownString 将空格编码为 &nbsp;，均失败；third 的外置 CDP 断言未考虑实际文本中的不间断空格，失败，截图 ui-7171704d6b6d4c54825d496d06a0438a.png 已看。第四轮新建独立 project/profile/端口 9657，按实际显示文本规范化空白后，真实宿主、观察器和外层均 exit 0，显示 R1-Q2、完整问题与链接；前中后输入桌面 Default、前台 HWND 20580124/PID 45312 不变，窗口位于未切换私有桌面且桌面关闭。截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-3c0fddd7562040df91148778675eac2b.png 已实际查看。此为当前 questions.js 的真实 Development 最小夹具，不代表完整插件工作台或真实论文验证。
 
+P7继续批：P7-scopes-first和P7-scope-entries-first建立87对原文及相邻范围，旧来源逐字读回；范围抽取不以最近QUESTION冒充准确语义。P7-inline-plans-first进一步逐字核原先5处所谓孤立END：五处BEGIN均位于真实源码同一行正文之后的行内百分号（main 195/584/746，回复318/1077）；END前各有原计划内容，因此实际是87个独立行对加5个行内对，不能仅删除尾标或把正文前缀带走。P7-scope-entries-second 将92条原计划原文、论文内具体问题和相邻对象范围存入独立P并逐条读回；9条相同摘录必须结合原问题及来源区分，不能仅按文字去重。P7-excerpts-first与P7-excerpt-entries-first核13处修后摘录标记及关联问题/原实际装配区域，组外图与参考文献也分别保留，不将正文或颜色搬入P；P7-all-context-first以实际隔离MCP read_context/read_feedback核105条原计划及摘录资料一致。该映射仍须受保护迁移和正确的真实源版本核验，尚未删除任何旧注释。
+
+P7-anchor-once-preview-first对冻结副本复核三处完整旧锚、原对象和已确认当前变化；P7-anchor-once-test-first仅新隔离样例成功执行重绑后误以owner完整字节不变断言失败（owner内嵌状态本就改变），保留结果；second在全新副本核主体内容和原对象不变、三锚单次状态事务、过期预览零写及不可重放，68项继续定位，FakeHost不代表真实宿主；外置 P7-anchor-once2.py 要求显式管道与新恢复目录，尚未真实运行。
+
+P7-plan-block-impact-first核92处旧计划在迁移后副本与原活动候选块不重叠；5条注释全文重复须按原源位置及精确重建的正文定位，不按文字猜。P7-full-convert-prototype-first因两处BEGIN前含缩进未考虑而失败，second/third因去除注释后两组同问题标记落同一位置、空question块非法而失败；第四次新副本将这两组各保留成两个嵌套的非空question块，不合并身份/依赖，92条计划、13个摘录机器标记和14对问题/依赖在新副本完成映射，68项inspect、旧edits与原块一致。P7-full-convert-consume-first因夹具误取MCP返回顶层blocks而非context.blocks失败；second真实隔离MCP核14组独立问题及依赖、105条资料及26条批注均通过。以上原型直接写隔离副本，尚无P与宿主的受保护实际切换，不得对真实论文运行。
+
 P7-local-context-preview-first/second 在新隔离 SQLite 分别保存87条局部插件注释并读回、核CAS；first以拆行重组未保留原换行，仅作失败设计证据，second改为逐字保留原换行，P7-local-context-consume-first 用隔离注册真实 Server.read_context 读取87条、P7-local-context-feedback-first 读取87条及21条open批注，均 exit 0。这些条目以source/other、精确相邻文本及源行记录，语义范围全部标待核，不声称已把作者要求正确分类或可删除注释；孤立END及其他机器注释仍保留。p7-shared-tests-first exit 0：同一实际行中两个候选迁入同一个块，模拟转换后接收一项，另一项版本和真实定位仍有效；使用隔离FakeHost，不作为正常Development组合通过。
 
 只读比较 v0.9.60 与当前实现：review_host_migration、registry、edit未变，可在实际存在合格旧宿主时继续用相同审核迁移保护；review_host_legacy 新增的 profile-metadata/profile-check/retired-review-header 和 profile_transition_check 在旧版不存在。不能用旧legacy宽事务假装具备资料权威校验，也不能仅靠离线文件CAS证明其他活Code进程无脏缓冲。实际宿主资格/草稿仍未核，资料源头切换与局部机器注释消除仍未完成。
