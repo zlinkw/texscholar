@@ -2,6 +2,8 @@
 
 ## 当前阶段与用户决定
 
+最新用户已对具体提议回复“允许”：先保护草稿，安装已备0.9.61同一包并重载一次，再真实迁移、核对通过后正式发布。该决定取代下文旧no-reload及迁移后才安装的运行限制；不扩大为论文Git/接收/编译、清理、重复构建或重启其他窗口许可。2026-11-23总控通过Computer Use只操作真实TeXScholar审核页：实际当前107/v2，更多菜单原“暂存并关闭”已执行并关闭审核页；本地controller-p7-memory2/3是操作前状态，无旧reviewDrafts，memory4实际读回107/session e74dbc117a5f4cf4991bfb17187ca9c9精确暂存记录，候选drafts为空、无blockDraft、note为空、purpose revision，原批注未改。相应完整workspace数据库/WAL及插件Memento、匹配hot-exit和UI依据保留D:/latex-writing-checks/paper-profile-20261123/controller-p7-live1与controller-p7-memory2/3/4。最初UIA菜单项点击落在旧滚动坐标未确认写入；刷新后用当前截图坐标执行，最终落盘读回才确认成功，不以空Memento推断活稿。接下来原Terra仅安装已核同一包并冻结，重载及真实迁移由总控继续协调；不自动重载其他窗口，不重建包，正式Release仍待真稿核对后。
+
 2026-11-23。用户已明确要求代理直接完成迁移、验证后按原流程发布安装最新版，完成后一次汇报；不要求用户经插件操作或先启用新版，不自动重载/重启。P7源码候选2af17bfc8c0416c0e7944f338278c700b7ebf02d已同步clean，原R1拒绝保留、P返修1。总控已审真实diff、一次性协议及必要调用链，独占隔离组合的跨进程恢复、候选接收及批注/资料/源/stage读回通过；小验收按有效输入复用。真实源/P/批注尚未写，N/P尚未发行安装，P7/P8仍未完成。现场具体阻塞见下文，不能以隔离成功冒充真稿完成。普通Windows本地master跟踪origin/master。
 
 新增范围内实证与裁定：原所谓5个孤立END都有正文同一行后的BEGIN，实际为87个独立行对加5个行内对，共92组，删除不得带走正文前缀或换行。P7-meta-ui-success-fourth的真实三稿/用途及stage保护通过；third曾真实丢失原文草稿，1cf9ed4在locationStatus仅刷新非dirty原文，41项定向及新第四轮补验通过，首败保留。总控核安装0.9.60及其tag仍有该旧逻辑；只读code --status实际显示论文审核窗口仍开，不能据persisted Memento空或用户不用插件推断无活草稿，不注入活动窗口/改加载文件或绕过no-reload。
