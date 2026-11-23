@@ -17,6 +17,9 @@ const coordinatedWrites = new Set(['save', 'saveAccept', 'accept', 'acceptBatch'
 const feedbackTargets = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap(), differences = new WeakMap();
 const displayedChanges = new WeakMap();
+const questionTranslations = new Map(), questionClosed = new Set(), questionNodes = new Map();
+const paragraphClosed = new Set();
+let questionObserver, questionVisible = new Set(), paragraphObserver;
 let sourceMode = false;
 let comparison = 'original', draftFrame;
 const math = globalThis.TeXScholarMath;
@@ -303,7 +306,7 @@ function renderTranslation(key, entry) {
     if (options.some(o => o.label === key && hasDraft(o))) {node.hidden = true; return;}
     const {changes, side} = translationComparison(key, entry, node);
     const signature = JSON.stringify([entry.error, entry.text, entry.noTranslation, entry.warning, sourceMode, changes, side]);
-    if (rendered.get(node) === signature) {node.hidden = !chinese; return;}
+    if (rendered.get(node) === signature) {node.hidden = !chinese || paragraphClosed.has(JSON.stringify([current.id,current.version,key])); return;}
     keepReading(() => {
         if (entry.error) {node.textContent = '翻译未完成：' + entry.error; models.delete(node);}
         else if (entry.noTranslation) {node.textContent = entry.noTranslation; models.delete(node);}
@@ -311,7 +314,7 @@ function renderTranslation(key, entry) {
         node.dataset.translation = key;
         node.title = entry.warning || (side === 'readonly' ? '中文阅读译文；对照译文尚未就绪时不标差异。'
             : '中文译文之间的文字差异；翻译措辞变化也可能被标记，请结合原文审核。');
-        node.hidden = !chinese;
+        node.hidden = !chinese || paragraphClosed.has(JSON.stringify([current.id,current.version,key]));
     });
     rendered.set(node, signature);
     highlightSelection();
@@ -435,21 +438,78 @@ function questionEntryDraft(entry) {
     return entry.id===current?.id && entry.version===current.version && (sourceDraftStale || candidateDraftStale || options.some(hasDraft) || !!data?.block && $('blockSource').value!==data.block.text.replace(/\r\n/g,'\n'));
 }
 function changedLines(text, changes, side) {
-    const points=Array.from(text), ranges=[], breaks=[0];
-    points.forEach((ch,i)=>{if(ch==='\n') breaks.push(i+1);}); breaks.push(points.length);
-    for (const change of changes) {
-        const start=change[side+'_start'], end=change[side+'_end'];
-        for (let i=0;i<breaks.length-1;i++) if (start <= breaks[i+1] && end >= breaks[i]) {ranges.push(i-1,i,i+1);}
+    return math.questionExcerpt(text,changes,side);
+}
+function questionViewKey() {return JSON.stringify([currentSession,selectedQuestion,$('questionViewStyle').value,reviewMode]);}
+function questionTranslationControl(parent, entry, side, option, source) {
+    const viewStyle=$('questionViewStyle').value, target=entry.id, targetVersion=entry.version;
+    const displayKey=JSON.stringify([currentSession,selectedQuestion,target,targetVersion,side,option || '',viewStyle,source]);
+    const closeKey=JSON.stringify([currentSession,selectedQuestion,target,targetVersion,side,option || '']);
+    const container=document.createElement('div'), button=document.createElement('button'), node=document.createElement('div');
+    button.className='secondary'; button.textContent='翻译'; node.className='zh'; node.hidden=true;
+    button.setAttribute('aria-label',target+' · '+(side==='question' ? '问题' : side==='original' ? '原文' : '方案 '+option)+'翻译');
+    node.setAttribute('role','status');
+    const value={session:currentSession,questionKey:selectedQuestion,target,targetVersion,side,option,viewStyle,source,displayKey,closeKey,view:questionViewKey(),node,button};
+    questionNodes.set(displayKey,value); container.append(button,node); parent.appendChild(container);
+    function draw() {
+        const result=questionTranslations.get(displayKey), closed=questionClosed.has(closeKey);
+        button.textContent=closed ? '显示中文' : result?.error ? '翻译／重试' : result ? '收起中文' : '翻译';
+        node.hidden=closed || !chinese || !result;
+        if (!result) return;
+        if (result.error || result.noTranslation) {node.textContent=result.error ? '翻译未完成：'+result.error : result.noTranslation; models.delete(node);}
+        else {models.set(node,math.render(node,result.text,[],'readonly',sourceMode ? 'source' : 'preview',globalThis.katex,models.get(node)));node.dataset.questionTranslation=displayKey;}
+        node.title=result.warning || '中文阅读译文，请对照原文。';
     }
-    for (const segment of math.segments(text).filter(segment=>segment.math)) {
-        const start=Array.from(text.slice(0,segment.start)).length, end=start+Array.from(text.slice(segment.start,segment.end)).length;
-        const lines=[];
-        for (let i=0;i<breaks.length-1;i++) if (start < breaks[i+1] && end > breaks[i]) lines.push(i);
-        if (lines.some(line=>ranges.includes(line))) ranges.push(...lines);
-    }
-    return [...new Set(ranges.filter(i=>i>=0&&i<breaks.length-1))].sort((a,b)=>a-b).map(i=>points.slice(breaks[i],breaks[i+1]).join('')).join('');
+    value.draw=draw; draw();
+    button.addEventListener('click',()=>{
+        chinese=true;
+        if (questionClosed.delete(closeKey)) {draw(); if (questionTranslations.has(displayKey)) return;}
+        else if (questionTranslations.has(displayKey) && !questionTranslations.get(displayKey).error) {
+            questionClosed.add(closeKey);questionVisible.delete(displayKey);
+            send('questionTranslationView',{session:currentSession,view:questionViewKey(),visible:[...questionVisible]},false);draw();return;
+        }
+        button.textContent='翻译中…';
+        send('questionTranslate',{...value,node:undefined,button:undefined,draw:undefined,retry:true,auto:false},false);
+    });
+    return container;
+}
+function observeQuestionTranslations() {
+    questionObserver?.disconnect(); questionVisible=new Set();
+    const view=questionViewKey();
+    const publish=()=>send('questionTranslationView',{session:currentSession,view,visible:[...questionVisible]},false);
+    publish();
+    if (reviewMode!=='question' || !chinese) return;
+    questionObserver=new IntersectionObserver(changes=>{
+        for (const change of changes) {const key=change.target.dataset.translationKey;if(change.isIntersecting) questionVisible.add(key); else questionVisible.delete(key);}
+        publish();
+        for (const key of questionVisible) {
+            const value=questionNodes.get(key);
+            if (!value || questionClosed.has(value.closeKey) || questionTranslations.has(key)) continue;
+            send('questionTranslate',{...value,node:undefined,button:undefined,draw:undefined,auto:true,retry:false},false);
+        }
+    });
+    for (const [key,value] of questionNodes) {value.node.parentElement.dataset.translationKey=key;questionObserver.observe(value.node.parentElement);}
+}
+function observeParagraphTranslations() {
+    paragraphObserver?.disconnect();
+    const visible=new Set();
+    const publish=()=>send('paragraphTranslationView',{visible:[...visible]},false);
+    publish();
+    if (reviewMode!=='paragraph' || !data || unavailable || !chinese) return;
+    const targets=[];
+    if (!sourceDraftStale && (!data.block || $('blockSource').value===data.block.text.replace(/\r\n/g,'\n'))) targets.push(['original',$('original')]);
+    for (const option of options) if (!hasDraft(option) && !paragraphClosed.has(JSON.stringify([current.id,current.version,option.label]))) targets.push([option.label,$('text-'+option.label)]);
+    for (let i=0;i<(data.edit.questions || []).length;i++) targets.push(['question'+i,$('question-text-'+i)]);
+    paragraphObserver=new IntersectionObserver(changes=>{
+        for (const change of changes) {const key=change.target.dataset.autoTranslation;if(change.isIntersecting) visible.add(key);else visible.delete(key);}
+        publish();
+    });
+    for (const [key,node] of targets) if (node) {node.dataset.autoTranslation=key;paragraphObserver.observe(node);}
 }
 function renderQuestionMode() {
+    const composer=$('noteComposer');
+    if ($('questionModeView').contains(composer)) $('composerDock').appendChild(composer);
+    questionObserver?.disconnect(); questionNodes.clear();
     const choice = $('questionModeChoice'), previous = selectedQuestion;
     choice.replaceChildren();
     const visible = questionRows.filter(row => row.entries.some(entry => entry.card));
@@ -468,6 +528,9 @@ function renderQuestionMode() {
     const entries=questionEntries().filter(entry=>!kindFilter || kindFilter==='rework' && entry.status==='rework' || kindFilter==='conflict' && (entry.conflict || entry.source_match===false) ||
         ['number','citation','math','term'].includes(kindFilter) && questionEntryDraft(entry) ||
         entry.card?.options.some(option=>(option.fact_changes || []).some(change=>change.kind===kindFilter))), root=$('questionModeCards'); root.replaceChildren();
+    const quote=$('questionModeQuote'); quote.replaceChildren(document.createTextNode(questionRows.find(row=>row.key===selectedQuestion)?.question.quote || ''));
+    const selectedRow=questionRows.find(row=>row.key===selectedQuestion), quoteEntry=selectedRow?.entries.find(entry=>entry.card);
+    if (quoteEntry) questionTranslationControl(quote,quoteEntry,'question',undefined,selectedRow.question.quote);
     for (const [kind,label] of [['manuscript','正文'],['response','回复信']]) {
         const column=document.createElement('section'), heading=document.createElement('h4'); heading.textContent=label; column.appendChild(heading);
         for (const entry of entries.filter(e=>e.kind===kind)) {
@@ -524,7 +587,13 @@ function renderQuestionMode() {
                 };
                 select.addEventListener('change',()=>{if(check.checked && batchSelection.get(entry.id)?.version===entry.version) {batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value});saveBatchSelection();selectedCount();}updateExcerpt();});
                 card.append(check,select);
-                updateExcerpt(); card.append(reference,comparison);
+                updateExcerpt();
+                if (!activeDraft) {
+                    const changes=optionNodes.map(({option})=>math.wordChanges(entry.card.original,option.after)), full=$('questionViewStyle').value==='full';
+                    questionTranslationControl(reference,entry,'original',undefined,full ? entry.card.original : changedLines(entry.card.original,changes.flat(),'old'));
+                    optionNodes.forEach(({option,node},index)=>questionTranslationControl(node,entry,'candidate',option.label,full ? option.after : changedLines(option.after,changes[index],'new')));
+                }
+                card.append(reference,comparison);
             }
             const open=document.createElement('button');open.className='secondary';open.dataset.action='questionEntry';open.dataset.questionKey=selectedQuestion;open.dataset.target=entry.id;open.textContent='打开本项';
             if (selectedQuestion==='__unbound__') {open.dataset.action='switch';open.dataset.target=entry.id;}
@@ -537,6 +606,9 @@ function renderQuestionMode() {
     document.querySelector('[data-action="paragraphMode"]').setAttribute('aria-pressed',String(reviewMode==='paragraph'));
     document.querySelector('[data-action="questionMode"]').setAttribute('aria-pressed',String(reviewMode==='question'));
     selectedCount();
+    observeQuestionTranslations();
+    observeParagraphTranslations();
+    placeComposer();
 }
 function markDirectoryCursor() {
     for (const node of $('directoryResults').querySelectorAll('button')) {
@@ -551,7 +623,7 @@ function renderOption(o) {
     article.dataset.reviewId = current.id; article.dataset.reviewVersion = current.version;
     article.className = [preview === o.label ? 'selected' : '', focused === o.label ? 'focused' : focused ? 'folded' : ''].join(' ');
     if (!article.children.length) article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
-        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small><p class="tradeoff"></p><p class="scopeSummary"></p><details class="factChanges"><summary></summary><pre></pre></details><details class="reason"><summary>详细取舍</summary><span></span></details>'
+        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="translateCard" data-option="' + o.label + '" class="secondary">翻译／收起</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small><p class="tradeoff"></p><p class="scopeSummary"></p><details class="factChanges"><summary></summary><pre></pre></details><details class="reason"><summary>详细取舍</summary><span></span></details>'
         + '<details class="migrationIntent"><summary>查看此方案的旧版局部要求</summary><pre></pre></details><div class="detail"><div class="review-text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
         + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" title="保存此候选（Ctrl/Cmd+Enter）" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><button data-action="saveAccept" data-write data-option="' + o.label + '">保存并接收 ' + o.label + '</button><small>“保存”只更新待审版本；“保存并接收”替换正文并进入下一项。</small></div></div>';
     article.querySelector('.tradeoff').textContent = o.summary || o.reason;
@@ -622,6 +694,7 @@ function renderReadings() {
     highlightSelection();
     placeComposer();
     for (const [key, entry] of translatedText) renderTranslation(key, entry);
+    observeParagraphTranslations();
 }
 function queueDraftPreview() {
     if (draftFrame !== undefined) return;
@@ -752,6 +825,7 @@ function highlightSelection() {
     CSS.highlights.set('review-selection', new Highlight(...math.selectionRanges(model, selected.start, selected.end)));
 }
 function selectionNode(value) {
+    if (value.questionTranslationKey) return questionNodes.get(value.questionTranslationKey)?.node;
     const index = value.question && (data.edit.questions || []).findIndex(q => q.id === value.question.id && q.file === value.question.file && q.quote === value.question.quote);
     if (value.question && index < 0) return;
     if (value.side === 'question') return $('question-text-' + index);
@@ -788,6 +862,22 @@ function locateNote(id) {
     if (!note || note.version !== current.version) {status('该批注属于其他候选版本，未猜测当前位置。', true); return;}
     if (note.display_context) {
         const ctx = note.display_context, value = {side: ctx.kind, question: ctx.question, option: note.option};
+        if (ctx.kind==='translation' && ctx.review_question) {
+            const questionKey=JSON.stringify([ctx.review_question.id,ctx.review_question.file,ctx.review_question.quote]);
+            if (!questionRows.some(row=>row.key===questionKey && row.entries.some(entry=>entry.id===current.id && entry.version===current.version))) {
+                status('原关联问题已变化；批注快照仍保留。',true);return;
+            }
+            selectedQuestion=questionKey; reviewMode='question'; $('questionViewStyle').value=ctx.source_excerpt ? 'snippets' : 'full';
+            renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);
+            const target=[...questionNodes.values()].find(item=>item.target===current.id && item.targetVersion===current.version &&
+                item.side===ctx.source_side && item.option===note.option && item.source===(ctx.source_excerpt || ctx.source));
+            const translation=target && questionTranslations.get(target.displayKey);
+            if (!target || translation?.provider!==ctx.provider || translation.text!==ctx.text) {status('原译文尚未就绪或已变化，请核对批注快照。',true);return;}
+            chinese=true;questionClosed.delete(target.closeKey);target.draw();
+            const model=models.get(target.node), offset=n=>Array.from(ctx.text).slice(0,n).join('').replace(/\r\n/g,'\n').length;
+            if (!model) {status('原译文尚未就绪，批注快照仍保留。',true);return;}
+            locateRanges(math.selectionRanges(model,offset(ctx.start),offset(ctx.end)));return;
+        }
         if (note.option) revealCandidate(note.option);
         const node = selectionNode(value), model = models.get(node);
         if (!model || model.raw !== ctx.text) {status('所选问题或译文已变化／尚未就绪，批注快照仍保留，请核对后重新选择。', true); return;}
@@ -852,7 +942,7 @@ function selectionChanged(event) {
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed || !selection.rangeCount) return;
         const range = selection.getRangeAt(0), ancestor = range.commonAncestorContainer;
-        const selector = '.review-text[data-side], .review-text[data-question], .zh[data-translation]';
+        const selector = '.review-text[data-side], .review-text[data-question], .zh[data-translation], .zh[data-question-translation]';
         const node = (ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement).closest(selector);
         if (!node || !node.contains(range.startContainer) || !node.contains(range.endContainer)) {
             const touchesReview = [range.startContainer, range.endContainer].some(n => (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement)?.closest(selector));
@@ -866,7 +956,13 @@ function selectionChanged(event) {
         next = {side: node.dataset.side, option: node.dataset.option, value: model.raw.replace(/\r\n/g, '\n'),
             start: model.raw.slice(0, bounds.start).replace(/\r\n/g, '\n').length,
             end: model.raw.slice(0, bounds.end).replace(/\r\n/g, '\n').length, wholeMath: bounds.wholeMath};
-        if (node.dataset.translation !== undefined) {
+        if (node.dataset.questionTranslation !== undefined) {
+            const key=node.dataset.questionTranslation, value=questionNodes.get(key), entry=questionTranslations.get(key);
+            if (!value || !entry || entry.error || entry.noTranslation) return;
+            next={...next,side:'translation',provider:entry.provider,questionTranslationKey:key,questionTarget:value.target,
+                questionTargetVersion:value.targetVersion,questionKey:value.questionKey,questionSide:value.side,option:value.option,
+                questionSource:value.source,questionViewStyle:value.viewStyle,session:value.session};
+        } else if (node.dataset.translation !== undefined) {
             const key = node.dataset.translation, entry = translatedText.get(key);
             if (!entry || entry.error) return;
             next.side = 'translation'; next.provider = entry.provider;
@@ -1025,7 +1121,23 @@ document.addEventListener('click', event => {
         $('saveNote').textContent = '保存修改'; placeComposer(); openComposer(); $('note').focus(); dirty(); return;
     }
     if (type === 'mathMode') {toggleMathMode(); return;}
-    if (type === 'toggleChinese') {chinese = !chinese; document.querySelectorAll('.zh').forEach(n => n.hidden = !chinese); renderReadings(); return;}
+    if (type === 'toggleChinese') {chinese = !chinese; document.querySelectorAll('.zh').forEach(n => n.hidden = !chinese); renderReadings(); for (const value of questionNodes.values()) value.draw(); observeQuestionTranslations(); return;}
+    if (type === 'translate' && reviewMode==='question') {
+        chinese=true;
+        questionVisible=new Set([...questionNodes].filter(([,value])=>{const r=value.node.parentElement.getBoundingClientRect();return r.width>0 && r.height>0 && r.bottom>0 && r.top<innerHeight && r.right>0 && r.left<innerWidth;}).map(([key])=>key));
+        send('questionTranslationView',{session:currentSession,view:questionViewKey(),visible:[...questionVisible]},false);
+        for (const key of questionVisible) {const value=questionNodes.get(key);if (!value) continue;questionClosed.delete(value.closeKey);value.draw();send('questionTranslate',{...value,node:undefined,button:undefined,draw:undefined,auto:false,retry:true},false);}
+        observeQuestionTranslations();
+        return;
+    }
+    if (type === 'translateCard') {
+        const item=options.find(value=>value.label===option), key=JSON.stringify([current.id,current.version,option]), result=translatedText.get(option);
+        if (!item || hasDraft(item)) {status('候选含未保存草稿，请先保存后翻译。',true);return;}
+        chinese=true;
+        if (paragraphClosed.delete(key)) {if (result && !result.error) {renderTranslation(option,result);return;}}
+        else if (result && !result.error) {paragraphClosed.add(key);renderTranslation(option,result);return;}
+        send('translateCard',{option},false);return;
+    }
     if (type === 'focus') {
         focused = focused === option ? undefined : option;
         for (const o of options) {const node = $('option-' + o.label); node.classList.toggle('focused', focused === o.label); node.classList.toggle('folded', !!focused && focused !== o.label);}
@@ -1070,7 +1182,7 @@ function activateCardAction() {
 function executeCardAction(action) {
     if (!action || waiting || action.token!==consumedCardAction || !current || current.repo!==action.c.repo || current.owner!==action.c.owner || current.id!==action.c.id || current.version!==action.c.version || currentSession!==action.session) return;
     consumedCardAction=undefined;
-    if (action.intent==='editToggle' || action.intent==='optionNote') {reviewMode='paragraph';renderQuestionMode();}
+    if (action.intent==='editToggle' || action.intent==='optionNote') {reviewMode='paragraph';renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);}
     const target=$('option-'+action.option)?.querySelector('[data-action="'+action.intent+'"]');
     if (!target || target.disabled) {status('目标方案当前不可操作，请核对状态。',true);return;}
     target.click();
@@ -1127,6 +1239,16 @@ window.addEventListener('message', ({data: message}) => {
         return;
     }
     if (message.type === 'translationStatus') {$('translateStatus').textContent = message.message; return;}
+    if (message.type === 'questionTranslationReset') {
+        questionTranslations.clear(); translatedText.clear();
+        for (const node of document.querySelectorAll('#review .zh')) {node.textContent='';rendered.delete(node);}
+        renderQuestionMode(); return;
+    }
+    if (message.type === 'questionTranslation') {
+        const value=questionNodes.get(message.displayKey);
+        if (!value || message.view!==questionViewKey() || value.view!==message.view || value.source!==message.source || value.targetVersion!==message.targetVersion) return;
+        questionTranslations.set(message.displayKey,message); value.draw(); return;
+    }
     if (message.type === 'factEvidence') {data.fact_evidence = message.evidence; keepReading(() => {options.forEach(renderOption); renderReadings();}); return;}
     if (message.type === 'pdfStatus') {pdfStatus(message.message); return;}
     if (message.type === 'locationStatus') {

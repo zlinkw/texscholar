@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {selection} = require('./candidate_panel');
 const reviewStyle = require('./review_style');
+const reviewMath = require('./review_math');
 const toolbarActions = ['previous','next','handoff','source','mathMode','reopen','locate','pdf','sourcePDF','translate','provider','toggleChinese','paperBackground','personalPrompts','configuration','start','checkUpdates','finish','stashClose'];
 const defaultToolbar = {order: toolbarActions, visible: ['previous','next']};
 function validToolbar(value) {
@@ -39,6 +40,16 @@ function sameQuestionSnapshot(previous, current) {
         if (a.before.some(id => b.after.includes(id)) || a.after.some(id => b.before.includes(id))) return false;
         return !(a.left && a.left === b.right || a.right && a.right === b.left);
     });
+}
+
+function questionTranslationSource(data, question, side, label, style) {
+    const choices=data.options || [{label:'A',after:data.candidate}], option=choices.find(item=>item.label===label);
+    const text=side==='question' ? question?.quote : side==='original' ? data.original : side==='candidate' ? option?.after : undefined;
+    if (typeof text!=='string') return;
+    if (side==='question' || style==='full') return {text,start:0,end:Array.from(text).length};
+    const changes=choices.map(item=>reviewMath.wordChanges(data.original,item.after));
+    return side==='original' ? reviewMath.questionExcerptRange(text,changes.flat(),'old') :
+        reviewMath.questionExcerptRange(text,changes[choices.indexOf(option)],'new');
 }
 
 function html(nonce, assets = {}) {
@@ -93,7 +104,11 @@ function createWorkbench(vscode, context, services) {
     const pendingSynchronized = new Map();
     const translations = new Map();
     let translationRun, translationRequested = false, retryTranslation = false, translationEpoch = 0;
+    let questionTranslationRun = Promise.resolve();
+    const questionTranslations = new Map();
+    let questionVisible = new Set(), questionView = '';
     let lastRecords = new Map(), sourceSelection;
+    let reviewMode = context.globalState?.get('reviewMode', 'paragraph') || 'paragraph', paragraphVisible = new Set();
     let ready = false, client, uiState, notice, reading, handoffRetry, restoredDraft;
     let batchScope, batchItems = [];
     const selectionScope = (c, session) => JSON.stringify([c.repo, c.owner, session]);
@@ -271,7 +286,33 @@ function createWorkbench(vscode, context, services) {
             preview: services.selection(active), pdfStatus: services.pdfStatus(active)};
     }
     const valid = c => active && key(active) === key(c);
+    const validHandoff = c => c && active && c.repo===active.repo && c.owner===active.owner &&
+        services.session?.(c)===services.session?.(active) && lastRecords.get(c.id)?.c.version===c.version;
     function annotationSelection(value) {
+        if (value.questionTranslationKey) {
+            const rows=questionTable(active), row=rows.find(item=>item.key===value.questionKey);
+            const linked=value.questionKey==='__unbound__' && !rows.some(item=>item.entries.some(entry=>entry.id===value.questionTarget))
+                ? directory().find(item=>item.id===value.questionTarget && item.version===value.questionTargetVersion && item.card)
+                : row?.entries.find(item=>item.id===value.questionTarget && item.version===value.questionTargetVersion);
+            const record=linked && lastRecords.get(linked.id), data=record?.data;
+            const option=data && value.option && options(data).find(item=>item.label===value.option);
+            const key=JSON.stringify([value.session,value.questionKey,value.questionTarget,value.questionTargetVersion,value.questionSide,
+                value.option || '',value.questionViewStyle,value.questionSource]);
+            if (!record || value.session!==services.session(active) || value.questionTranslationKey!==key || value.provider!==services.provider() ||
+                questionView!==JSON.stringify([value.session,value.questionKey,value.questionViewStyle,'question'])) throw new Error('译文的审核项或问题已变化，请重新选择。');
+            const result=questionTranslations.get(JSON.stringify([...JSON.parse(key),value.provider]));
+            if (!result || result.error || result.noTranslation) throw new Error('译文已变化或未就绪，请重新翻译并选择。');
+            const span=selection(result.text,value.value,value.start,value.end), isQuestion=value.questionSide==='question';
+            const side=value.questionSide==='candidate' ? 'candidate' : 'original';
+            const anchor=side==='candidate' ? option?.after : data.original;
+            if (anchor===undefined) throw new Error('译文来源已变化，请重新选择。');
+            const excerpt=questionTranslationSource(data,row?.question,value.questionSide,value.option,value.questionViewStyle);
+            if (!excerpt || excerpt.text!==value.questionSource) throw new Error('译文片段已变化，请重新选择。');
+            return {target:record.c,selection:{side,option:side==='candidate' ? option.label : undefined,start:0,end:Array.from(anchor).length,quote:anchor,
+                display_context:{kind:'translation',source_side:isQuestion ? 'question' : side,source:isQuestion ? row.question.quote : anchor,text:result.text,
+                    ...(value.questionSource !== (isQuestion ? row.question.quote : anchor) ? {source_excerpt:value.questionSource,source_start:excerpt.start,source_end:excerpt.end} : {}),
+                    start:span.start,end:span.end,quote:span.quote,provider:value.provider,...(row ? {review_question:row.question} : {}),...(isQuestion ? {question:row.question} : {})}}};
+        }
         if (!['question', 'translation'].includes(value.side)) {
             const text = value.side === 'candidate' ? options(loaded).find(o => o.label === value.option)?.after : loaded.original;
             if (text === undefined) throw new Error('批注方案不存在。');
@@ -324,7 +365,7 @@ function createWorkbench(vscode, context, services) {
     function sendContent(translate = true) {
         if (!ready || !panel?.visible) return;
         post(packet()); post({type: 'backupStatus', ...services.backupStatus?.()}); post({type: 'configuration', ...configuration.status()});
-        post({type: 'handoffRetry', available: !!handoffRetry && valid(handoffRetry)});
+        post({type: 'handoffRetry', available: !!handoffRetry && validHandoff(handoffRetry)});
         if (hasPending && pending && pending.c.version !== active.version && (dirty || noteDirty)) post({type: 'conflict', message: 'AI 已生成新版。未保存编辑仍保留；请保存到别处或放弃后载入最新。'});
         if (!lastRecords.has(active.id)) post({type: 'unavailable', message: '当前项已处理或原文冲突；未覆盖任何未保存内容。'});
         if (notice?.message) post(notice);
@@ -414,16 +455,17 @@ function createWorkbench(vscode, context, services) {
         const scope = selectionScope(c, session);
         if (batchScope !== scope) {batchScope = scope; batchItems = [];}
         active = {...c}; loaded = data; dirty = noteDirty = false; hasPending = false; sourceSelection = undefined;
+        paragraphVisible.clear(); questionVisible.clear(); questionView=''; translationEpoch++;
         uiState = notice = handoffRetry = restoredDraft = undefined;
         if (restore) {uiState = readingState(restore.state); navigationFilter = restore.filter;}
         if (!panel) {
             panel = vscode.window.createWebviewPanel('texscholarReview', '论文审核', vscode.ViewColumn.One,
                 {enableScripts: true, localResourceRoots: [vscode.Uri.file(path.join(__dirname, 'vendor', 'katex'))], retainContextWhenHidden: false});
             panel.webview.onDidReceiveMessage(receive);
-            panel.onDidChangeViewState(({webviewPanel}) => {if (!webviewPanel.visible) {ready = false; translationRequested = retryTranslation = false;}});
+            panel.onDidChangeViewState(({webviewPanel}) => {if (!webviewPanel.visible) {ready = false; translationRequested = retryTranslation = false;paragraphVisible.clear();questionVisible.clear();questionView='';translationEpoch++;}});
             panel.onDidDispose(() => {panel = undefined; active = loaded = pending = sourceSelection = undefined;
                 lastRecords = new Map(); hasPending = dirty = noteDirty = ready = handling = false; pendingSynchronized.clear(); showRequest++;
-                uiState = notice = client = reading = relatedReturn = restoredDraft = batchScope = pendingCardAction = undefined; batchItems = []; translationEpoch++; translations.clear();});
+                uiState = notice = client = reading = relatedReturn = restoredDraft = batchScope = pendingCardAction = undefined; batchItems = []; translationEpoch++; translations.clear(); questionTranslations.clear(); questionVisible.clear(); paragraphVisible.clear(); questionView='';});
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
@@ -461,6 +503,7 @@ function createWorkbench(vscode, context, services) {
         } else if (synchronized.has(active.id)) {
             const old = loaded;
             active = {...next.c}; loaded = next.data;
+            paragraphVisible.clear();questionVisible.clear();questionView='';translationEpoch++;
             if (dirty || noteDirty) {
                 uiState = {...uiState, c:active, oldOriginal:uiState?.oldOriginal || old.original,
                     candidateDraftStale:!!Object.keys(uiState?.drafts || {}).length,
@@ -471,10 +514,10 @@ function createWorkbench(vscode, context, services) {
         } else if (dirty || noteDirty) {
             pending = next; hasPending = true;
             post({type: 'conflict', message: 'AI 已生成新版。未保存编辑仍保留；请保存到别处或放弃后载入最新。'});
-        } else {active = {...next.c}; loaded = next.data; uiState = readingState(uiState); sourceSelection = notice = undefined; sendContent();}
+        } else {active = {...next.c}; loaded = next.data; paragraphVisible.clear();questionVisible.clear();questionView='';translationEpoch++;uiState = readingState(uiState); sourceSelection = notice = undefined; sendContent();}
     }
     function autoTranslate(force = false) {
-        if (!active || !ready || !panel?.visible || (!force && !services.autoTranslate())) return;
+        if (!active || !ready || !panel?.visible || reviewMode === 'question' || (!force && (!services.autoTranslate() || !paragraphVisible.size))) return;
         translationRequested = true;
         retryTranslation ||= force;
         if (translationRun) return;
@@ -497,10 +540,11 @@ function createWorkbench(vscode, context, services) {
     async function translate(retry) {
         trimTranslations();
         const c = {...active}, data = loaded, epoch = translationEpoch, provider = services.provider();
-        const items = translationItems(data);
+        const items = translationItems(data).filter(item=>retry || paragraphVisible.has(item.key));
         let failure, warning;
         for (const item of items) {
             if (!valid(c) || epoch !== translationEpoch || !ready || !panel?.visible) return;
+            if (!retry && !paragraphVisible.has(item.key)) continue;
             if (!item.text.trim()) continue;
             const cacheKey = translationKey(provider, item);
             let translated = translations.get(cacheKey);
@@ -509,7 +553,8 @@ function createWorkbench(vscode, context, services) {
                 try {const value = failure ? undefined : await services.translate(item.text, provider, item);
                     translated = failure ? {error: failure} : typeof value === 'string' ? {text:value} : value;}
                 catch (error) {failure = error.message; translated = {error: failure};}
-                if (epoch !== translationEpoch) return;
+                if (epoch !== translationEpoch || !valid(c)) return;
+                if (!retry && !paragraphVisible.has(item.key)) continue;
                 translations.set(cacheKey, translated);
             }
             if (translated.warning) warning = translated.warning;
@@ -537,6 +582,79 @@ function createWorkbench(vscode, context, services) {
             client = message.instance; ready = true; sendContent(); return;
         }
         if (!active || !panel) return;
+        if (message.type === 'paragraphTranslationView') {
+            if (message.instance!==client || message.repo!==active.repo || message.owner!==active.owner || message.id!==active.id || message.version!==active.version ||
+                !Array.isArray(message.visible) || message.visible.some(key=>typeof key!=='string')) return;
+            paragraphVisible=new Set(message.visible); autoTranslate(); return;
+        }
+        if (message.type === 'translateCard') {
+            if (message.instance!==client || message.repo!==active.repo || message.owner!==active.owner || message.id!==active.id || message.version!==active.version) return;
+            const option=options(loaded).find(item=>item.label===message.option), c={...active}, epoch=translationEpoch, provider=services.provider();
+            if (!option || uiState?.drafts?.[option.label] !== undefined && uiState.drafts[option.label] !== option.after.replace(/\r\n/g,'\n')) return;
+            const item={key:option.label,text:option.after,kind:'candidate',option:option.label}, cacheKey=translationKey(provider,item);
+            await translationRun;
+            if (!valid(c) || epoch!==translationEpoch || provider!==services.provider()) return;
+            let result=translations.get(cacheKey);
+            if (!result || result.error) {
+                try {const value=await services.translate(item.text,provider,item);result=typeof value==='string' ? {text:value} : value;}
+                catch(error) {result={error:error.message};}
+                if (!valid(c) || epoch!==translationEpoch || provider!==services.provider()) return;
+                translations.set(cacheKey,result);
+            }
+            post({type:'translation',key:item.key,source:item.text,provider,...result}); return;
+        }
+        if (message.type === 'questionTranslationView') {
+            if (message.instance !== client || message.repo !== active.repo || message.owner !== active.owner ||
+                message.id !== active.id || message.version !== active.version || message.session !== services.session?.(active) ||
+                typeof message.view !== 'string' || !Array.isArray(message.visible) || message.visible.some(value=>typeof value!=='string')) return;
+            questionView = message.view; questionVisible = new Set(message.visible); return;
+        }
+        if (message.type === 'questionTranslate') {
+            if (message.instance !== client || message.repo !== active.repo || message.owner !== active.owner ||
+                message.id !== active.id || message.version !== active.version || message.session !== services.session?.(active)) return;
+            const rows = questionTable(active), row = rows.find(item => item.key === message.questionKey);
+            const linked = message.questionKey === '__unbound__' && !rows.some(item=>item.entries.some(entry=>entry.id===message.target))
+                ? directory().find(item=>item.id===message.target && item.version===message.targetVersion && item.card)
+                : row?.entries.find(item => item.id === message.target && item.version === message.targetVersion);
+            const record = linked && lastRecords.get(linked.id);
+            const option = record && options(record.data).find(item => item.label === message.option);
+            if (!record || !['full','snippets'].includes(message.viewStyle)) return;
+            const source = questionTranslationSource(record.data,row?.question,message.side,message.option,message.viewStyle)?.text;
+            if (source===undefined) return;
+            const view = JSON.stringify([message.session,message.questionKey,message.viewStyle,'question']);
+            const displayKey = JSON.stringify([message.session,message.questionKey,message.target,message.targetVersion,message.side,message.option || '',message.viewStyle,source]);
+            if (message.source !== source || message.displayKey !== displayKey || message.view !== view || questionView !== view ||
+                message.auto && (!services.autoTranslate() || !questionVisible.has(displayKey))) return;
+            const epoch = translationEpoch, provider = services.provider(), origin = {...active};
+            const originalSnapshot=record.data.original, candidateSnapshot=option?.after;
+            const identity = JSON.stringify([message.session,message.questionKey,message.target,message.targetVersion,message.side,message.option || '',message.viewStyle,source,provider]);
+            questionTranslationRun = questionTranslationRun.then(async () => {
+                const stillValid = () => {
+                    if (!valid(origin) || epoch!==translationEpoch || !panel?.visible || provider!==services.provider() || services.session(active)!==message.session || questionView!==view) return false;
+                    const latest=lastRecords.get(message.target), latestRows=questionTable(active), latestRow=latestRows.find(item=>item.key===message.questionKey);
+                    const linkedNow=message.questionKey==='__unbound__' ? !latestRows.some(item=>item.entries.some(entry=>entry.id===message.target))
+                        : latestRow?.entries.some(item=>item.id===message.target && item.version===message.targetVersion);
+                    const hasDraft=message.target===active.id && (uiState?.sourceDraftStale || uiState?.candidateDraftStale ||
+                        Object.entries(uiState?.drafts || {}).some(([label,value])=>options(loaded).some(item=>item.label===label && item.after.replace(/\r\n/g,'\n')!==value)) ||
+                        uiState?.blockDraft!==undefined && uiState.blockDraft!==loaded.block?.text.replace(/\r\n/g,'\n'));
+                    return (!message.auto || questionVisible.has(displayKey)) && linkedNow && !hasDraft &&
+                        latest?.c.version===message.targetVersion && latest.data.original===originalSnapshot &&
+                        (!message.option || options(latest.data).find(item=>item.label===message.option)?.after===candidateSnapshot);
+                };
+                if (!stillValid()) return;
+                let result = questionTranslations.get(identity);
+                if (!result || message.retry && result.error) {
+                    try {const value = await services.translate(source, provider, message.side === 'candidate' ? {kind:'candidate',option:message.option} : {}); result = typeof value === 'string' ? {text:value} : value;}
+                    catch (error) {result = {error:error.message};}
+                    if (!stillValid()) return;
+                    questionTranslations.set(identity,result);
+                }
+                post({type:'questionTranslation', questionKey:message.questionKey,target:message.target,targetVersion:message.targetVersion,
+                    side:message.side,option:message.option,viewStyle:message.viewStyle,source,provider,displayKey,view,...result});
+            });
+            await questionTranslationRun;
+            return;
+        }
         if (message.type === 'cardActionClaim') {
             const action = pendingCardAction, latest = action && lastRecords.get(action.c.id);
             if (message.instance === client && action?.token === message.token && !handling && valid(action.c) &&
@@ -580,6 +698,7 @@ function createWorkbench(vscode, context, services) {
         if (message.type === 'reviewMode') {
             if (!['paragraph','question'].includes(message.mode) || !['snippets','full'].includes(message.viewStyle) || typeof message.questionKey !== 'string') return;
             if (message.repo !== active.repo || message.owner !== active.owner || message.id !== active.id || message.version !== active.version) return;
+            if (reviewMode!==message.mode) {reviewMode=message.mode; translationEpoch++;paragraphVisible.clear();}
             try {
                 await context.globalState?.update('reviewMode', message.mode);
                 await context.globalState?.update('reviewQuestionViewStyle', message.viewStyle);
@@ -588,6 +707,7 @@ function createWorkbench(vscode, context, services) {
                     positions[JSON.stringify([active.repo,active.owner])] = {session:services.session(active),key:message.questionKey};
                     await context.workspaceState.update('reviewQuestionPosition', positions);
                 }
+                if (reviewMode==='paragraph') autoTranslate();
             } catch (error) {post({type:'result', error:true, message:'审核模式未保存：' + error.message});}
             return;
         }
@@ -793,7 +913,7 @@ function createWorkbench(vscode, context, services) {
                 return;
             }
             if (message.type === 'retryHandoff') {
-                if (!handoffRetry || !valid(handoffRetry)) throw new Error('交接目标已改变，请核对当前项；未重复保存批注。');
+                if (!validHandoff(handoffRetry)) throw new Error('交接目标已改变，请核对当前项；未重复保存批注。');
                 return await handoffSavedNote({...handoffRetry});
             }
             if (message.type === 'postpone' || message.type === 'restorePostponed') {
@@ -842,7 +962,7 @@ function createWorkbench(vscode, context, services) {
                     await consumeRestoredDraft(restored, 'candidate', message.option);
                     if (panel !== operationPanel || !valid(c)) return;
                     loaded = saved;
-                    active = {...c, version: loaded.version}; dirty = false;
+                    active = {...c, version: loaded.version}; dirty = false; paragraphVisible.clear();questionVisible.clear();questionView='';translationEpoch++;
                     post({...packet(), type: 'saved', option: message.option, preserveInput:uiState?.drafts?.[message.option] !== candidateBefore, message: '方案 ' + message.option + ' 已保存；尚未接收。'});
                 }
                 if (message.type === 'saveAccept') {
@@ -881,14 +1001,15 @@ function createWorkbench(vscode, context, services) {
                     if (option) selected.option = option.label;
                 }
                 const restored = restoredDraft, noteBefore = uiState?.note, purposeBefore=uiState?.purpose || 'revision';
-                await services.note(c, {...selected,purpose:message.purpose === undefined ? 'revision' : message.purpose}, message.text);
+                const noteTarget=selected.target || c, noteSelection=selected.selection || selected;
+                await services.note(noteTarget, {...noteSelection,purpose:message.purpose === undefined ? 'revision' : message.purpose}, message.text);
                 await consumeRestoredDraft(restored, 'note');
                 if (panel !== operationPanel || !valid(c)) return;
                 const preserveInput = uiState?.note !== noteBefore || (uiState?.purpose || 'revision') !== purposeBefore;
                 if (!preserveInput) noteDirty = false;
                 sourceSelection = undefined;
                 post({type: 'noteSaved', preserveInput, message: '返修要求已保存，可继续添加；未发送 AI。'});
-                if (message.handoff) return await handoffSavedNote(c);
+                if (message.handoff) return await handoffSavedNote(noteTarget);
             } else if (message.type === 'saveSource') {
                 if (uiState?.sourceDraftStale) throw new Error('原文草稿基于旧正文；请先复制或放弃后载入最新。');
                 if (!loaded.block || typeof message.value !== 'string') throw new Error('当前块不可编辑，请先核对标记。');
@@ -965,7 +1086,7 @@ function createWorkbench(vscode, context, services) {
                     relatedReturn = origin; post({type: 'relatedReturn', id: c.id});
                 }
             }
-            else if (message.type === 'provider') {await services.changeProvider(); translationEpoch++; autoTranslate();}
+            else if (message.type === 'provider') {await services.changeProvider(); translationEpoch++; questionVisible.clear(); post({type:'questionTranslationReset'}); autoTranslate();}
             else throw new Error('不支持的审核操作。');
             post({type: 'result', message: ''});
         } catch (error) {
@@ -1007,7 +1128,7 @@ function createWorkbench(vscode, context, services) {
         titleStatus(message) {post({type:'titleStatus',message});},
         backupStatus(value) {post({type: 'backupStatus', ...value});},
         updateStyle() {if (active) post({type: 'style', style: services.style()});},
-        settingsChanged() {if (active) {translationEpoch++; autoTranslate();}},
-        get active() {return active;}, whenTranslationIdle: () => translationRun || Promise.resolve()};
+        settingsChanged() {if (active) {translationEpoch++; questionVisible.clear(); post({type:'questionTranslationReset'}); autoTranslate();}},
+        get active() {return active;}, whenTranslationIdle: () => Promise.all([translationRun, questionTranslationRun])};
 }
 module.exports = {createWorkbench, html, filterItems, staleBatchSelections};

@@ -81,6 +81,38 @@
         for (const char of raw) starts.push(starts.at(-1) + char.length);
         return (changes || []).map(c => [starts[c[prefix + '_start']], starts[c[prefix + '_end']]]);
     }
+    function questionExcerptRange(text, changes, side) {
+        const whole=()=>({text,start:0,end:Array.from(text).length});
+        // Keep complete TeX argument and environment boundaries when clipping.
+        // A multiline argument or environment makes the full source the safe unit.
+        if (/\\(?:begin|end)\s*\{(?!(?:equation|align|alignat|gather|multline|flalign|eqnarray|displaymath|math)\*?\})|\\[A-Za-z@]+\s*\n\s*[\[{]/.test(text)) return whole();
+        let depth = 0, brackets = 0;
+        for (let i=0;i<text.length;i++) {
+            if (text[i] === '\n' && (depth || brackets)) return whole();
+            if (!escaped(text,i) && text[i] === '{') depth++;
+            if (!escaped(text,i) && text[i] === '}' && --depth < 0) return whole();
+            if (!escaped(text,i) && text[i] === '[') brackets++;
+            if (!escaped(text,i) && text[i] === ']' && --brackets < 0) return whole();
+        }
+        if (depth || brackets) return whole();
+        const points=Array.from(text), ranges=[], breaks=[0];
+        points.forEach((ch,i)=>{if(ch==='\n') breaks.push(i+1);}); breaks.push(points.length);
+        for (const change of changes) {
+            const start=change[side+'_start'], end=change[side+'_end'];
+            for (let i=0;i<breaks.length-1;i++) if (start <= breaks[i+1] && end >= breaks[i]) ranges.push(i-1,i,i+1);
+        }
+        for (const segment of segments(text).filter(segment=>segment.math || segment.literal)) {
+            const start=Array.from(text.slice(0,segment.start)).length, end=start+Array.from(text.slice(segment.start,segment.end)).length;
+            const lines=[];
+            for (let i=0;i<breaks.length-1;i++) if (start < breaks[i+1] && end > breaks[i]) lines.push(i);
+            if (lines.some(line=>ranges.includes(line))) ranges.push(...lines);
+        }
+        const lines=[...new Set(ranges.filter(i=>i>=0&&i<breaks.length-1))].sort((a,b)=>a-b);
+        if (!lines.length) return whole();
+        const start=breaks[lines[0]], end=breaks[lines.at(-1)+1];
+        return {text:points.slice(start,end).join(''),start,end};
+    }
+    function questionExcerpt(text,changes,side) {return questionExcerptRange(text,changes,side).text;}
     function previewTex(tex) {
         // Labels affect document references, not the visible mathematical body.
         // Keep them in source/annotations; KaTeX cannot resolve paper-wide refs.
@@ -212,5 +244,5 @@
         const raw = rawBounds(model, point(a, range.startContainer, range.startOffset, false), point(b, range.endContainer, range.endOffset, true));
         return raw ? {...raw, wholeMath: anchors.some(a => a.math)} : undefined;
     }
-    return {projection, segments, changedRanges, rawBounds, previewTex, render, selectedRange, selectionRanges, wordChanges};
+    return {projection, segments, changedRanges, questionExcerpt, questionExcerptRange, rawBounds, previewTex, render, selectedRange, selectionRanges, wordChanges};
 });

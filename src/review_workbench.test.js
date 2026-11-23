@@ -85,10 +85,75 @@ test('translation shows restoration warnings and supplier failure', async () => 
     assert(messages.some(m=>m.type==='translation'&&m.key==='A'&&m.error==='供应商不可用'));
 });
 
+test('automatic paragraph translation only requests visible source areas', async () => {
+    let receive;const calls=[];
+    const c={repo:'/visible',owner:'state',id:'1',version:'v1'},data={version:'v1',original:'Old text',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[],questions:[]},options:[{label:'A',after:'Visible text',reason:'A',changes:[]},{label:'B',after:'Hidden text',reason:'B',changes:[]}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage(){}}})}};
+    const services={read:async()=>data,style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>true,provider:()=> 'fixture',directory:()=>[],translate:async text=>{calls.push(text);return {text:'中文 '+text};}};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});await view.whenTranslationIdle();assert.deepEqual(calls,[]);
+    await receive({type:'paragraphTranslationView',instance:'page',...c,visible:['A']});await view.whenTranslationIdle();assert.deepEqual(calls,['Visible text']);
+    await receive({type:'paragraphTranslationView',instance:'page',...c,visible:['original']});await view.whenTranslationIdle();assert.deepEqual(calls,['Visible text','Old text']);
+});
+
+test('question translation requests use the displayed card identity and do not translate other cards', async () => {
+    let receive, handoffs=0; const calls=[], messages=[], notes=[];
+    const c={repo:'/fixture',owner:'state',id:'1',version:'v1'}, other={...c,id:'2',version:'v2'};
+    const question={id:'Q',file:'review.txt',quote:'Explain this method.'}, questionKey=JSON.stringify([question.id,question.file,question.quote]);
+    const make=(id,version)=>({version,original:'Original '+id,source_match:true,edit:{file:id+'.tex',kind:'manuscript',versions:[version],requests:[],questions:[question]},options:[{label:'A',after:'Changed '+id,reason:'A',changes:[]},{label:'B',after:'$$x=1$$',reason:'B',changes:[]}]});
+    const one=make('1','v1'),two=make('2','v2');
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const state={get:(_k,fallback)=>fallback,update:async()=>{}};
+    const services={read:async()=>one,session:()=> 'session',style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,provider:()=> 'fixture',directory:()=>[],questions:()=>[{key:questionKey,question,entries:[{id:'1',version:'v1'},{id:'2',version:'v2'}],snapshot:'[]'}],translate:async text=>{calls.push(text);return text==='$$x=1$$' ? {noTranslation:'纯行间公式无需翻译。'} : {text:'中文 '+text};},note:async (...args)=>notes.push(args),handoff:async target=>{assert.equal(target.id,'2');if (++handoffs===1) throw Error('offline');}};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState:state},services);view.setRecords(new Map([['1',{c,data:one}],['2',{c:other,data:two}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    const viewKey=JSON.stringify(['session',questionKey,'full','question']), displayKey=JSON.stringify(['session',questionKey,'2','v2','candidate','A','full','Changed 2']);
+    await receive({type:'questionTranslationView',instance:'page',...c,session:'session',view:viewKey,visible:[displayKey]});
+    await receive({type:'questionTranslate',instance:'page',...c,session:'session',questionKey,target:'2',targetVersion:'v2',side:'candidate',option:'A',viewStyle:'full',source:'Changed 2',view:viewKey,displayKey,retry:true});
+    await view.whenTranslationIdle();
+    assert.deepEqual(calls,['Changed 2']);
+    assert(messages.some(m=>m.type==='questionTranslation' && m.target==='2' && m.targetVersion==='v2' && m.option==='A' && m.text==='中文 Changed 2'));
+    await receive({type:'note',instance:'page',...c,side:'translation',provider:'fixture',questionTranslationKey:displayKey,questionTarget:'2',questionTargetVersion:'v2',questionKey,questionSide:'candidate',option:'A',questionSource:'Changed 2',questionViewStyle:'full',session:'session',value:'中文 Changed 2',start:0,end:2,text:'核对译文'});
+    assert.equal(notes[0][0].id,'2');assert.equal(notes[0][0].version,'v2');
+    assert.equal(notes[0][1].option,'A');assert.equal(notes[0][1].quote,'Changed 2');assert.equal(notes[0][1].display_context.quote,'中文');
+    assert.deepEqual(notes[0][1].display_context.review_question,question);
+    await receive({type:'note',instance:'page',...c,side:'translation',provider:'fixture',questionTranslationKey:displayKey,questionTarget:'2',questionTargetVersion:'v2',questionKey,questionSide:'candidate',option:'A',questionSource:'Changed 2',questionViewStyle:'full',session:'session',value:'中文 Changed 2',start:0,end:2,text:'核对译文',handoff:true});
+    assert(messages.some(message=>message.error && message.message.includes('加入 Codex 失败')));
+    await receive({type:'retryHandoff',instance:'page',...c});assert.equal(handoffs,2);assert.equal(notes.length,2,'retry must not save the note again');
+    await receive({type:'questionTranslate',instance:'page',...c,session:'session',questionKey,target:'2',targetVersion:'old',side:'candidate',option:'A',viewStyle:'full',source:'Changed 2',view:viewKey,displayKey,retry:true});
+    assert.deepEqual(calls,['Changed 2'],'a stale card must not be translated');
+    const firstKey=JSON.stringify(['session',questionKey,'1','v1','candidate','A','full','Changed 1']);
+    await receive({type:'questionTranslate',instance:'page',...c,session:'session',questionKey,target:'1',targetVersion:'v1',side:'candidate',option:'A',viewStyle:'full',source:'Changed 1',view:viewKey,displayKey:firstKey,retry:true});
+    assert.deepEqual(calls,['Changed 2','Changed 1']);
+    const mathKey=JSON.stringify(['session',questionKey,'1','v1','candidate','B','full','$$x=1$$']);
+    await receive({type:'questionTranslate',instance:'page',...c,session:'session',questionKey,target:'1',targetVersion:'v1',side:'candidate',option:'B',viewStyle:'full',source:'$$x=1$$',view:viewKey,displayKey:mathKey,retry:true});
+    assert(messages.some(message=>message.type==='questionTranslation' && message.option==='B' && message.noTranslation==='纯行间公式无需翻译。'));
+});
+
+test('question translation discards late results and retries a visible provider failure only on request', async () => {
+    let receive, release, attempt=0, provider='fixture'; const messages=[];
+    const c={repo:'/fixture',owner:'state',id:'1',version:'v1'}, question={id:'Q',file:'review.txt',quote:'Explain.'};
+    const questionKey=JSON.stringify([question.id,question.file,question.quote]);
+    const data={version:'v1',original:'Old text',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[],questions:[question]},options:[{label:'A',after:'New text',reason:'A',changes:[]}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const state={get:(_k,fallback)=>fallback,update:async()=>{}};
+    const services={read:async()=>data,session:()=> 'session',style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>true,provider:()=>provider,directory:()=>[],questions:()=>[{key:questionKey,question,entries:[{id:'1',version:'v1'}],snapshot:'[]'}],translate:async()=>{attempt++;if(attempt===1)return await new Promise(resolve=>{release=resolve;});if(attempt===2)throw Error('HTTP 429');return {text:'新文'};}};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState:state},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    const key=JSON.stringify(['session',questionKey,'1','v1','candidate','A','full','New text']), current=JSON.stringify(['session',questionKey,'full','question']);
+    const sendView=(viewKey,visible)=>receive({type:'questionTranslationView',instance:'page',...c,session:'session',view:viewKey,visible});
+    const request={type:'questionTranslate',instance:'page',...c,session:'session',questionKey,target:'1',targetVersion:'v1',side:'candidate',option:'A',viewStyle:'full',source:'New text',view:current,displayKey:key,auto:true};
+    await sendView(current,[key]);const pending=receive(request);await new Promise(resolve=>setImmediate(resolve));
+    await sendView(JSON.stringify(['session',questionKey,'snippets','question']),[]);release({text:'旧译文'});await pending;
+    assert(!messages.some(message=>message.type==='questionTranslation'));
+    await sendView(current,[key]);await receive({...request,auto:false,retry:true});
+    assert(messages.some(message=>message.type==='questionTranslation' && message.error==='HTTP 429'));
+    await receive(request);assert.equal(attempt,2,'automatic refresh preserves the failure and does not retry');
+    await receive({...request,auto:false,retry:true});assert.equal(attempt,3);
+    assert(messages.some(message=>message.type==='questionTranslation' && message.text==='新文'));
+    provider='other';view.settingsChanged();await sendView(current,[key]);await receive({...request,auto:false,retry:true});
+    assert.equal(attempt,4);assert(messages.some(message=>message.type==='questionTranslation' && message.provider==='other'));
+});
+
 test('question excerpts retain complete multiline math and Unicode change coordinates', () => {
-    const fs=require('node:fs'),vm=require('node:vm'),math=require('./review_math');
-    const client=fs.readFileSync(require.resolve('./review_workbench_client'), 'utf8');
-    const excerpt=vm.runInNewContext('('+client.slice(client.indexOf('function changedLines('),client.indexOf('\nfunction renderQuestionMode()',client.indexOf('function changedLines(')))+')',{math});
+    const math=require('./review_math'), excerpt=math.questionExcerpt;
     const old='远处 😀\nunchanged\n\\begin{alignat*}{2}\nx &= 1 \\\\\n+y &= 2\n\\end{alignat*}\nnear end\nfar end\n';
     const now=old.replace('y &= 2','y &= 3');
     const changes=math.wordChanges(old,now);
@@ -101,6 +166,10 @@ test('question excerpts retain complete multiline math and Unicode change coordi
     }
     const inserted='one\ntwo\nthree\nfour\nfive\n', modified=inserted.replace('three','three plus');
     assert(excerpt(modified,math.wordChanges(inserted,modified),'new').includes('three plus'));
+    const range=math.questionExcerptRange(now,changes,'new');
+    assert.equal(Array.from(now).slice(range.start,range.end).join(''),range.text);
+    const multiline='far\ncontext\nA \\cite{one,\ntwo} changed\nend\nfar end';
+    assert.equal(excerpt(multiline,math.wordChanges(multiline,multiline.replace('changed','revised')),'old'),multiline);
 });
 
 test('hidden stale batch choices remain selected until explicitly reconsidered', () => {
@@ -494,7 +563,8 @@ test('fixed workbench reuses one tab, retains precise B notes, unsaved drafts an
     await send('translate'); await view.whenTranslationIdle(); const once = translations;
     await send('translate'); await view.whenTranslationIdle(); assert.equal(translations, once, 'reachable translations are reused');
     disposed(); assert.equal(view.active, undefined);
-    view.setRecords(records); await view.show(records.get('a').c); await receive({type: 'ready'}); await view.whenTranslationIdle();
+    view.setRecords(records); await view.show(records.get('a').c); await receive({type: 'ready'});
+    await send('paragraphTranslationView',{repo:view.active.repo,owner:view.active.owner,visible:['original','A','B','C']}); await view.whenTranslationIdle();
     assert.equal(translations, once * 2, 'closing releases translations; reopening reads current content');
     services.autoTranslate = () => false;
     const state = {c: {...view.active}, drafts: {A: 'Draft A', B: 'Draft B'}, note: '保留未保存要求', composer: true,

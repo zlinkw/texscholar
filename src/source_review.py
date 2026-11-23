@@ -1851,6 +1851,16 @@ class Review:
                 raise Conflict('Invalid annotation source context')
             if context.get('source') != source:
                 raise Conflict('Annotation context source changed')
+            if 'review_question' in context:
+                question = context['review_question']
+                if context['kind'] != 'translation' or question not in edit.get('questions', []):
+                    raise Conflict('Annotation reviewer question is no longer linked')
+                self.question_links([question])
+            if any(key in context for key in ('source_excerpt', 'source_start', 'source_end')):
+                a, b = context.get('source_start'), context.get('source_end')
+                if (context['kind'] != 'translation' or type(a) is not int or type(b) is not int or
+                        not 0 <= a < b <= len(source) or context.get('source_excerpt') != source[a:b]):
+                    raise Conflict('Translation excerpt does not match its source')
             display = context.get('text')
             a, b = context.get('start'), context.get('end')
             if not isinstance(display, str) or type(a) is not int or type(b) is not int or not 0 <= a < b <= len(display):

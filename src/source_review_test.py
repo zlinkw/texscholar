@@ -132,6 +132,8 @@ class Flow(unittest.TestCase):
         contexts = [
             {'kind': 'translation', 'source_side': 'original', 'source': data['original'], 'text': '模型提高性能。', 'provider': 'bing'},
             {'kind': 'translation', 'source_side': 'candidate', 'source': data['candidate'], 'text': '模型可靠地提高性能。', 'provider': 'bing'},
+            {'kind': 'translation', 'source_side': 'candidate', 'source': data['candidate'], 'source_excerpt': 'reliably improves',
+             'source_start': data['candidate'].index('reliably improves'), 'source_end': data['candidate'].index('reliably improves') + len('reliably improves'), 'text': '可靠地提高', 'provider': 'bing', 'review_question': question},
             {'kind': 'question', 'source_side': 'question', 'source': question['quote'], 'text': question['quote'], 'question': question},
             {'kind': 'translation', 'source_side': 'question', 'source': question['quote'], 'text': '感谢您的意见。', 'provider': 'bing', 'question': question},
         ]
@@ -148,6 +150,8 @@ class Flow(unittest.TestCase):
             before = self.review().raw
             for bad in [{**spec, 'display_context': {**ctx, 'quote': 'wrong'}},
                         {**spec, 'display_context': {**ctx, 'source': 'changed'}},
+                        {**spec, 'display_context': {**ctx, 'source_excerpt': 'not present'}},
+                        {**spec, 'display_context': {**ctx, 'review_question': {**question, 'quote': 'stale'}}},
                         {**spec, 'version': 'stale'}, update]:
                 with self.assertRaises(m.Conflict): self.runop('feedback', bad)
                 self.assertEqual(self.review().raw, before)
