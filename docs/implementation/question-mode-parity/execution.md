@@ -34,3 +34,9 @@ M1/M2 首批：正常 Development 私有桌面 M-ui-red1 实际 observer/外层 
 窄窗口尝试 M-access-ui 宿主 exit 0、观察器/外层 exit 1：调整外层 viewport 至 560 后，VS Code 审核 iframe 实际仍为 787，未达到测试前提；该结果是测试宿主尺寸限制，不能当作产品通过或缺陷。该次按钮可聚焦，未完成键盘路径；Default 输入桌面和前中后前台仍为 25630512，私有桌面关闭。原始日志保留，不存在截图或删除操作。
 
 M-access2-ui 尝试在隔离宿主调整缩放后 iframe 仍为 787，观察器/外层 exit 1；仍未达到窄窗口测试前提，不当作产品缺陷或通过。
+
+M-R1：总控 M-controller2 以真实 295px 审核 iframe 及截图 ui-bc8d895e3f804ac58ada62e88c1f5bee.png 复现问题卡三列过窄、批注文字逐字换行及保存按钮裁切；原外层无溢出断言不足以判断可用。修复仅将已有 600px 媒体查询内的问题方案布局改为单列，宽窗维持三列，不改变段落模式或批注协议。
+
+M-r2-ui 正常 Development 独立 profile、专属 pipe、私有未切桌面：实际 iframe 295px，ABC 同列纵向排列，composer/文本框/用途/保存/取消边界及内容宽度可容纳；截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-60c3f581503944c99623370269414890.png 实看，英文和按钮可读。实际键盘从输入框 Tab 到保存并 Enter 后，M-r2-verify 读隔离项目真实状态 exit 0，卡 1、精确版本 270a51ea1ed096c2607921a56381e90cea722445992ad72b20cf29074faced7a、方案 A、candidate [0,9) 的 Paragraph 及用途 revision 均匹配；当前项仍为 3。同一宿主安全调整自有窗口后 iframe 1035px、ABC 恢复并列，截图 ui-2f9a91efcb11127eaeb90dae3c0d96a5.png 已看。宿主/观察器/外层 exit 0，Default 输入及前中后前台 HWND 25630512 一致，桌面关闭；M-r2-workbench 46 项 exit 0。复用总控 controller2 的键盘方向/Tab 及 host refresh 后草稿、精确范围、滚动保护结果，和此前未受影响链。
+
+失败保留：M-r1-setup 内置准备已成功，随后误重复执行 M-r1-prepare exit 1，已存在隔离状态导致 begin 冲突，没有删除或覆盖；M-r1-ui 的合成键盘 Enter 缺少字符事件，等待保存超时 exit 1，host 无 feedback 写入；修正键盘事件后使用全新 r2。M-controller1 不支持的 Electron API、两次旧 access 尺寸前提失败均仍保留。所有 M-r1/M-r2 完整日志及隔离数据在 D:/latex-writing-checks/review-efficiency-20261122；不触真实论文、默认管道或用户窗口，不构建、安装、发行、重载或删除。
