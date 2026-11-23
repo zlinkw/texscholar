@@ -77,7 +77,7 @@ class FileRoles(unittest.TestCase):
         data = scan(self.root, storage)
         record = {'owner':data['owner'], 'files':data['files'], 'structure':data['structure']}
         write_roles(storage, self.root, data['review_owner'], 0, record)
-        plan = {'owner':data['owner'], 'owner_before':base64.b64encode(path.read_bytes()).decode(), 'remove':['CODEX-FILE-ROLES','CODEX-RULES']}
+        plan = {'kind':'profile-metadata', 'owner':data['owner'], 'owner_before':base64.b64encode(path.read_bytes()).decode(), 'remove':['CODEX-FILE-ROLES','CODEX-RULES']}
         with self.assertRaisesRegex(ValueError, '缺少精确迁移'):
             verify(self.root, storage, plan)
         entry = {'kind':'constraints','text':rules,'evidence':'author','source':data['owner'] + ':CODEX-RULES'}

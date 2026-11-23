@@ -32,3 +32,15 @@ P2/P3 本批：角色扫描可从同一 profile 的 paper_id 读取结构化登�
 正常 Development 论文助手局部：p-ui1 观察器未等待 QuickPick 即输入，隔离编辑器出现未保存文本并在原 60 秒超时；host 0、observer 1、外层 1，无附件，不能算通过，截图 ui-c3bac627adbc4a8091e603f6ffbdf370.png 留存。全新 p-ui2 的 setup/prepare/stage/run、host/observer 均 exit 0；真实 VS Code Memento、宿主桥，选择回复任务、进入角色确认并保存默认角色、选择 main.tex 与 reply.tex，预览后实际捕获附件；源、审核状态和范围外暂存前后一致。前/中/后 HWND 20580124、输入桌面 Default，GUI 位于私有未切换桌面且已关闭；截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-7481d6013d81485bb1199d10bd1344d4.png 已实际查看。角色调整界面虽打开但未改变具体角色，不能算角色修改验证；该夹具默认将回复文件推断为 manuscript 并由模拟作者确认，仍需新样例真实更改角色及取消。实际附件未发送 AI。
 
 助手角色摘要、文件选择和最终预览现显示既有中文角色名，附件中的机器角色 ID 不变。p-editor-seventh exit 1，59 项中三项因漏设 LOCAL_LATEX_PYTHON 导致子进程启动参数为空及配置测试失败，首败保留；新隔离 p-editor8 正确显式设 C:/Python314/python.exe 后 p-editor-eighth 59 项 exit 0。runner process 只记录部分环境变量，实际还设置 LOCAL_LATEX_PYTHON，完整日志按原前缀保留。
+
+正常 Development 新隔离 p-ui3：setup/prepare/stage/run、host/observer 均 exit 0。真实交互选回复任务→逐项调整 reply.tex 为“回复信”、编译入口未指定→保存角色→使用已保存角色→多选正文和回复→预览并加入隔离附件；预览中文角色，附件 machine ID 为 response，源、状态与范围外 stage 完全不变，未发送。前中后 HWND 20580124、输入桌面 Default 不变，真实窗口在私有未切换桌面且已关闭。截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-62ceea198c324f4a852dd0cf6760caf3.png 已查看；此轮未证明取消和跨重启。
+
+p-migration4-check exit 1：对比旧审核项时错误地删除新 anchor 后将其与仍含旧 anchor 的项比较；旧 schema 迁移需要按新块建立 anchor，失败不代表旧批注不一致。保留全部原始预览及失败；全新 p-migration5 只读语义比较准备结果，排除新旧不同锚点后其余全部项目字段、版本及独立批注、批次、计数一致（exit 0）；已创建隔离恢复对象，尚未执行真实宿主事务和迁移后读取，不能称旧状态迁移通过。
+
+保护事件：p-roles-twelfth 13 项、6 项 error、exit 1；因漏设 PYTHONPATH，测试对默认审核宿主命名管道以隔离 fixture 根申请事务，六次在 reserve 阶段被拒绝，日志为“宿主资格已失效或存在多个宿主；未提交正文”，不能据此判断默认宿主身份或真实环境绝对零副作用。总控已告知用户；无真实论文路径或成功提交证据。p-roles-thirteenth 显式配置隔离 test-support 后 13 项 exit 0，但启动前未单独校验导入；以后由测试入口执行本地导入自检，未通过不启动测试。只读核对本代现有 p-roles 系列 argv/env：除本次 twelfth 外均记录 test-support；p-db-first 未加载该模块，但其 MCP.setUp 显式调用 NativeReview.setUp 以 mock 替换 HostSession，三项背景数据库测试 exit 0；p-migration2/3 apply 均记录 test-support，p-migration4/5 的 NativeReview.setUp 同样显式替换 HostSession，check 只调用 preview/prepare 不连接宿主；p-ui 各项使用独立 pipe。现有相关日志中该宿主拒绝仅出现在 twelfth，无法据此推断未记录的其他环境。
+
+p-ui4 首次旧状态真宿主迁移样例失败：外置 fs.watch 同一 start 文件触发两次，两个 worker 竞争，首个被锁拒绝，观察器据此失败并关闭宿主，另一 worker 随后连接中断；保留其未知现场，未重放。全新 p-ui5 限制该外置触发仅启动一次，setup/prepare/stage/run 及真实 Development host/observer/worker 均 exit 0：旧内嵌状态真实事务迁至 sidecar，较早 open、上一版暂留与当前正文/回复同文四条批注及 ID、版本、计数、批次读回一致，候选重定位可检查；随后规则/角色先入独立 P 并读回、用真实宿主去除准确顶块。范围外 stage 保持；截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-89b493d5ddf74c0886eac7ff1ac3c62f.png 已查看。旧审核迁移通知及计数头仍待单独安全去除，不能将此算整体迁移完成。
+
+旧审核机器头处理：外置状态已完成、legacy_owner 与旧源匹配、计数一致、论文资料角色已确认且持原锁时，宿主只移除已识别的状态封装、计数和迁移通知；保留头内普通作者注释。未知机器字段、旧数据、状态不一致、源／状态变化或脏缓冲均拒绝。宿主把 sidecar 作为精确快照检查项，事务中复核；不删除文件或对象。新隔离 p-ui6 实际 Development 宿主中，从旧内嵌迁移、角色/规则接管到去旧头依次真实执行，四条批注、版本、反馈及定位读回，作者注释和范围外 stage 保留；worker/host/observer/外层 0。输入桌面 Default 及前中后 HWND 20580124 一致，GUI 在未切换私有桌面且已关闭；截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-9ff2284badca4126beb8c5ef11746f7c.png 已实际查看。预先本地核实 sitecustomize 位于 p-ui6 并指向专属 p6 管道，无默认管道探测。
+
+选区快速入口保留原有用途：已确认角色写入附件；未确认/结构变化明确提示先核对，选区仍可作为只读上下文，不自动要求三方案。p-editor-ninth 60 项 exit 0；p-native-second 三项 exit 0，其外置执行器先校验测试替身和本代 fixture 根才运行。取消和跨进程/旧格式中断组合仍需补齐。

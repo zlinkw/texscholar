@@ -263,7 +263,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
     await fs.writeFile(path.join(home, 'config.toml'), unrelated, 'utf8');
     const previousHome = process.env.CODEX_HOME; process.env.CODEX_HOME = home;
     const handlers = new Map(), state = new Map(), workspaceState = new Map(), calls = [], notices = [], copied = [];
-    let desktopClient = false, warningActions = [];
+    let desktopClient = false, warningActions = [], roleStatus = 'confirmed';
     let goal, available = ['chatgpt.newChat', 'chatgpt.addFileToThread'], copyChoice, python = process.env.LOCAL_LATEX_PYTHON;
     const folder = {uri: {scheme: 'file', fsPath: paper}};
     const vscode = {extensions: {getExtension: () => ({}), onDidChange: () => ({dispose() {}})}, Uri: {file: fsPath => ({scheme: 'file', fsPath})}, RelativePattern: class {},
@@ -282,7 +282,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         workspaceState: {get: key => workspaceState.get(key), update: async (key, value) => workspaceState.set(key, value)}};
     try {
         await require('./mcp_setup').activate(context, vscode, {scanClients: async () => ({available: true, clients: [{pid: process.pid, client: desktopClient ? 'desktop' : 'vscode'}]}),
-            readRoles:async () => ({status:'confirmed',authority:'paper',files:[{file:'paper.tex',roles:['manuscript'],root:'paper.tex'}]})}).ready;
+            readRoles:async () => ({status:roleStatus,authority:'paper',files:[{file:'paper.tex',roles:['manuscript'],root:'paper.tex'}]})}).ready;
         assert(!notices.some(text => text.includes('MCP 运行版本待核验')), 'startup without a report is a quiet pending state');
         const start = handlers.get('localLatex.startPaperTask');
         await start({goal:''});
@@ -298,6 +298,14 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         assert(!initial.includes('# TeXScholar 当前任务协作协议：'), 'MCP provides the actual applicable protocol once');
         assert(initial.includes('known_rules')); assert(initial.includes('ids'));
         assert(notices.at(-1).includes('首次连接需重启 Codex'));
+        const scope = {project:paper,scopes:[{file:'paper.tex',quote:'Original paper',left:'',right:' stays unchanged.'}]};
+        await start({goal:'只查看选区',readRequest:scope,keepCurrentChat:true});
+        let quick = await fs.readFile(calls.filter(c => c[0] === 'chatgpt.addFileToThread').at(-1)[1].fsPath,'utf8');
+        assert(quick.includes('"roles":["manuscript"]')); assert(quick.includes('不自动创建候选或修改正文'));
+        roleStatus = 'changed'; await start({goal:'只查看选区',readRequest:scope,keepCurrentChat:true});
+        quick = await fs.readFile(calls.filter(c => c[0] === 'chatgpt.addFileToThread').at(-1)[1].fsPath,'utf8');
+        assert(notices.some(text => text.includes('文件角色尚未确认或文件结构已变化')));
+        assert(quick.includes('请通过 read_context 核对。')); roleStatus = 'confirmed';
         const messages = vscode.window.showInformationMessage;
         let steps = ['discuss','later','无需补充，继续','加入当前聊天'];
         vscode.window.showQuickPick = async options => {const item=steps.shift(); return options.find(option => option.id === item || option.label === item);};

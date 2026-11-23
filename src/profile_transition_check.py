@@ -6,6 +6,7 @@ import re
 import sys
 from document_roles import scan
 from paper_background import read, read_roles
+from source_review import Review, letters
 
 
 def verify(root, storage, plan):
@@ -14,6 +15,22 @@ def verify(root, storage, plan):
     raw = (root / owner).read_bytes()
     if raw != base64.b64decode(plan['owner_before'], validate=True):
         raise ValueError('待迁移源文件已变化。')
+    if plan['kind'] == 'retired-review-header':
+        checks = [item for item in plan['checks'] if item['file'] == '.codex-review/state.json']
+        if len(checks) != 1 or (root / '.codex-review/state.json').read_bytes() != base64.b64decode(checks[0]['before'], validate=True):
+            raise ValueError('外置审核状态已变化。')
+        review = Review(root, '.codex-review/state.json')
+        if review.state.get('transaction') or review.state.get('legacy_owner') != owner:
+            raise ValueError('审核迁移未完成或旧拥有文件不一致。')
+        text = raw.decode('utf-8-sig')
+        counters = re.findall(r'^% CODEX-REVIEW-NEXT manuscript=([1-9][0-9]*) response=([a-z]+)\r?$', text, re.M)
+        expected = (str(review.state['next'][0]), letters(review.state['next'][1]))
+        if counters != [expected]:
+            raise ValueError('旧计数与外置审核状态不一致。')
+        current = scan(root, storage)
+        if current['authority'] != 'paper' or current['status'] != 'confirmed' or current['review_owner'] != '.codex-review/state.json':
+            raise ValueError('论文资料或外置审核状态尚未成为权威。')
+        return {'verified':True}
     roles = read_roles(storage, root)
     if roles['record'] is None:
         raise ValueError('论文资料尚未保存文件角色。')

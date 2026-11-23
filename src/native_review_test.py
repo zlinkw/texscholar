@@ -524,6 +524,30 @@ class NativeReview(unittest.TestCase):
             export_sources(self.root, invalid)
         self.assertFalse(invalid.exists())
 
+    def test_retired_header_requires_matching_external_state_and_paper_authority(self):
+        import base64
+        from unittest.mock import patch
+        from profile_transition_check import verify
+        self.proposal(); state = dict(self.review().state, schema=3, legacy_owner='reply.tex')
+        self.install_sidecar(state)
+        owner = self.root / 'reply.tex'
+        owner.write_bytes(owner.read_bytes().replace(b'% CODEX-REVIEW-STATE-END', b'% CODEX-REVIEW-MIGRATED state=.codex-review/state.json\n% CODEX-REVIEW-STATE-END'))
+        external = self.root / '.codex-review/state.json'
+        encode = lambda raw: base64.b64encode(raw).decode('ascii')
+        plan = {'kind':'retired-review-header','owner':'reply.tex','owner_before':encode(owner.read_bytes()),
+                'checks':[{'file':'.codex-review/state.json','before':encode(external.read_bytes())}]}
+        authority = {'authority':'paper','status':'confirmed','review_owner':'.codex-review/state.json'}
+        with patch('profile_transition_check.scan', return_value=authority):
+            self.assertTrue(verify(self.root, self.root.parent, plan)['verified'])
+            bad = {**plan, 'checks':[{'file':'.codex-review/state.json','before':encode(b'old')}]}
+            with self.assertRaisesRegex(ValueError, '状态已变化'): verify(self.root, self.root.parent, bad)
+            owner.write_bytes(owner.read_bytes().replace(b'manuscript=2', b'manuscript=9'))
+            bad = {**plan, 'owner_before':encode(owner.read_bytes())}
+            with self.assertRaisesRegex(ValueError, '计数'): verify(self.root, self.root.parent, bad)
+        with patch('profile_transition_check.scan', return_value={**authority,'authority':'legacy'}):
+            owner.write_bytes(base64.b64decode(plan['owner_before']))
+            with self.assertRaisesRegex(ValueError, '权威'): verify(self.root, self.root.parent, plan)
+
     def test_migration_preview_keeps_legacy_state_source_and_notes(self):
         from review_migration import preview
         id_ = self.proposal(); r = self.review(); version = r.state['edits'][id_]['versions'][-1]

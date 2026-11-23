@@ -326,6 +326,13 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
             const commands = await vscode.commands.getCommands(true);
             const roots = selected?.roots || (options.readRequest?.project ? [options.readRequest.project] : (vscode.workspace.workspaceFolders || []).filter(f => f.uri.scheme === 'file').map(f => f.uri.fsPath));
             const readRequest = selected?.readRequest || options.readRequest;
+            const taskKind = selected?.taskKind || (options.readRequest ? 'selection' : undefined);
+            let roles = selected?.roles;
+            if (!setup && options.readRequest?.project) {
+                const current = dependencies.readRoles ? await dependencies.readRoles(roots[0]) : await require('./document_roles').call(vscode, roots[0], 'scan', undefined, run, context.globalStorageUri.fsPath);
+                if (current.status === 'confirmed') roles = {status:current.status, authority:current.authority, files:current.files};
+                else await vscode.window.showWarningMessage('本论文文件角色尚未确认或文件结构已变化，请通过“识别／确认论文文件角色”核对；选区仍可加入，写入前必须确认。');
+            }
             const backgroundForTask = async () => {
                 if (roots.length !== 1) return undefined;
                 const python = require('./tools').discover(key => vscode.workspace.getConfiguration('localLatex').get(key)).found.pythonPath;
@@ -335,7 +342,7 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
             };
             if (!commands.includes('chatgpt.addFileToThread')) {
                 if (await vscode.window.showWarningMessage('未找到 Codex 的输入区接口。可复制一份合并后的任务说明到 Codex；未更改连接。', '复制完整任务说明') === '复制完整任务说明') {
-                    await vscode.env.clipboard.writeText(await taskRequest(goal, roots, setup, undefined, readRequest, selected?.taskKind, await backgroundForTask(), selected?.roles));
+                    await vscode.env.clipboard.writeText(await taskRequest(goal, roots, setup, undefined, readRequest, taskKind, await backgroundForTask(), roles));
                     if (selected) await context.globalState.update('paperTaskKind', selected.taskKind);
                 }
                 return;
@@ -348,7 +355,7 @@ function activate(context, vscode = require('vscode'), dependencies = {}) {
                 : connected.restart_required ? 'MCP 配置刚更新；首次连接或配置变化后需重启 Codex，再在新会话核对 texscholar。连接配置不等于当前会话已加载工具。' : undefined;
             const directory = path.join(context.globalStorageUri.fsPath, 'task-requests'); await fs.mkdir(directory, {recursive: true});
             const file = path.join(directory, 'first-message-' + crypto.randomUUID() + '.txt');
-            await write(file, await taskRequest(goal, roots, setup, connection, readRequest, selected?.taskKind, await backgroundForTask(), selected?.roles));
+            await write(file, await taskRequest(goal, roots, setup, connection, readRequest, taskKind, await backgroundForTask(), roles));
             if (!(selected?.keepCurrentChat ?? options.keepCurrentChat) && commands.includes('chatgpt.newChat')) await vscode.commands.executeCommand('chatgpt.newChat');
             await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
             if (selected) await context.globalState.update('paperTaskKind', selected.taskKind);

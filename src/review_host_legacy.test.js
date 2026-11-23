@@ -72,6 +72,26 @@ test('profile transition removes only explicitly named complete top blocks', () 
     assert.throws(()=>check({...verify,owner_after:b64(body)}),/不能修改/);
 });
 
+test('retired review header preserves author comments and requires the sidecar snapshot', () => {
+    const f = fixture('retired-review-header'), state = Buffer.from('{"schema":3}');
+    fs.writeFileSync(path.join(f.root,'.codex-review','state.json'),state);
+    const before = '% CODEX-REVIEW-STATE-BEGIN\n% Author comment.\n% CODEX-REVIEW-NEXT manuscript=3 response=b\n% CODEX-REVIEW-MIGRATED state=.codex-review/state.json\n% CODEX-REVIEW-STATE-END\n\\begin{document}\nText.\n';
+    const after = '% Author comment.\n\\begin{document}\nText.\n';
+    fs.writeFileSync(path.join(f.root,'reply.tex'),before);
+    const plan = {kind:'retired-review-header',owner:'reply.tex',owner_before:b64(before),owner_intent:null,
+        owner_after:b64(after),files:[],checks:[{file:'.codex-review/state.json',before:b64(state)}]};
+    function check(value) {
+        const raw = Buffer.from(JSON.stringify({files:{'host-plan':b64(JSON.stringify(value))}})), commit = sha(raw);
+        fs.writeFileSync(path.join(f.root,'.codex-review','objects',commit+'.json'),raw);
+        return legacyPlan(f.root,commit);
+    }
+    assert.equal(check(plan).owner.relative,'reply.tex');
+    assert.throws(()=>check({...plan,owner_after:b64('\\begin{document}\nText.\n')}),/只能/);
+    assert.throws(()=>check({...plan,checks:[]}),/外置状态/);
+    const unknown=before.replace('% Author comment.','% CODEX-REVIEW-UNKNOWN value');
+    assert.throws(()=>check({...plan,owner_before:b64(unknown)}),/未识别/);
+});
+
 test('profile confirmation refuses a dirty project file before metadata write', async () => {
     const f = fixture('metadata'), registry = {state:()=>({eligible:true,generation:1}),check:async()=>{}};
     const before = fs.readFileSync(path.join(f.root,'reply.tex'));

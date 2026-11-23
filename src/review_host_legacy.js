@@ -53,6 +53,19 @@ function profileBody(raw, names) {
     return lines.filter((_,i)=>!spans.some(([a,b])=>i>=a && i<b)).join('');
 }
 
+function retiredReviewBody(raw) {
+    const lines = utf8(raw).split(/(?<=\n)/), starts = [], ends = [];
+    lines.forEach((line,i) => {const value=line.replace(/\r?\n$/,''); if (value === '% CODEX-REVIEW-STATE-BEGIN') starts.push(i); if (value === '% CODEX-REVIEW-STATE-END') ends.push(i);});
+    if (starts.length !== 1 || ends.length !== 1 || starts[0] >= ends[0] ||
+        lines.slice(0,starts[0]).some(line => line.trim() && !line.trimStart().startsWith('%'))) throw new Error('旧审核状态头不唯一或不在顶部。');
+    const header = lines.slice(starts[0]+1,ends[0]), counter = /^% CODEX-REVIEW-NEXT manuscript=[1-9][0-9]* response=[a-z]+\r?\n?$/;
+    const notice = /^% CODEX-REVIEW-MIGRATED state=\.codex-review\/state\.json\r?\n?$/;
+    if (header.filter(line=>counter.test(line)).length !== 1 || header.filter(line=>notice.test(line)).length !== 1 ||
+        header.some(line=>!line.startsWith('%') || (line.startsWith('% CODEX-') && !counter.test(line) && !notice.test(line))))
+        throw new Error('旧审核状态头包含未识别的插件信息，未移除。');
+    return lines.slice(0,starts[0]).join('') + header.filter(line=>!counter.test(line) && !notice.test(line)).join('') + lines.slice(ends[0]+1).join('');
+}
+
 function legacyPlan(root, commit) {
     root = fs.realpathSync(root);
     if (!/^[a-f0-9]{64}$/.test(commit)) throw new Error('旧审核事务身份无效。');
@@ -65,9 +78,9 @@ function legacyPlan(root, commit) {
 
 function checkedPlan(root, plan) {
     root = fs.realpathSync(root);
-    if (!['legacy-review','legacy-recovery','role-metadata','profile-metadata','profile-check'].includes(plan.kind) || !Array.isArray(plan.files) || !Array.isArray(plan.checks)) throw new Error('旧审核事务计划无效。');
+    if (!['legacy-review','legacy-recovery','role-metadata','profile-metadata','profile-check','retired-review-header'].includes(plan.kind) || !Array.isArray(plan.files) || !Array.isArray(plan.checks)) throw new Error('旧审核事务计划无效。');
     const owner = {relative:plan.owner,file:regular(root,plan.owner,'.tex'),before:decode(plan.owner_before),after:decode(plan.owner_after)};
-    const old = ['role-metadata','profile-metadata','profile-check'].includes(plan.kind) ? null : ownerParts(owner.before), final = ['role-metadata','profile-metadata','profile-check'].includes(plan.kind) ? null : ownerParts(owner.after);
+    const old = ['role-metadata','profile-metadata','profile-check','retired-review-header'].includes(plan.kind) ? null : ownerParts(owner.before), final = ['role-metadata','profile-metadata','profile-check','retired-review-header'].includes(plan.kind) ? null : ownerParts(owner.after);
     if (plan.kind === 'role-metadata') {
         if (plan.owner_intent !== null || plan.files.length || roleBody(owner.before,false) !== roleBody(owner.after,true))
             throw new Error('文件角色登记不能改写正文。');
@@ -77,6 +90,10 @@ function checkedPlan(root, plan) {
     } else if (plan.kind === 'profile-metadata') {
         if (plan.owner_intent !== null || plan.files.length || profileBody(owner.before,plan.remove) !== utf8(owner.after))
             throw new Error('论文资料迁移只能移除精确核对的顶部插件注释块。');
+    } else if (plan.kind === 'retired-review-header') {
+        if (plan.owner_intent !== null || plan.files.length || retiredReviewBody(owner.before) !== utf8(owner.after) ||
+            plan.checks.filter(item=>item.file === '.codex-review/state.json').length !== 1)
+            throw new Error('旧审核头只能在核对外置状态后移除机器字段。');
     } else if (old.header !== final.header || ![1,2].includes(final.state?.schema) || final.state?.transaction) throw new Error('旧审核事务改变了作者状态头或未完成最终状态。');
     else if (plan.kind === 'legacy-recovery') {
         const tr = old.state?.transaction;
@@ -96,7 +113,7 @@ function checkedPlan(root, plan) {
     }
     const files = plan.files.map(item => ({relative:item.file,file:regular(root,item.file,'.tex'),before:decode(item.before),after:decode(item.after)}));
     const checks = plan.checks.map(item => ({relative:item.file,file:regular(root,item.file),before:decode(item.before)}));
-    if (checks.some(item => !['.tex','.txt','.md'].includes(path.extname(item.file).toLowerCase()))) throw new Error('审核核对文件类型无效。');
+    if (checks.some(item => !['.tex','.txt','.md'].includes(path.extname(item.file).toLowerCase()) && !(plan.kind === 'retired-review-header' && item.relative === '.codex-review/state.json'))) throw new Error('审核核对文件类型无效。');
     const all = [owner,...files,...checks], ids = all.map(item => process.platform === 'win32' ? item.file.toLowerCase() : item.file);
     if (new Set(ids).size !== ids.length) throw new Error('旧审核事务文件重复。');
     for (const item of all) {
@@ -120,9 +137,9 @@ async function applyLegacy(vscode, registry, root, generation, commit, rolePlan,
     root = fs.realpathSync(root);
     const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root));
     if (!folder || !samePath(fs.realpathSync(folder.uri.fsPath),root)) throw new Error('事务不属于当前受信任论文工作区。');
-    if (rolePlan && !['role-metadata','profile-metadata','profile-check'].includes(rolePlan.kind)) throw new Error('文件角色请求无效。');
+    if (rolePlan && !['role-metadata','profile-metadata','profile-check','retired-review-header'].includes(rolePlan.kind)) throw new Error('文件角色请求无效。');
     const {owner,files,checks} = rolePlan ? checkedPlan(root,rolePlan) : legacyPlan(root,commit), all = [owner,...files,...checks];
-    if (rolePlan?.kind === 'profile-metadata') {
+    if (['profile-metadata','retired-review-header'].includes(rolePlan?.kind)) {
         const cfg = vscode.workspace.getConfiguration('localLatex');
         const python = cfg.get('pythonPath') || require('./tools').discover(key => cfg.get(key)).found.pythonPath;
         if (!python || !context?.globalStorageUri?.fsPath) throw new Error('缺少可信的论文资料目录或 Python；未修改源文件。');
