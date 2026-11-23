@@ -603,8 +603,8 @@ function renderQuestionMode() {
                 }
                 card.append(reference,comparison);
             }
-            const open=document.createElement('button');open.className='secondary';open.dataset.action='questionEntry';open.dataset.questionKey=selectedQuestion;open.dataset.target=entry.id;open.textContent='打开本项';
-            if (selectedQuestion==='__unbound__') {open.dataset.action='switch';open.dataset.target=entry.id;}
+            const open=document.createElement('button');open.className='secondary';open.dataset.action='questionCard';open.dataset.intent='open';open.dataset.questionKey=selectedQuestion;open.dataset.target=entry.id;open.dataset.targetVersion=entry.version;open.textContent='打开本项（段落审核）';
+            if (!entry.card) {open.dataset.action='switch';open.textContent='打开本项';}
             card.appendChild(open);column.appendChild(card);
         }
         root.appendChild(column);
@@ -1203,7 +1203,8 @@ function activateCardAction() {
 function executeCardAction(action) {
     if (!action || waiting || action.token!==consumedCardAction || !current || current.repo!==action.c.repo || current.owner!==action.c.owner || current.id!==action.c.id || current.version!==action.c.version || currentSession!==action.session) return;
     consumedCardAction=undefined;
-    if (action.intent==='editToggle' || action.intent==='optionNote') {reviewMode='paragraph';renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);}
+    if (action.intent==='open' || action.intent==='editToggle' || action.intent==='optionNote') {reviewMode='paragraph';renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);}
+    if (action.intent==='open') {status('已打开 '+current.id+' 的段落审核；可切回问题审核。');return;}
     const target=$('option-'+action.option)?.querySelector('[data-action="'+action.intent+'"]');
     if (!target || target.disabled) {status('目标方案当前不可操作，请核对状态。',true);return;}
     target.click();

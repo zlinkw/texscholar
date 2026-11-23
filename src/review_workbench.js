@@ -823,12 +823,12 @@ function createWorkbench(vscode, context, services) {
             if (message.type === 'questionCard') {
                 const session = services.session(c);
                 const row = message.questionKey === '__unbound__'
-                    ? {entries:directory().filter(item => item.card)}
+                    ? {entries:directory().filter(item => item.card && !questionTable(c).some(row=>row.entries.some(entry=>entry.id===item.id)))}
                     : questionTable(c).find(item => item.key === message.questionKey);
                 const entry = row?.entries.find(item => item.id === message.target && item.version === message.targetVersion);
                 const record = entry && lastRecords.get(entry.id);
-                if (!session || message.session !== session || !['preview','editToggle','optionNote','accept'].includes(message.intent) ||
-                    !entry?.card || !entry.card.options.some(option => option.label === message.option) || !record ||
+                if (!session || message.session !== session || !['open','preview','editToggle','optionNote','accept'].includes(message.intent) ||
+                    !entry?.card || message.intent !== 'open' && !entry.card.options.some(option => option.label === message.option) || !record ||
                     record.c.repo !== c.repo || record.c.owner !== c.owner || record.c.version !== entry.version)
                     throw new Error('问题卡片身份或版本已变化，请重新核对。');
                 const target = {...record.c}, request = showRequest, originClient = client;

@@ -59,6 +59,12 @@ test('question card actions route only to the exact linked item, version and ses
     await view.show(one);let release;gate=new Promise(resolve=>{release=resolve;});
     const pending=receive(action);await Promise.resolve();await view.show(one);release();await pending;
     assert.equal(view.active.id,'1');assert.equal(calls.length,1);assert(messages.some(m=>m.error && m.message.includes('取消')));
+    gate=undefined;
+    await receive({...action,intent:'open',option:undefined});
+    const opened=messages.findLast(m=>m.pendingCardAction)?.pendingCardAction;
+    assert.equal(opened.intent,'open');assert.equal(opened.c.id,'2');assert.equal(opened.c.version,'v2');
+    await receive({type:'cardActionClaim',instance:'page',token:opened.token});
+    assert.equal(messages.findLast(m=>m.type==='cardActionGrant').action.intent,'open');
 });
 
 test('translation keeps candidate identity separate and reports a pure display formula', async () => {
