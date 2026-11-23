@@ -289,11 +289,11 @@ function createInlineReview(vscode, context, execute = run) {
             return point >= start && point < end || start === end && point === start;
         });
     }
-    async function discover(allowEmpty = false) {
-        if (activeScope) return activeScope;
+    async function discover(allowEmpty = false, requestedFolder) {
+        if (activeScope && (!requestedFolder || sameFile(activeScope.repo, requestedFolder.uri.fsPath))) return activeScope;
         if (!vscode.workspace.isTrusted) throw new Error('请先在受信任的本地论文工作区打开 .tex。');
         const doc = vscode.window.activeTextEditor?.document;
-        const folder = (doc?.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(doc.uri)) || vscode.workspace.workspaceFolders?.[0];
+        const folder = requestedFolder || (doc?.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(doc.uri)) || vscode.workspace.workspaceFolders?.[0];
         if (!folder && allowEmpty) return;
         if (!folder) throw new Error('请先打开论文文件夹。');
         const repo = folder.uri.fsPath;
@@ -821,6 +821,25 @@ function createInlineReview(vscode, context, execute = run) {
         busy = true;
         try {return await action();} finally {busy = false; await flushRefresh();}
     }
+    function feedbackRows(state) {
+        return Object.entries(state.edits).flatMap(([id, edit]) => {
+            const notes = edit.requests || [], identities = new Set(notes.filter(n => n.id && n.version).map(n => JSON.stringify([n.id, n.version])));
+            const previous = (edit.previous_feedback?.requests || []).filter(n => !n.id || !n.version || !identities.has(JSON.stringify([n.id, n.version])));
+            return [...notes.map(note => ({note, source:'requests'})), ...previous.map(note => ({note, source:'previous_feedback'}))]
+                .map(row => ({...row, id, version:edit.versions.at(-1) ?? null, file:edit.file, kind:edit.kind}));
+        });
+    }
+    async function manageFeedback(c, items, session, action) {
+        const state = await backend(c, ['status']);
+        if (state.session !== session) throw new Error('审核批次已变化，请重新选择批注。');
+        for (const item of items) {
+            const edit = state.edits[item.id];
+            if (!edit) throw new Error('所选审核项已不存在；未更改批注。');
+            cleanBuffers(c, edit.file);
+        }
+        await backend(c, ['manage-feedback'], {items, session, action}, state.sha256);
+        try {await refresh(c);} catch (error) {vscode.window.showErrorMessage('批注操作已保存，但刷新失败；不要重复操作：' + error.message);}
+    }
     const choiceKey = c => JSON.stringify([c.repo, c.owner, c.id]);
     function selectedOption(c) {
         const saved = previewChoices.get(choiceKey(c));
@@ -831,6 +850,10 @@ function createInlineReview(vscode, context, execute = run) {
         saveToolbar: value => vscode.workspace.getConfiguration('localLatex').update('reviewToolbar', value, vscode.ConfigurationTarget.Global),
         style, read: c => readCurrent(c, false), readNext: c => currentFromRecords(c, false), selection: selectedOption, activeChanged: selectReviewItem,
         session: c => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? latestReviewState?.session : undefined,
+        feedbackRows: c => {
+            if (latestReviewScope?.repo !== c.repo || latestReviewScope.owner !== c.owner || !latestReviewState) return [];
+            return feedbackRows(latestReviewState);
+        },
         questions: (c, checked) => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? questionRows(latestReviewState, checked) : [],
         openQuestionEntry: async (c, id, version) => openRelatedItem({...c,id,version}),
         trace: value => diagnostics?.appendLine(JSON.stringify(value)),
@@ -948,6 +971,7 @@ function createInlineReview(vscode, context, execute = run) {
             await backend(c, ['feedback-batch'], {items, session, text, purpose:purpose === undefined ? 'revision' : purpose}, state.sha256);
             try {await refresh(c);} catch (error) {vscode.window.showErrorMessage('共同批注已保存，但刷新失败；不要重复保存：' + error.message);}
         }),
+        manageFeedback: (c, items, session, action) => exclusive(() => manageFeedback(c, items, session, action)),
         accept: c => exclusive(() => accept(c)), reject: c => exclusive(() => reject(c)),
         acceptBatch: (items, session) => exclusive(() => acceptBatch(items, session)),
         relocate: c => exclusive(() => relocate(c)),
@@ -1178,7 +1202,7 @@ function createInlineReview(vscode, context, execute = run) {
             + `\n【原版完整内容】\n${item.original}`
             + (item.options ? '\n【本轮全部备选（本批注对应方案见上方）】\n' + JSON.stringify(item.options, null, 2) : '\n【修改版完整内容】\n' + item.candidate)
             + '\n【作者返修批注】\n'
-            + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.display_context ? n.display_context.kind === 'translation' ? '中文译文' : '审稿问题' : n.side === 'original' ? '原文' : '候选'}选区：${n.display_context?.quote ?? n.quote}\n意见用途：${n.purpose || 'revision'}\n返修要求：${n.text}\n定位：${JSON.stringify({id: n.id, version: n.version, side: n.side, option: n.option, start: n.start, end: n.end, display_context: n.display_context})}`).join('\n\n')
+            + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.display_context ? n.display_context.kind === 'translation' ? '中文译文' : '审稿问题' : n.side === 'original' ? '原文' : '候选'}选区：${n.display_context?.quote ?? n.quote}\n批注状态：${n.held ? '暂留' : '待处理'}\n意见用途：${n.purpose || 'revision'}\n返修要求：${n.text}\n定位：${JSON.stringify({id: n.id, version: n.version, side: n.side, option: n.option, start: n.start, end: n.end, display_context: n.display_context})}`).join('\n\n')
         );
         if (!notes.length) return vscode.window.showInformationMessage('没有待处理的批注。');
         if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread')) throw new Error('当前 Codex 插件没有可用的添加上下文命令；批注仍保留，未发送。');
@@ -1221,6 +1245,37 @@ function createInlineReview(vscode, context, execute = run) {
         }));
     }
     command('localLatex.inlineReview', () => select());
+    command('localLatex.manageReviewNotes', async () => {
+        const folders = (vscode.workspace.workspaceFolders || []).filter(folder => folder.uri.scheme === 'file');
+        const folder = folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick({placeHolder:'选择要管理批注的论文项目'});
+        if (!folder) return;
+        const c = await discover(false, folder);
+        if (c.owner !== '.codex-review/state.json') throw new Error('旧内嵌审核状态请先显式迁移；未更改批注。');
+        let selected = [];
+        while (true) {
+            const state = await backend(c, ['status']), rows = feedbackRows(state);
+            if (!rows.length) return vscode.window.showInformationMessage('该论文没有可管理的批注。');
+            const stale = selected.filter(item => !rows.some(row => JSON.stringify(row) === JSON.stringify(item)));
+            const chosen = await vscode.window.showQuickPick([...stale, ...rows].map(row => ({label:`${row.id} · ${row.file} · ${row.note.option ? '方案 ' + row.note.option : '整项／原文'}${row.note.held ? ' · 暂留' : ''}${stale.includes(row) ? ' · 已变化，请取消选择后重选' : ''}`,
+                description:row.note.text, detail:`选区：${row.note.display_context?.quote ?? row.note.quote} · 版本 ${row.note.version}`,
+                row, picked:selected.some(item => JSON.stringify(item) === JSON.stringify(row))})),
+            {canPickMany:true, title:'选择要管理的批注', placeHolder:'可多选；未选中的批注保持原样'});
+            if (!chosen) return;
+            selected = chosen.map(item => item.row);
+            if (!selected.length) continue;
+            const action = await vscode.window.showQuickPick([{label:'暂留所选批注', action:'hold'}, {label:'取消暂留', action:'release'}, {label:'删除所选批注', action:'delete'}], {title:`已选 ${selected.length} 条批注`});
+            if (!action) continue;
+            if (action.action === 'delete') {
+                const detail = selected.map(item => `${item.id} · ${item.file} · ${item.note.option || '整项／原文'} · ${item.note.version}\n选区：${item.note.display_context?.quote ?? item.note.quote}\n批注：${item.note.text}`).join('\n\n');
+                if (await vscode.window.showWarningMessage(`删除所选 ${selected.length} 条批注？此操作不会删除正文或候选。`, {modal:true, detail}, '删除批注') !== '删除批注') continue;
+            }
+            try {
+                await manageFeedback(c, selected.map(({id,version,file,note,source}) => ({id,version,file,note,source})), state.session, action.action);
+                vscode.window.showInformationMessage(`已处理 ${selected.length} 条批注。`);
+                return;
+            } catch (error) {await vscode.window.showErrorMessage('批注未更改：' + error.message);}
+        }
+    });
     command('localLatex.reviewWorkbench', openWorkbench, true);
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.checkReviewBeforeReload', () => workbench.assertReloadSafe()));
     command('localLatex.inlineReviewAt', c => open(c));

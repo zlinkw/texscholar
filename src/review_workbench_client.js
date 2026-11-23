@@ -11,7 +11,9 @@ let changeCursor;
 let directoryCursor, localFeedback;
 let stashes = [], questionRows = [];
 const batchSelection = new Map();
-const coordinatedWrites = new Set(['save', 'saveAccept', 'accept', 'acceptBatch', 'reject', 'note', 'noteHandoff', 'editNote', 'batchNote', 'saveSource', 'manualRebase', 'syncBlock', 'repairBlock', 'relocate']);
+const noteSelection = new Map();
+let feedbackRows = [];
+const coordinatedWrites = new Set(['save', 'saveAccept', 'accept', 'acceptBatch', 'reject', 'note', 'noteHandoff', 'editNote', 'batchNote', 'manageFeedback', 'saveSource', 'manualRebase', 'syncBlock', 'repairBlock', 'relocate']);
 const feedbackTargets = new Map();
 const drafts = new Map(), models = new WeakMap(), translatedText = new Map(), rendered = new WeakMap(), differences = new WeakMap();
 const displayedChanges = new WeakMap();
@@ -154,6 +156,24 @@ function restoreInputs(state) {
     }));
 }
 const esc = text => String(text).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const noteKey = row => JSON.stringify([row.id, row.note.id, row.note.version]);
+function saveNoteSelection() {
+    api.postMessage({type:'noteSelection', instance, repo:current.repo, owner:current.owner, session:currentSession, items:[...noteSelection.values()]});
+}
+function renderFeedbackManager() {
+    const root = $('notesRows'); root.replaceChildren();
+    const rows = feedbackRows.filter(row => $('notesScope').value === 'all' || row.id === current.id);
+    for (const row of rows) {
+        const key = noteKey(row), selected = noteSelection.get(key), label = document.createElement('label'), check = document.createElement('input');
+        check.type = 'checkbox'; check.checked = !!selected; check.disabled = !row.note.id || !row.note.version;
+        check.addEventListener('change', () => {if (check.checked) noteSelection.set(key, row); else noteSelection.delete(key); saveNoteSelection(); renderFeedbackManager();});
+        const text = document.createElement('span');
+        const state = {open:'待处理','addressed-pending-review':'待作者核对','closed-by-author-acceptance':'接收后关闭','closed-by-author-rejection':'拒绝后关闭'}[row.note.status] || row.note.status;
+        text.textContent = ` ${row.id} · ${row.file} · ${row.source === 'previous_feedback' ? '上一版' : '批注'} · ${row.note.option ? '方案 ' + row.note.option : '整项／原文'} · 版本 ${row.note.version?.slice(0,8) || '未知'} · ${state}${row.note.held ? ' · 暂留' : ''}${check.disabled ? ' · 身份不完整，保留待核' : ''}${selected && JSON.stringify(selected) !== JSON.stringify(row) ? ' · 已变化，请清选后重新选择' : ''}\n选区：${row.note.display_context?.quote ?? row.note.quote}\n${row.note.text}`;
+        text.style.whiteSpace = 'pre-wrap'; label.append(check, text); const box = document.createElement('div'); box.className = 'note'; box.append(label); root.append(box);
+    }
+    $('notesCount').textContent = ` 已选 ${noteSelection.size} 条`;
+}
 function send(type, extra = {}, blocks = true) {
     if (!current) return;
     if (actionNames[type] || passiveActions.has(type)) feedbackTargets.set(type, localFeedback);
@@ -671,7 +691,7 @@ function renderNotes(requests) {
         if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
         const context = n.display_context;
         const origin = noteOrigin(n);
-        node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + (n.source_stale ? ' · 原批注，内容已变' : '') + '</strong><div class="review-text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
+        node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + (n.held ? ' · 暂留' : '') + (n.source_stale ? ' · 原批注，内容已变' : '') + '</strong><div class="review-text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
             (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '') +
             fulfillmentText(n);
     }
@@ -934,6 +954,7 @@ $('compare').addEventListener('change', () => send('preview', {option: preview, 
 $('questionModeChoice').addEventListener('change', () => {selectedQuestion=$('questionModeChoice').value; renderQuestionMode(); send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);});
 $('questionViewStyle').addEventListener('change', () => {renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);});
 $('questionType').addEventListener('change', renderQuestionMode);
+$('notesScope').addEventListener('change', renderFeedbackManager);
 for (const id of ['notePurpose','batchPurpose','batchNoteScope']) $(id).addEventListener('change', dirty);
 document.addEventListener('click', event => {
     const button = event.target.closest('button[data-action]');
@@ -945,6 +966,14 @@ document.addEventListener('click', event => {
     if (type === 'toolbarCancel') {$('toolbarDialog').close(); return;}
     if (type === 'toolbarReset') {toolbarDraft={order:[...toolbarDefault.order],visible:[...toolbarDefault.visible]}; renderToolbarChoices(); return;}
     if (type === 'toolbarSave') {$('toolbarStatus').textContent='正在保存…'; send(type,{toolbar:toolbarDraft},false); return;}
+    if (type === 'manageNotes') {renderFeedbackManager(); $('notesDialog').showModal(); return;}
+    if (type === 'closeNotes') {$('notesDialog').close(); return;}
+    if (type === 'clearNotes') {for (const [key,row] of noteSelection) if ($('notesScope').value === 'all' || row.id === current.id) noteSelection.delete(key); saveNoteSelection(); renderFeedbackManager(); return;}
+    if (type === 'selectNotes') {for (const row of feedbackRows.filter(row => row.note.id && row.note.version && ($('notesScope').value === 'all' || row.id === current.id))) if (!noteSelection.has(noteKey(row))) noteSelection.set(noteKey(row),row); saveNoteSelection(); renderFeedbackManager(); return;}
+    if (['holdNotes','releaseNotes','deleteNotes'].includes(type)) {
+        if (!noteSelection.size) {$('notesStatus').textContent='请先选择批注。'; return;}
+        $('notesStatus').textContent=''; send('manageFeedback',{session:currentSession,items:[...noteSelection.values()],action:{holdNotes:'hold',releaseNotes:'release',deleteNotes:'delete'}[type]}); return;
+    }
     if (type === 'paragraphMode' || type === 'questionMode') {reviewMode=type === 'questionMode' ? 'question' : 'paragraph';renderQuestionMode();send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);return;}
     if (type === 'questionFocus') {const q=data.edit.questions[Number(button.dataset.index)]; selectedQuestion=JSON.stringify([q.id,q.file,q.quote]); reviewMode='question'; renderQuestionMode(); send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false); return;}
     if (type === 'questionCard') {send(type,{session:currentSession,questionKey:button.dataset.questionKey,target:button.dataset.target,targetVersion:button.dataset.targetVersion,option,intent:button.dataset.intent});return;}
@@ -1105,6 +1134,8 @@ window.addEventListener('message', ({data: message}) => {
     if (message.type === 'titleStatus') {$('titleStatus').textContent = message.message; return;}
     if (message.type === 'backupStatus') {$('backupStatus').textContent = message.message || '后台 Git 备份尚无任务'; if (['failed','local'].includes(message.status)) $('backupDetails').open=true; return;}
     if (message.type === 'directory') {renderDirectory(message.directory); return;}
+    if (message.type === 'feedbackRows') {feedbackRows = message.rows; renderFeedbackManager(); return;}
+    if (message.type === 'feedbackManaged') {if (message.items) {noteSelection.clear(); for (const item of message.items) noteSelection.set(noteKey(item),item);} if (message.rows) feedbackRows=message.rows; $('notesStatus').textContent=message.message || (message.cancelled ? '已取消，批注未改变。' : ''); renderFeedbackManager();}
     if (message.type === 'preview') {
         preview = message.option;
         for (const o of options) $('option-' + o.label).classList.toggle('selected', preview === o.label);
@@ -1137,8 +1168,11 @@ window.addEventListener('message', ({data: message}) => {
         if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) selectedQuestion = message.questionPosition || '';
         if (Array.isArray(message.batchItems)) {batchSelection.clear(); for (const item of message.batchItems) batchSelection.set(item.id,item);}
         else if (message.session !== undefined && (currentSession !== message.session || current && (current.repo !== message.c.repo || current.owner !== message.c.owner))) batchSelection.clear();
+        if (Array.isArray(message.noteItems)) {noteSelection.clear(); for (const item of message.noteItems) noteSelection.set(noteKey(item),item);}
+        feedbackRows = message.feedbackRows || [];
         if (message.session !== undefined) currentSession = message.session;
         current = message.c; data = message.data; options = message.options;
+        renderFeedbackManager();
         if (message.toolbar) applyToolbar(message.toolbar);
         renderQuestionTable(message.questions || []);
         stashes = message.stashes || [];

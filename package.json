@@ -189,6 +189,11 @@
         "icon": "$(edit)"
       },
       {
+        "command": "localLatex.manageReviewNotes",
+        "title": "管理论文批注",
+        "category": "LaTeX 审核"
+      },
+      {
         "command": "localLatex.prepareReviewBlock",
         "title": "预览并建立固定审核块",
         "category": "LaTeX 审核"

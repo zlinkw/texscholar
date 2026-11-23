@@ -22,6 +22,15 @@ from contextlib import contextmanager, nullcontext
 BEGIN = "% CODEX-REVIEW-STATE-BEGIN"
 END = "% CODEX-REVIEW-STATE-END"
 DATA = "% CODEX-REVIEW-DATA "
+
+
+def protected_feedback(edit):
+    notes = edit.get('requests', [])
+    identities = {(n.get('id'), n.get('version')) for n in notes if n.get('id') and n.get('version')}
+    previous = (edit.get('previous_feedback') or {}).get('requests', [])
+    closed = {'resolved', 'closed-by-author-acceptance', 'closed-by-author-rejection'}
+    return any(n.get('status') not in closed or n.get('held', False) for n in notes) or any(
+        n.get('held', False) or (n.get('id'), n.get('version')) not in identities and n.get('status') not in closed for n in previous)
 PENDING = {"pending", "rework"}
 
 
@@ -952,6 +961,8 @@ class Review:
             raise Conflict("Include the canonical state owner in the round's file scope")
         if self.storage != 'files' and any(e["file"] not in files for e in self.state["edits"].values() if e["status"] in PENDING):
             raise Conflict("Carry every unresolved file into the next round")
+        if self.storage == 'files' and any(protected_feedback(edit) for edit in self.state['edits'].values()):
+            raise Conflict('仍有未处理或暂留批注；请先处理，不能开始新批次并丢失旧批注。')
         current = {p: self.read(p) for p in sorted(set(files))}
         if any(BEGIN in self.original[p].decode("utf-8-sig") for p in current if not self.sidecar and p != self.state_rel):
             raise Conflict("A second review-state owner exists; reconcile pointers first")
@@ -1313,12 +1324,19 @@ class Review:
             item['batch'] = self.state['session']
         if manual_anchor is not None:
             item['manual_revision'] = uuid.uuid4().hex
+        if rework and any(not r.get('id') or not r.get('version') for r in [*edit.get('requests', []), *(edit.get('previous_feedback') or {}).get('requests', [])]):
+            raise Conflict('旧批注身份不完整；请先核对，未替换候选或批注。')
+        if rework and any(r['id'] in spec.get('resolve_requests', []) and r.get('held', False) for r in edit.get('requests', [])):
+            raise Conflict('暂留批注请先由作者取消暂留。')
         commit = self.snapshot({"original.tex": original.encode("utf-8"), "candidate.tex": after.encode("utf-8"),
                                 "span.json": json.dumps(item, ensure_ascii=False).encode("utf-8")}, "review item " + id_)
         if rework:
-            notes = [r for r in edit.get('requests', []) if r['status'] in ('open', 'addressed-pending-review')]
+            notes = [r for r in edit.get('requests', []) if r['status'] in ('open', 'addressed-pending-review') or r.get('held', False)]
+            current_ids = {(r['id'], r['version']) for r in notes}
+            older = [r for r in (edit.get('previous_feedback') or {}).get('requests', [])
+                     if (r['id'], r['version']) not in current_ids and (r.get('status') in ('open', 'addressed-pending-review') or r.get('held', False))]
+            notes = [*older, *notes]
             if notes:
-                # Keep only the feedback associated with the immediately preceding revision.
                 edit['previous_feedback'] = {'version': edit['versions'][-1], 'requests': copy.deepcopy(notes)}
             else:
                 edit.pop('previous_feedback', None)
@@ -1340,7 +1358,7 @@ class Review:
             if manual_anchor is not None and original != old['before']:
                 self.mark_original_stale(edit, original, edit['versions'][-2], old['before'])
             if discard_annotations:
-                edit.pop('requests', None)
+                edit['requests'] = [r for r in edit.get('requests', []) if r.get('held', False)]
             resolved = spec.get("resolve_requests", [])
             available = {r["id"] for r in edit.get("requests", []) if r["status"] == "open"}
             if not set(resolved) <= available:
@@ -1460,7 +1478,7 @@ class Review:
                     spans[id_] = (a, b)
                 edit['status'] = 'accepted' if id_ in accept else 'rejected'
                 for request in edit.get('requests', []):
-                    if request['status'] in ('open', 'addressed-pending-review'):
+                    if request['status'] in ('open', 'addressed-pending-review') and not request.get('held', False):
                         request['status'] = 'closed-by-author-acceptance' if id_ in accept else 'closed-by-author-rejection'
                 decisions[id_] = edit
             except Conflict as error:
@@ -1754,6 +1772,50 @@ class Review:
             results.append(result)
         return {}, {'items': results}
 
+    def manage_feedback(self, spec):
+        """Preflight exact selected feedback snapshots before changing any of them."""
+        self.assert_ready()
+        if not self.sidecar:
+            raise Conflict('旧内嵌审核状态请先显式迁移；未更改批注。')
+        if spec.get('session') != self.state.get('session'):
+            raise Conflict('审核批次已变化，请重新选择批注。')
+        action, items = spec.get('action'), spec.get('items')
+        if action not in ('hold', 'release', 'delete') or not isinstance(items, list) or not items:
+            raise Conflict('请选择批注及有效操作。')
+        selected, seen = [], set()
+        for item in items:
+            if not isinstance(item, dict) or set(item) != {'id', 'version', 'file', 'note', 'source'} or item['source'] not in ('requests', 'previous_feedback') or not isinstance(item['note'], dict):
+                raise Conflict('批注身份或快照无效。')
+            edit = self.state['edits'].get(item['id'])
+            if not edit or edit['file'] != item['file'] or (edit['versions'][-1] if edit['versions'] else None) != item['version']:
+                raise Conflict('审核项已变化，请重新选择批注。')
+            note = item['note']
+            identity = (item['id'], note.get('id'), note.get('version'))
+            if not all(isinstance(value, str) and value for value in identity) or identity in seen:
+                raise Conflict('批注身份缺失或重复。')
+            seen.add(identity)
+            previous = (edit.get('previous_feedback') or {}).get('requests', [])
+            collection = edit.get('requests', []) if item['source'] == 'requests' else previous
+            matches = [value for value in collection if value.get('id') == note['id'] and value.get('version') == note['version']]
+            if len(matches) != 1 or matches[0] != note:
+                raise Conflict('批注已变化或不唯一，请重新选择。')
+            mirrors = [value for value in previous if value.get('id') == note['id'] and value.get('version') == note['version']] if item['source'] == 'requests' else []
+            if len(mirrors) > 1:
+                raise Conflict('上一版批注身份不唯一，请先核对。')
+            selected.append((edit, collection, matches[0], mirrors))
+        for edit, collection, note, mirrors in selected:
+            if action == 'delete':
+                collection.remove(note)
+                for mirror in mirrors:
+                    edit['previous_feedback']['requests'].remove(mirror)
+            else:
+                for value in [note, *mirrors]:
+                    if action == 'hold':
+                        value['held'] = True
+                    else:
+                        value.pop('held', None)
+        return {}, {'count': len(selected), 'action': action}
+
     def embedded(self, content=None):
         a, block, b = split_state(self.text)
         lines = [l for l in block.splitlines() if not l.startswith(DATA) and "CODEX-REVIEW-NEXT " not in l]
@@ -1994,17 +2056,22 @@ class Review:
             if not ids or len(set(ids)) != len(ids):
                 raise Conflict('Select distinct review items for feedback')
             for id_ in ids:
-                if id_ not in self.state['edits'] or self.state['edits'][id_]['status'] not in PENDING:
-                    raise Conflict('Selected review item is no longer pending')
+                if id_ not in self.state['edits']:
+                    raise Conflict('Selected review item no longer exists')
+                if not self.state['edits'][id_]['versions']:
+                    raise Conflict('所选审核项没有可用版本，无法交接批注。')
         selected = set(ids) if ids is not None else None
         groups = {}
         for id_, edit in self.state['edits'].items():
             if selected is not None and id_ not in selected:
                 continue
-            if edit['status'] not in PENDING:
-                continue
-            for note in edit.get('requests', []):
-                if note['status'] != 'open':
+            notes = edit.get('requests', [])
+            if any(not n.get('id') or not n.get('version') for n in [*notes, *(edit.get('previous_feedback') or {}).get('requests', [])]):
+                raise Conflict('旧批注身份不完整；请先核对，无法安全交接。')
+            identities = {(n['id'], n['version']) for n in notes}
+            notes = [*notes, *(n for n in (edit.get('previous_feedback') or {}).get('requests', []) if (n['id'], n['version']) not in identities)]
+            for note in notes:
+                if not (note.get('held', False) or edit['status'] in PENDING and note['status'] == 'open'):
                     continue
                 version = note['version']
                 if version not in edit['versions']:
@@ -2023,7 +2090,9 @@ class Review:
             raise Conflict('Concurrent review modification while reading feedback context')
         current_ids = {id_ for id_, edit in self.state['edits'].items() if (selected is None or id_ in selected) and edit['status'] in PENDING
                        and any(n['status'] == 'open' for n in edit.get('requests', []))
-                       and all(n['version'] == edit['versions'][-1] for n in edit.get('requests', []) if n['status'] == 'open')}
+                        and all(n['version'] == edit['versions'][-1] for n in edit.get('requests', []) if n['status'] == 'open')
+                        and not any((n.get('held', False) or n.get('status') == 'open') and (n['id'], n['version']) not in {(r['id'], r['version']) for r in edit.get('requests', [])}
+                                    for n in (edit.get('previous_feedback') or {}).get('requests', []))}
         return {'items': list(groups.values()), 'sha256': digest(self.raw), 'session': self.state.get('session'),
                 'current_versions': {id_: self.state['edits'][id_]['versions'][-1] for id_ in ids} if ids is not None else {},
                 'known_feedback': [self.feedback_receipt(id_) for id_ in sorted(current_ids)]}
@@ -2118,6 +2187,7 @@ def main():
     p.add_argument('--id', dest='ids', action='append')
     sub.add_parser("feedback", help="UTF-8 JSON anchored author annotation on stdin")
     sub.add_parser('feedback-batch', help='Atomically add independent whole-item or explicit-option notes')
+    sub.add_parser('manage-feedback', help='Atomically hold, release or delete exact selected feedback snapshots')
     p = sub.add_parser("inspect")
     p.add_argument("--id", required=True)
     p.add_argument("--version")
@@ -2225,6 +2295,8 @@ def dispatch(r, args):
             updated, result = r.feedback(json.loads(sys.stdin.read()))
         elif args.command == 'feedback-batch':
             updated, result = r.feedback_batch(json.loads(sys.stdin.read()))
+        elif args.command == 'manage-feedback':
+            updated, result = r.manage_feedback(json.loads(sys.stdin.read()))
         elif args.command == 'link-questions':
             spec = json.loads(sys.stdin.read())
             updated, result = r.update_questions(args.id, args.version, spec['questions'], replace=args.replace)

@@ -13,6 +13,79 @@ ROOT = Path(os.environ['SOURCE_REVIEW_FIXTURES']); ROOT.mkdir(parents=True, exis
 
 
 class NativeReview(unittest.TestCase):
+    def test_manage_feedback_exact_batch_and_protect_begin(self):
+        from unittest.mock import patch
+        ids = [self.proposal(), self.apply('propose', {'file':'reply.tex', 'kind':'response',
+               'before':'Thank you.', 'after':'Thank you for the suggestion.'})['id']]
+        for id_ in ids:
+            data = self.review().inspect(id_)
+            self.apply('feedback', {'id':id_, 'version':data['version'], 'side':'original',
+                                    'start':0, 'end':0, 'quote':'', 'text':'相同要求'})
+        self.install_sidecar(dict(self.review().state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        initial = review()
+        items = [{'id':id_, 'version':initial.state['edits'][id_]['versions'][-1], 'file':initial.state['edits'][id_]['file'],
+                  'source':'requests', 'note':initial.state['edits'][id_]['requests'][0].copy()} for id_ in ids]
+        spec = {'session':initial.state['session'], 'items':items, 'action':'hold'}
+        before, sources = initial.raw, {name:(self.root / name).read_bytes() for name in ('main.tex','reply.tex')}
+        stale = {**spec, 'items':[items[0], {**items[1], 'version':'old'}]}
+        with self.assertRaises(Conflict): review().manage_feedback(stale)
+        self.assertEqual(review().raw, before)
+        with self.assertRaisesRegex(Conflict, '未处理或暂留批注'):
+            review().begin('next', ['main.tex','reply.tex'])
+        self.assertEqual(review().raw, before)
+        current = review(); updated, result = current.manage_feedback(spec)
+        with patch.object(current, 'write', side_effect=PermissionError('busy')):
+            with self.assertRaises(PermissionError): current.persist(updated, digest(current.raw))
+        self.assertEqual(review().raw, before)
+        current = review(); updated, result = current.manage_feedback(spec); current.persist(updated, digest(current.raw))
+        self.assertEqual(result['count'], 2)
+        held = review()
+        self.assertTrue(all(held.state['edits'][id_]['requests'][0]['held'] for id_ in ids))
+        self.assertTrue(all(group['requests'][0]['held'] for group in held.feedback_context()['items']))
+        held_items = [{**item, 'note':held.state['edits'][item['id']]['requests'][0].copy()} for item in items]
+        current = review(); updated, _ = current.manage_feedback({'session':spec['session'], 'items':held_items[:1], 'action':'release'}); current.persist(updated, digest(current.raw))
+        after = review()
+        self.assertNotIn('held', after.state['edits'][ids[0]]['requests'][0])
+        self.assertTrue(after.state['edits'][ids[1]]['requests'][0]['held'])
+        selected = {**items[0], 'note':after.state['edits'][ids[0]]['requests'][0].copy()}
+        updated, _ = after.manage_feedback({'session':spec['session'], 'items':[selected], 'action':'delete'}); after.persist(updated, digest(after.raw))
+        final = review()
+        self.assertEqual(final.state['edits'][ids[0]]['requests'], [])
+        self.assertEqual(final.state['edits'][ids[1]]['requests'][0]['text'], '相同要求')
+        self.assertEqual({name:(self.root / name).read_bytes() for name in sources}, sources)
+
+    def test_old_unresolved_and_held_previous_feedback_are_protected(self):
+        from source_review import protected_feedback
+        self.assertTrue(protected_feedback({'requests':[{'text':'旧批注'}]}))
+        self.assertTrue(protected_feedback({'requests':[], 'previous_feedback':{'requests':[{'id':'old', 'version':'v', 'status':'open'}]}}))
+        self.assertTrue(protected_feedback({'requests':[], 'previous_feedback':{'requests':[{'id':'old', 'version':'v', 'status':'resolved', 'held':True}]}}))
+        self.assertFalse(protected_feedback({'requests':[{'id':'done', 'version':'v', 'status':'resolved'}]}))
+
+    def test_manage_previous_only_feedback_without_losing_its_original_version(self):
+        id_ = self.proposal(); data = self.review().inspect(id_)
+        self.apply('feedback', {'id':id_, 'version':data['version'], 'side':'original',
+                                'start':0, 'end':0, 'quote':'', 'text':'较早的未处理批注'})
+        self.apply('propose', {'after':'The model is reliable and fast.', 'discard_annotations':True}, id_)
+        self.install_sidecar(dict(self.review().state, schema=3))
+        r = Review(self.root, '.codex-review/state.json', 'missing-git')
+        edit = r.state['edits'][id_]
+        note = edit['previous_feedback']['requests'][0].copy()
+        item = {'id':id_, 'file':edit['file'], 'version':edit['versions'][-1], 'note':note, 'source':'previous_feedback'}
+        updated, result = r.manage_feedback({'session':r.state['session'], 'items':[item], 'action':'hold'})
+        r.persist(updated, digest(r.raw))
+        r = Review(self.root, '.codex-review/state.json', 'missing-git')
+        self.assertTrue(r.state['edits'][id_]['previous_feedback']['requests'][0]['held'])
+        self.assertEqual(r.feedback_context()['items'][0]['version'], data['version'])
+        self.assertTrue(r.feedback_context()['items'][0]['requests'][0]['held'])
+        with self.assertRaisesRegex(Conflict, '未处理或暂留批注'):
+            r.begin('next', ['main.tex','reply.tex'])
+        r.state['edits'][id_]['status'] = 'accepted'
+        r.persist({}, digest(r.raw))
+        r = Review(self.root, '.codex-review/state.json', 'missing-git')
+        from mcp_server import feedback_packet
+        self.assertTrue(feedback_packet(r)['items'][0]['requests'][0]['held'])
+
     def install_sidecar(self, state):
         owner = self.root / 'reply.tex'
         owner.write_text(''.join(line for line in owner.read_bytes().decode('utf-8').splitlines(keepends=True)
@@ -996,6 +1069,9 @@ class NativeReview(unittest.TestCase):
         id_ = self.proposal(); previous = self.review().inspect(id_)
         self.apply('feedback', {'id': id_, 'version': previous['version'], 'side': 'candidate', 'start': 13, 'end': 21,
                                 'quote': 'reliable', 'text': '再核对一下。'})
+        resolved = self.review()
+        resolved.state['edits'][id_]['requests'][0]['status'] = 'resolved'
+        resolved.persist({}, digest(resolved.raw))
         first = self.review().state['session']
         self.apply('begin', 'round-1', ['main.tex', 'reply.tex'])
         state = self.review().state
@@ -1126,18 +1202,18 @@ class NativeReview(unittest.TestCase):
         prior = edit['previous_feedback']
         self.assertEqual(prior['version'], data['version'])
         self.assertEqual(prior['requests'][0]['text'], '直接重新生成候选。')
-        self.assertEqual(self.review().feedback_context()['items'], [], 'comparison notes are not outstanding AI requests')
+        self.assertEqual(self.review().feedback_context()['items'][0]['requests'][0]['text'], '直接重新生成候选。')
         self.apply('propose', {'after': 'The model is compact and fast.', 'discard_annotations': True}, id_)
         rolled = self.review().state['edits'][id_]
-        self.assertNotIn('previous_feedback', rolled, 'feedback from an older revision is not retained as the previous revision')
-        self.assertEqual(rolled['versions'], [rolled['versions'][-1]])
+        self.assertEqual(rolled['previous_feedback']['requests'][0]['text'], '直接重新生成候选。')
+        self.assertIn(data['version'], rolled['versions'], '未处理批注的原始版本须保留')
         self.assertEqual(rolled['generation'], 3)
         newer = self.review().inspect(id_)
         self.apply('feedback', {'id': id_, 'version': newer['version'], 'side': 'original', 'start': 13, 'end': 19,
                                 'quote': 'strong', 'text': '新的这一轮要求。'})
         self.apply('propose', {'after': 'The model is efficient and fast.', 'discard_annotations': True}, id_)
         current = self.review().state['edits'][id_]
-        self.assertEqual([n['text'] for n in current['previous_feedback']['requests']], ['新的这一轮要求。'])
+        self.assertEqual([n['text'] for n in current['previous_feedback']['requests']], ['直接重新生成候选。', '新的这一轮要求。'])
         self.assertEqual(current['previous_feedback']['version'], newer['version'])
         saved = (self.root / 'reply.tex').read_bytes()
         with self.assertRaisesRegex(Conflict, 'No content change'):

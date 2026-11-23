@@ -213,12 +213,15 @@ def verify_read(review):
 def feedback_packet(review, ids=None):
     review.assert_ready()
     groups = {}
-    for id_ in selected_ids(review, ids):
+    for id_ in (selected_ids(review, ids) if ids is not None else review.state['edits']):
         edit = review.state['edits'][id_]
-        if edit['status'] not in PENDING:
-            continue
-        for note in edit.get('requests', []):
-            if note['status'] != 'open':
+        notes = edit.get('requests', [])
+        if any(not n.get('id') or not n.get('version') for n in [*notes, *(edit.get('previous_feedback') or {}).get('requests', [])]):
+            raise Conflict('旧批注身份不完整；请先核对，无法安全交接。')
+        identities = {(n['id'], n['version']) for n in notes}
+        notes = [*notes, *(n for n in (edit.get('previous_feedback') or {}).get('requests', []) if (n['id'], n['version']) not in identities)]
+        for note in notes:
+            if not (note.get('held', False) or edit['status'] in PENDING and note['status'] == 'open'):
                 continue
             version = note['version']
             if version not in edit['versions']:

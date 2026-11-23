@@ -14,7 +14,7 @@ from pathlib import Path
 from contextlib import nullcontext
 from datetime import datetime, timezone
 
-from source_review import Review, Conflict, PENDING, body, digest, letters
+from source_review import Review, Conflict, PENDING, body, digest, letters, protected_feedback
 
 
 def source_text(text, sidecar=False):
@@ -114,12 +114,13 @@ def compact(r):
     removed, minimal = [], []
     if not r.sidecar:
         eligible = {id_ for id_, e in edits.items() if not e['versions'] and e.get('checkpoint')
-                    and e.get('freshness') != 'needs-recheck'}
+                    and e.get('freshness') != 'needs-recheck'
+                    and not protected_feedback(e)}
         for id_, old in saved['closed'].items():
             edit = edits.get(id_)
             if (edit and edit['status'] == old['status'] and edit['versions'] and edit['versions'][-1] == old['version']
                     and edit.get('freshness') != 'needs-recheck'
-                    and not any(q['status'] in {'open', 'addressed-pending-review'} for q in edit.get('requests', []))):
+                    and not protected_feedback(edit)):
                 eligible.add(id_)
         needed = set(edits) - eligible
         queue = list(needed)
@@ -147,7 +148,7 @@ def compact(r):
             edit = edits.get(id_)
             if (edit and edit['status'] == old['status'] and edit['versions'] and edit['versions'][-1] == old['version']
                     and edit.get('freshness') != 'needs-recheck'
-                    and not any(q['status'] in {'open', 'addressed-pending-review'} for q in edit.get('requests', []))):
+                    and not protected_feedback(edit)):
                 eligible.add(id_)
         needed = set(edits) - eligible
         queue = list(needed)
