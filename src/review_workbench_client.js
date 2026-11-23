@@ -558,7 +558,7 @@ function renderQuestionMode() {
                 const comparison=document.createElement('div'); comparison.className='questionOptions';
                 const optionNodes=entry.card.options.map(option=>{
                     const node=document.createElement('div'), heading=document.createElement('strong'), text=document.createElement('pre');
-                    node.className='questionOption'; heading.textContent='方案 '+option.label; text.className='review-text';
+                    node.className='questionOption'; heading.textContent='方案 '+option.label+(option.label==='A' ? ' · 推荐' : ''); text.className='review-text';
                     const actions=document.createElement('div'); actions.className='optionActions';
                     for (const [intent,label] of [['preview','预览'],['editToggle','编辑'],['optionNote','批注'],['accept','接收']]) {
                         const button=document.createElement('button'); button.dataset.action='questionCard'; button.dataset.intent=intent;
@@ -568,6 +568,17 @@ function renderQuestionMode() {
                         button.disabled=cardButtonDisabled(button);
                     }
                     node.append(heading,actions,text);
+                    const tradeoff=document.createElement('p');tradeoff.textContent=option.summary || option.reason || '';node.appendChild(tradeoff);
+                    if (option.summary && option.reason && option.summary!==option.reason) {
+                        const details=document.createElement('details'),summary=document.createElement('summary'),reason=document.createElement('p');
+                        summary.textContent='详细取舍';reason.textContent=option.reason;details.append(summary,reason);node.appendChild(details);
+                    }
+                    if (!activeDraft && (option.fact_changes || []).length) {
+                        const details=document.createElement('details'),summary=document.createElement('summary'),facts=document.createElement('pre');
+                        summary.textContent='数字、引用、公式或保留术语有 '+option.fact_changes.length+' 处变化，需核对依据';
+                        facts.textContent=factChangesText(option,entry.card.fact_evidence || []);details.append(summary,facts);node.appendChild(details);
+                    }
+                    if (!activeDraft && option.scope) {const range=document.createElement('small');range.textContent=scopeSummary(option.scope);node.appendChild(range);}
                     if(option.migration){const details=document.createElement('details'),summary=document.createElement('summary'),plan=document.createElement('pre');
                         summary.textContent='此方案的旧版局部要求（未接收前仅作候选意图）';
                         plan.textContent=option.migration.fragments.filter(f=>f.kind==='plan').map(f=>f.text).join('\n');details.append(summary,plan);node.appendChild(details);}
@@ -590,7 +601,7 @@ function renderQuestionMode() {
                         node.classList.toggle('selected',select.value===option.label);
                         models.set(text,math.render(text,clipped,visibleChanges,'candidate',sourceMode ? 'source' : 'preview',globalThis.katex));
                         if (!activeDraft) bindQuestionSource(text,entry,'candidate',option.label,clipped);
-                        node.querySelector('strong').textContent='方案 '+option.label+(isCurrent && value!==option.after ? '（未保存草稿）' : '');
+                        node.querySelector('strong').textContent='方案 '+option.label+(option.label==='A' ? ' · 推荐' : '')+(isCurrent && value!==option.after ? '（未保存草稿）' : '');
                     });
                 };
                 select.addEventListener('change',()=>{if(check.checked && batchSelection.get(entry.id)?.version===entry.version) {batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value});saveBatchSelection();selectedCount();}updateExcerpt();});
@@ -631,6 +642,19 @@ function markDirectoryCursor() {
         if (active) node.setAttribute('aria-current', 'true'); else node.removeAttribute('aria-current');
     }
 }
+function scopeSummary(count) {
+    return !count ? '' : count.error ? '修改范围暂无法统计：' + count.error
+        : `相对原文的变动涉及：原文 ${count.old_sentences} 句 → 候选 ${count.new_sentences} 句`
+            + (count.old_environments || count.new_environments ? `；独立环境 ${count.old_environments} → ${count.new_environments}` : '');
+}
+function factChangesText(option, evidenceRows) {
+    return (option.fact_changes || []).map((f,index)=>{
+        const describe=values=>values.map(([value,start,end])=>`${value} [${start},${end})`).join('、') || '无';
+        const evidence=evidenceRows.filter(e=>e.option===option.label && e.change_index===index && e.kind===f.kind);
+        const sources=evidence.map(e=>e.location_checked ? `\n依据定位已核对：${e.file} [${e.start},${e.end})\n${e.quote}\n科学结论未验证` : `\n依据已变化或不可读取：${e.file}；请重新核对`);
+        return `${({number:'数字',citation:'引用键',math:'公式',term:'保留术语'})[f.kind]}：${describe(f.old)} → ${describe(f.new)}；${evidence.some(e=>e.location_checked) ? '科学结论未验证' : 'unsupported（未核对依据）'}${sources.join('')}`;
+    }).join('\n');
+}
 function renderOption(o) {
     let article = $('option-' + o.label);
     if (!article) {article = document.createElement('article'); article.id = 'option-' + o.label; $('options').appendChild(article);}
@@ -647,19 +671,12 @@ function renderOption(o) {
     migration.hidden=!o.migration;
     migration.querySelector('pre').textContent=o.migration ? '此方案未接收前仅为候选意图。\n' + o.migration.fragments.filter(f=>f.kind==='plan').map(f=>f.text).join('\n') : '';
     const count = o.scope;
-    article.querySelector('.scopeSummary').textContent = !count ? '' : count.error ? '修改范围暂无法统计：' + count.error
-        : `相对原文的变动涉及：原文 ${count.old_sentences} 句 → 候选 ${count.new_sentences} 句`
-            + (count.old_environments || count.new_environments ? `；独立环境 ${count.old_environments} → ${count.new_environments}` : '');
+    article.querySelector('.scopeSummary').textContent = scopeSummary(count);
     article.querySelector('.scopeSummary').title = '按 TeX 结构统计涉及变化的句子，不是质量评分或修改上限；不含纯首尾空白变化。';
     const facts = o.fact_changes || [], factBox = article.querySelector('.factChanges');
     factBox.hidden = !facts.length;
     factBox.querySelector('summary').textContent = `数字、引用、公式或保留术语有 ${facts.length} 处变化，需核对依据`;
-    factBox.querySelector('pre').textContent = facts.map((f, index) => {
-        const describe = values => values.map(([value, start, end]) => `${value} [${start},${end})`).join('、') || '无';
-        const evidence = (data.fact_evidence || []).filter(e => e.option === o.label && e.change_index === index && e.kind === f.kind);
-        const sources = evidence.map(e => e.location_checked ? `\n依据定位已核对：${e.file} [${e.start},${e.end})\n${e.quote}\n科学结论未验证` : `\n依据已变化或不可读取：${e.file}；请重新核对`);
-        return `${({number:'数字',citation:'引用键',math:'公式',term:'保留术语'})[f.kind]}：${describe(f.old)} → ${describe(f.new)}；${evidence.some(e => e.location_checked) ? '科学结论未验证' : 'unsupported（未核对依据）'}${sources.join('')}`;
-    }).join('\n');
+    factBox.querySelector('pre').textContent = factChangesText(o,data.fact_evidence || []);
     if (translatedText.has(o.label) && translatedText.get(o.label).source !== o.after) {
         translatedText.delete(o.label); $('zh-' + o.label).textContent = ''; rendered.delete($('zh-' + o.label));
     }

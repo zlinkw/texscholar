@@ -107,10 +107,12 @@ test('question translation requests use the displayed card identity and do not t
     const question={id:'Q',file:'review.txt',quote:'Explain this method.'}, questionKey=JSON.stringify([question.id,question.file,question.quote]);
     const make=(id,version)=>({version,original:'Original '+id,source_match:true,edit:{file:id+'.tex',kind:'manuscript',versions:[version],requests:[],questions:[question]},options:[{label:'A',after:'Changed '+id,reason:'A',changes:[]},{label:'B',after:'$$x=1$$',reason:'B',changes:[]}]});
     const one=make('1','v1'),two=make('2','v2');
+    two.fact_evidence=[{option:'A',change_index:0,kind:'number',file:'evidence.txt',location_checked:true,quote:'42',start:0,end:2}];
     const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
     const state={get:(_k,fallback)=>fallback,update:async()=>{}};
     const services={read:async()=>one,session:()=> 'session',style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,provider:()=> 'fixture',directory:()=>[],questions:()=>[{key:questionKey,question,entries:[{id:'1',version:'v1'},{id:'2',version:'v2'}],snapshot:'[]'}],translate:async text=>{calls.push(text);return text==='$$x=1$$' ? {noTranslation:'纯行间公式无需翻译。'} : {text:'中文 '+text};},note:async (...args)=>notes.push(args),handoff:async target=>{assert.equal(target.id,'2');if (++handoffs===1) throw Error('offline');}};
     const view=createWorkbench(vscode,{subscriptions:[],workspaceState:state},services);view.setRecords(new Map([['1',{c,data:one}],['2',{c:other,data:two}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    assert.deepEqual(messages.findLast(m=>m.type==='content').questions[0].entries.find(item=>item.id==='2').card.fact_evidence,two.fact_evidence);
     const viewKey=JSON.stringify(['session',questionKey,'full','question']), displayKey=JSON.stringify(['session',questionKey,'2','v2','candidate','A','full','Changed 2']);
     await receive({type:'questionTranslationView',instance:'page',...c,session:'session',view:viewKey,visible:[displayKey]});
     await receive({type:'questionTranslate',instance:'page',...c,session:'session',questionKey,target:'2',targetVersion:'v2',side:'candidate',option:'A',viewStyle:'full',source:'Changed 2',view:viewKey,displayKey,retry:true});

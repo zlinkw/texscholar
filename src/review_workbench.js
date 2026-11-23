@@ -153,7 +153,7 @@ function createWorkbench(vscode, context, services) {
         const set = new Set(active && services.session && context.workspaceState ? postponed(active) : []);
         return services.directory().filter(item => lastRecords.has(item.id)).map(item => {
             const record = lastRecords.get(item.id), unbound = !(record.data.edit.questions || []).length;
-            return {...item, postponed: set.has(item.id), ...(unbound ? {card:{original:record.data.original,options:options(record.data),postponed:set.has(item.id)}} : {})};
+            return {...item, postponed: set.has(item.id), ...(unbound ? {card:{original:record.data.original,options:options(record.data),fact_evidence:record.data.fact_evidence || [],postponed:set.has(item.id)}} : {})};
         });
     };
     async function setPostponed(c, value) {
@@ -277,7 +277,7 @@ function createWorkbench(vscode, context, services) {
             return {...row, entries: row.entries.map(entry => {
                 const record = lastRecords.get(entry.id);
                 return record && record.c.version === entry.version ? {...entry, card: {original:record.data.original,
-                    options:options(record.data), postponed:postponed(c).includes(entry.id)}} : entry;
+                    options:options(record.data), fact_evidence:record.data.fact_evidence || [], postponed:postponed(c).includes(entry.id)}} : entry;
             }), checked: equal, recheck: previous !== undefined && !equal};
         });
     }

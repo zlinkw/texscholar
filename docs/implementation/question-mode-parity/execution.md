@@ -20,3 +20,5 @@ M1/M2 首批：正常 Development 私有桌面 M-ui-red1 实际 observer/外层 
 第三批：新增跨卡原文选区后，原暂存核对只拿当前项全文比较，导致目标卡无变化时片段批注草稿也被标为不能恢复。现暂存核对按原 session、精确问题、目标项/版本、侧/方案和实际片段重算，成功恢复后仍由原保存边界再次核对；目标版本变化则保留草稿并拒绝直接恢复。M-stash-final 执行 node --test src/review_workbench.test.js，46 项 exit 0，覆盖跨卡暂存、恢复、准确保存和目标版本变更拒绝；不改 UI 或后端文件，沿用相应已验覆盖。
 
 第四批：检查保存并切换时发现原跨卡译文及新原文选区共用的 savePendingInputs 把目标包装当选区写给当前项，可能拒绝或错误绑定；已向总控提前报真实数据完整性风险，未触真实论文。M-switch-red 初次夹具缺 services.saved 报错，不作为产品缺陷；补齐后 M-switch-red2 exit 1，准确观察目标卡 2 被送到项 1。修复为使用已核 selected.target 与 selected.selection，原当前项处理不变；M-switch-green 46 项 exit 0，包括跨卡暂存恢复后“保存并切换”正确写卡 2 的精确选区，完整日志保留。
+
+第五批：问题卡原先不展示段落模式已有的推荐、摘要/详细取舍、事实变化依据及范围；虽然可进入单项查看，直接做卡片决定时缺少关键信息。问题卡复用段落模式同一范围和事实格式，逐卡传该项证据，保留“科学结论未验证”与 unsupported 状态；该项有草稿时不展示旧事实或范围，迁移意图仍为候选意图。M-evidence-impact 对 workbench/math/inline 相关链 exit 0；M-evidence-ui 正常隔离宿主显示推荐、取舍、范围 exit 0；M-evidence2-ui 在同宿主对合成卡数据注入摘要、详细依据和数字变化/证据，实际 DOM 显示并注明未验证 exit 0，不称真实论文证据。截图 ui-f6ed63142a0b4d959cc48e4cc60c4868.png、ui-0e97cd8bee504621a85037c8b2996d42.png 已看；专属 profile/pipe、私有桌面及 Default/前台保护按对应 run-result 记录。
