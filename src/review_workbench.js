@@ -240,8 +240,20 @@ function createWorkbench(vscode, context, services) {
                 q.id === selected.question.id && q.file === selected.question.file && q.quote === selected.question.quote);
             const selectedText = selected?.side === 'question' ? question?.quote : selected?.side === 'candidate'
                 ? d.state.drafts[selected.option] ?? options(loaded).find(o => o.label === selected.option)?.after : selected?.side === 'original' ? loaded.original : undefined;
-            const selectionMatches = !selected || (!selected.question || !!question) && (selected.side === 'translation'
+            let selectionMatches = !selected || (!selected.question || !!question) && (selected.side === 'translation'
                 || selectedText?.replace(/\r\n/g, '\n') === selected.value);
+            if (selected?.questionSourceKey) {
+                const rows=questionTable(c), row=rows.find(item=>item.key===selected.questionKey);
+                const linked=selected.questionKey==='__unbound__' ? !rows.some(item=>item.entries.some(entry=>entry.id===selected.questionTarget)) && directory().some(item=>item.id===selected.questionTarget && item.version===selected.questionTargetVersion && item.card)
+                    : row?.entries.some(item=>item.id===selected.questionTarget && item.version===selected.questionTargetVersion);
+                const record=linked && lastRecords.get(selected.questionTarget);
+                const excerpt=record && questionTranslationSource(record.data,row?.question,selected.side,selected.option,selected.questionViewStyle);
+                const sourceKey=JSON.stringify([d.session,selected.questionKey,selected.questionTarget,selected.questionTargetVersion,selected.side,
+                    selected.option || '',selected.questionViewStyle,selected.questionSource]);
+                selectionMatches=selected.session===d.session && record?.c.version===selected.questionTargetVersion &&
+                    selected.questionSourceKey===sourceKey && excerpt?.text===selected.questionSource &&
+                    selected.value===excerpt.text.replace(/\r\n/g,'\n');
+            }
             const exact = !d.state.candidateDraftStale && !d.state.sourceDraftStale && !d.state.selectionStale
                 && d.session === session && d.c.version === c.version && loaded.source_match !== false && d.original === loaded.original
                 && JSON.stringify(d.block) === JSON.stringify(loaded.block)

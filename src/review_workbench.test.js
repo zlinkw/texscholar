@@ -888,6 +888,28 @@ test('stash closes and restores only the exact session and source baseline', asy
     assert.deepEqual(messages.filter(m=>m.type==='content').at(-1).stashes,[]);
 });
 
+test('stash preserves an exact selection on a different question card', async () => {
+    let receive,dispose; const values={},messages=[],notes=[];
+    const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
+    const c={repo:'/fixture',owner:'state',id:'1',version:'v1'}, other={...c,id:'2',version:'v2'};
+    const question={id:'Q',file:'q.txt',quote:'Explain.'}, questionKey=JSON.stringify([question.id,question.file,question.quote]);
+    const make=(id,version)=>({id,version,original:'Original '+id,source_match:true,edit:{file:id+'.tex',kind:'manuscript',versions:[version],requests:[],questions:[question]},options:[{label:'A',after:'Candidate '+id,reason:'A'}]});
+    const one=make('1','v1'),two=make('2','v2'),records=new Map([['1',{c,data:one}],['2',{c:other,data:two}]]);
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},dispose(){dispose();},onDidDispose:f=>{dispose=f;},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={session:()=> 'session',read:async()=>structuredClone(one),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[],questions:()=>[{key:questionKey,question,entries:[{id:'1',version:'v1'},{id:'2',version:'v2'}],snapshot:'[]'}],note:async(...args)=>notes.push(args)};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState},services),open=async instance=>{view.setRecords(records);await view.show(c);await receive({type:'ready',instance});};
+    const selected={side:'candidate',option:'A',questionTarget:'2',questionTargetVersion:'v2',questionKey,questionSource:'Candidate 2',questionViewStyle:'full',session:'session',value:'Candidate 2',start:0,end:9};
+    selected.questionSourceKey=JSON.stringify(['session',questionKey,'2','v2','candidate','A','full','Candidate 2']);
+    await open('p');await receive({type:'stashClose',instance:'p',...c,state:{c,drafts:{},note:'Draft note',selected,scope:'group',editors:[],textareas:{},expandedNotes:[]}});
+    await open('q');const stash=messages.findLast(m=>m.type==='content').stashes[0];assert.equal(stash.exact,true);
+    await receive({type:'restoreStash',instance:'q',...c,stash:stash.id});assert.deepEqual(messages.findLast(m=>m.type==='content').resume.selected,selected);
+    const mode=JSON.stringify(['session',questionKey,'full','question']);await receive({type:'questionTranslationView',instance:'q',...c,session:'session',view:mode,visible:[]});
+    await receive({type:'note',instance:'q',...c,...selected,text:'Draft note'});assert.equal(notes[0][0].id,'2');assert.equal(notes[0][1].quote,'Candidate');
+    await receive({type:'stashClose',instance:'q',...c,state:{c,drafts:{},note:'Preserve me',selected,scope:'group',editors:[],textareas:{},expandedNotes:[]}});
+    records.set('2',{c:{...other,version:'v3'},data:make('2','v3')});
+    await open('r');assert.equal(messages.findLast(m=>m.type==='content').stashes[0].exact,false,'changed target version cannot restore old binding');
+});
+
 test('a draft already stale before stashing cannot be restored as an exact draft', async () => {
     let receive,dispose;const values={},messages=[], c={repo:'/stale',owner:'state',id:'1',version:'v2'};
     const workspaceState={get:(k,f)=>values[k]??f,update:async(k,v)=>{values[k]=structuredClone(v);}};
