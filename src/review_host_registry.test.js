@@ -118,6 +118,37 @@ test('only the registered host handles a scoped review transaction', async () =>
     assert.deepEqual(result.result.files,['paper.tex']); request.socket.end(); await host.close();
 });
 
+test('successful header transaction notifies its host after the operation closes', async () => {
+    const f = fixture(), host = await openRegistry(f.pipe, f.journal); await host.join([f.root]);
+    const seen = new Promise(resolve => host.onHeaderSettled(resolve));
+    host.onTransaction(async message => {assert.equal(message.role_plan.kind,'header-metadata'); return {files:[]};});
+    const socket = net.createConnection(f.pipe);
+    await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
+    const response = new Promise((resolve,reject)=>{
+        let text=''; socket.on('data',chunk=>{text+=chunk.toString('utf8'); const at=text.indexOf('\n');
+            if(at>=0){const value=JSON.parse(text.slice(0,at)); value.ok?resolve(value):reject(new Error(value.error));}});
+        socket.once('error',reject);
+    });
+    socket.write(JSON.stringify({id:1,type:'apply-role-metadata',root:f.root,role_plan:{kind:'header-metadata'}})+'\n');
+    await response; socket.end();
+    assert.equal(await seen,process.platform === 'win32' ? fs.realpathSync(f.root).toLowerCase() : fs.realpathSync(f.root));
+    await host.close();
+});
+
+test('failed header transaction does not signal a completed refresh', async () => {
+    const f = fixture(), host = await openRegistry(f.pipe, f.journal); await host.join([f.root]);
+    let count=0; host.onHeaderSettled(()=>{count++;});
+    host.onTransaction(async()=>{throw new Error('refused');});
+    const socket=net.createConnection(f.pipe);
+    await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
+    const response=new Promise(resolve=>{let raw='';socket.on('data',chunk=>{raw+=chunk.toString();const at=raw.indexOf('\n');if(at>=0)resolve(JSON.parse(raw.slice(0,at)));});});
+    socket.write(JSON.stringify({id:1,type:'apply-role-metadata',root:f.root,role_plan:{kind:'header-metadata'}})+'\n');
+    assert.equal((await response).ok,false);
+    const previous=host.state(f.root).generation;
+    const changed=new Promise(resolve=>host.onState(value=>{if(value.generation>previous)resolve();}));
+    socket.end();await changed;assert.equal(count,0);await host.close();
+});
+
 test('a second host invalidates a running transaction before its receipt', async () => {
     const f = fixture(), host = await openRegistry(f.pipe, f.journal); await host.join([f.root]);
     let release, started;

@@ -112,7 +112,7 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                     if (!joined) {joined = true; operationRoot = root; operationGeneration = entry.generation; unregistered--;}
                     for (const project of projects.keys()) broadcast(project);
                     const host = [...entry.members][0], request = crypto.randomUUID();
-                    transactions.set(request, {host, operation:socket, id:message.id, root, generation:entry.generation, stateSha:message.state_sha, commit:message.commit, legacy, migration, role});
+                    transactions.set(request, {host, operation:socket, id:message.id, root, generation:entry.generation, stateSha:message.state_sha, commit:message.commit, legacy, migration, role, header:role && message.role_plan.kind === 'header-metadata'});
                     send(host, {type:'transaction', request, root, generation:entry.generation, state_sha:message.state_sha, commit:message.commit, legacy, migration, role, role_plan:message.role_plan, recover:message.recover === true});
                 } else if (message.type === 'check-review-reservation') {
                     const root = canonical(message.root), current = state(root);
@@ -127,6 +127,7 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                     if (!current.eligible || current.generation !== transaction.generation)
                         send(transaction.operation, {id:transaction.id, ok:false, error:'宿主资格已变化；事务保留待核对。'});
                     else {
+                        if (message.ok === true && transaction.header) transaction.operation.headerChanged = true;
                         if (message.ok === true && !transaction.legacy && !transaction.migration && !transaction.role) transaction.operation.completedReview = transaction;
                         send(transaction.operation, {id:transaction.id, ok:message.ok === true,
                             ...(message.ok === true ? {result:message.result, generation:transaction.generation} : {error:message.error || '宿主事务失败。'})});
@@ -186,6 +187,10 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                 }
             }
             if (operationRoot && projects.has(operationRoot)) projects.get(operationRoot).generation++;
+            if (operationRoot && socket.headerChanged) {
+                const entry = projects.get(operationRoot);
+                if (entry) for (const peer of entry.members) send(peer, {type:'header-settled',root:operationRoot});
+            }
             if (!joined) {
                 unregistered--;
                 for (const entry of projects.values()) entry.uncertain = true;
@@ -228,6 +233,7 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
     const waiting = new Map(), states = new Map(), events = new EventEmitter();
     lines(socket, message => {
         if (message.type === 'state') {states.set(message.root, message); events.emit('state', message); return;}
+        if (message.type === 'header-settled') {events.emit('headerSettled', message.root); return;}
         if (message.type === 'transaction') {
             if (!events.emit('transaction', message)) send(socket, {type:'transaction-result', request:message.request, ok:false, error:'宿主事务处理器不可用。'});
             return;
@@ -257,6 +263,7 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
         resolveStale: root => request('resolve-stale', {root}),
         state: root => states.get(canonical(root)),
         onState: callback => {events.on('state', callback); return () => events.off('state', callback);},
+        onHeaderSettled: callback => {events.on('headerSettled', callback); return () => events.off('headerSettled', callback);},
         onTransaction: callback => {
             if (events.listenerCount('transaction')) throw new Error('宿主事务处理器已登记。');
             const listener = message => Promise.resolve().then(() => callback(message)).then(

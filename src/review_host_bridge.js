@@ -31,7 +31,7 @@ async function activate(context, open = openRegistry) {
             catch (error) {vscode.window.showErrorMessage(error.message);}
         }
     }));
-    return {close: () => registry.close()};
+    return {close: () => registry.close(), onHeaderSettled: callback => registry.onHeaderSettled(callback)};
 }
 
 module.exports = {activate};

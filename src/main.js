@@ -15,6 +15,8 @@ exports.activate = async context => {
     require('./updates').activate(context);
     await require('./writing').activate(context).ready;
     await require('./pdf_navigation').activate(context).ready;
-    return require('./inline_review').activate(context);
+    const inline = require('./inline_review').activate(context);
+    if (reviewHost) context.subscriptions.push({dispose:reviewHost.onHeaderSettled(root => inline.headerSettled(root))});
+    return inline;
 };
 exports.deactivate = async () => {if (reviewHost) await reviewHost.close();};

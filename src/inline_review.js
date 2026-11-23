@@ -1455,6 +1455,10 @@ function createInlineReview(vscode, context, execute = run) {
     }));
     startup = enableReview().catch(error => {vscode.window.showErrorMessage(error.message);});
     return {open, refresh, accept, reject, annotate, preview, addRequests, reviewList, listProvider, records,
+        headerSettled: root => {
+            if (activeScope && sameFile(root, activeScope.repo))
+                return refresh(activeScope, false, true).catch(error => vscode.window.showErrorMessage('迁移后审核列表刷新失败：' + error.message));
+        },
         whenTranslationIdle: () => workbench.whenTranslationIdle(),
         whenPDFPrepared: () => Promise.all([...acceptedPDFPreparations]),
         workbench, whenPDFIdle: async () => {await Promise.all([...acceptedPDFPreparations]); await pdfRun;}, ready: startup};

@@ -102,3 +102,14 @@ test('profile confirmation refuses a dirty project file before metadata write', 
     await assert.rejects(applyLegacy(f.vscode,registry,f.root,1,null,plan),/未保存编辑/);
     assert.deepEqual(fs.readFileSync(path.join(f.root,'reply.tex')),before);
 });
+
+test('header metadata cannot bypass its paper-storage verification via a legacy object', () => {
+    const f = fixture('metadata'), before = fs.readFileSync(path.join(f.root,'reply.tex'));
+    const state = Buffer.from('{"schema":3}');
+    fs.writeFileSync(path.join(f.root,'.codex-review','state.json'),state);
+    const plan = {kind:'header-metadata',owner:'reply.tex',owner_before:b64(before),owner_after:b64('changed'),
+        owner_intent:null,files:[],checks:[{file:'.codex-review/state.json',before:b64(state)}]};
+    const raw = Buffer.from(JSON.stringify({files:{'host-plan':b64(JSON.stringify(plan))}})), commit = sha(raw);
+    fs.writeFileSync(path.join(f.root,'.codex-review','objects',commit+'.json'),raw);
+    assert.throws(()=>legacyPlan(f.root,commit),/必须经资料验证/);
+});
