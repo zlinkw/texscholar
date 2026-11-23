@@ -1,5 +1,6 @@
 """Read-only planning for explicit migration of embedded review records."""
 import base64
+from bisect import bisect_left, bisect_right
 import copy
 import json
 import os
@@ -9,7 +10,6 @@ import uuid
 
 from source_review import Conflict, PENDING, split_state, digest, locate
 from review_blocks import safe_boundaries
-from review_pdf import paragraph_span
 
 
 def preview(review):
@@ -21,7 +21,7 @@ def preview(review):
     boundaries, failures = {}, {}
     for name, text in texts.items():
         try:
-            boundaries[name] = safe_boundaries(text)
+            boundaries[name] = sorted(safe_boundaries(text))
         except ValueError as error:
             failures[name] = str(error)
     ranges, conflicts = {}, []
@@ -40,20 +40,19 @@ def preview(review):
             anchor = review.anchor_context(edit, item)
             if locate(text, review.live_excerpt(edit, item), anchor['left'], anchor['right']) != (start, end):
                 raise Conflict('旧候选位置与唯一可核对的位置不一致。')
-            if start == end:
-                if start not in boundaries[name]:
-                    raise Conflict('插入位置不是安全的独立行边界。')
+            if start == end and start in boundaries[name]:
                 a = b = start
                 kind = 'slot'
             else:
-                a, b = paragraph_span(text, start, end)
-                line_end = text.find('\n', a)
-                a = line_end + 1 if line_end >= 0 and not text[a:line_end].strip() else text.rfind('\n', 0, a) + 1
-                if b and b < len(text) and text[b - 1] != '\n':
-                    after = text.find('\n', b)
-                    b = len(text) if after < 0 else after + 1
-                if a not in boundaries[name] or b not in boundaries[name]:
-                    raise Conflict('段落边界不能安全插入标记。')
+                left = bisect_right(boundaries[name], start) - 1
+                right = bisect_left(boundaries[name], end)
+                if left < 0 or right >= len(boundaries[name]):
+                    raise Conflict('候选范围没有安全的独立行边界。')
+                a, b = boundaries[name][left], boundaries[name][right]
+                if a == b:
+                    if right + 1 >= len(boundaries[name]):
+                        raise Conflict('候选范围没有安全的独立行边界。')
+                    b = boundaries[name][right + 1]
                 kind = 'paragraph'
             key = (name, a, b, kind)
             ranges.setdefault(key, []).append({'id': id_, 'start': start, 'end': end,

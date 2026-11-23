@@ -640,9 +640,9 @@ class NativeReview(unittest.TestCase):
         from unittest.mock import patch
         from review_migration import preview, prepare, transaction, apply
         source = self.root / 'main.tex'
-        source.write_text('\\documentclass{article}\n\\begin{document}\nIntroductory prose.\n'
-                          '\\section{Heading}\nFirst detail.\nClosing prose.\n\\end{document}\n', encoding='utf-8')
-        for before, after in [('Introductory prose.', 'Revised introduction.'), ('First detail.', 'Revised detail.')]:
+        source.write_bytes(('\\documentclass{article}\n\\begin{document}\nIntroductory prose.\n'
+                            '\\section{Heading} First detail.\nClosing prose.\n\\end{document}\n').encode('utf-8'))
+        for before, after in [('Introductory prose.\n\\section{Heading}', 'Revised introduction.'), ('First detail.', 'Revised detail.')]:
             self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':before, 'after':after})
         r = self.review(); packet = preview(r)
         self.assertEqual({row['id'] for row in packet['conflicts']}, {'1', '2'})
@@ -656,6 +656,50 @@ class NativeReview(unittest.TestCase):
         self.assertEqual({path.name:path.read_bytes() for path in (self.root / '.codex-review' / 'objects').iterdir()}, objects)
         self.assertEqual(self.review().state['schema'], 2)
         self.assertFalse((self.root / '.codex-review' / 'state.json').exists())
+
+    def test_migration_keeps_exact_adjacent_line_items(self):
+        from review_migration import preview, prepare
+        source = self.root / 'main.tex'
+        source.write_text('\\documentclass{article}\n\\begin{document}\nFirst sentence.\n'
+                          '\\section{Heading} Second sentence.\nThird sentence.\n\\end{document}\n', encoding='utf-8')
+        one = self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'First sentence.',
+                                     'after':'First improved.'})['id']
+        two = self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'Second sentence.',
+                                     'after':'Second improved.'})['id']
+        r = self.review(); packet = preview(r)
+        self.assertEqual(packet['conflicts'], [])
+        prepared = prepare(r, packet)
+        self.assertEqual(set(prepared['state']['edits']), {one, two})
+        self.assertNotEqual(prepared['state']['edits'][one]['block_id'], prepared['state']['edits'][two]['block_id'])
+        self.assertIn(b'First sentence.', prepared['sources']['main.tex'])
+        self.assertIn(b'Second sentence.', prepared['sources']['main.tex'])
+        for name, raw in prepared['sources'].items():
+            (self.root / name).write_bytes(raw)
+        (self.root / '.codex-review' / 'state.json').write_bytes(prepared['state_raw'])
+        current = Review(self.root, '.codex-review/state.json', 'missing-git')
+        version_one = current.state['edits'][one]['versions'][-1]
+        version_two = current.state['edits'][two]['versions'][-1]
+        updated, _ = current.decide([one], [], {one:version_one})
+        current.persist(updated, digest(current.raw))
+        current = Review(self.root, '.codex-review/state.json', 'missing-git')
+        self.assertEqual(current.state['edits'][two]['versions'][-1], version_two)
+        self.assertTrue(current.inspect(two, source=True)['source_match'])
+
+    def test_migration_keeps_inline_insertion_offset(self):
+        from review_migration import preview, prepare
+        source = self.root / 'main.tex'
+        source.write_bytes(b'\\documentclass{article}\n\\begin{document}\nBefore insertion after.\n\\end{document}\n')
+        id_ = self.apply('propose', {'file':'main.tex', 'kind':'manuscript', 'before':'',
+                                    'left':'Before ', 'right':'insertion after.', 'after':'new '})['id']
+        r = self.review(); packet = preview(r)
+        self.assertEqual(packet['conflicts'], [])
+        block = next(block for block in packet['blocks'] if block['edits'][0]['id'] == id_)
+        self.assertEqual(block['kind'], 'paragraph')
+        self.assertEqual(block['edits'][0]['start'], block['edits'][0]['end'])
+        prepared = prepare(r, packet)
+        anchor = prepared['state']['edits'][id_]['anchor']
+        self.assertEqual(anchor['start'], len('Before '))
+        self.assertEqual(anchor['start'], anchor['end'])
 
     def test_migration_refuses_stale_preview_and_existing_sidecar(self):
         from review_migration import preview, prepare
