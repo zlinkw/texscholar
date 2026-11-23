@@ -26,6 +26,10 @@
 
 在向用户提出实际运行约束调整前，先把已授权且可逆的交付准备做成可审核结果：交原Terra仅版本/发行工具必要检查与唯一一次构建租约，准备无冲突新版本的同一VSIX、精确来源和摘要、必要发行说明；不安装、不建tag/Release、不操作真实论文/宿主或重载。本准备不标P8完成，正式发行安装与真实迁移的顺序仍待具体运行决定；如需调整顺序，只针对这一包询问，不重复索取已有泛化发行许可。未变化功能测试/最终组合复用；版本与构建输入变化只补负责边界检查，不做包后冒烟/内容验收或性能测试。准备完成后冻结交回，总控核元数据再给用户具体下一选择。
 
+0.9.61具体包准备完成并由总控核元数据：构建时源码ee0e95dc1755526e0e7d98556d8ef55dc67da786，Terra执行尾30b3427ebbdb949b10a76119aa1b80c863ed324a已普通push/fetch同步clean。package版本0.9.61；既有scripts/build.py清单补实际运行必需的review_option_migration.py、review_header_migration.py、profile_transition_check.py及对应源码测试，必要闭包和版本/MCP/发行工具定向检查通过，功能实现未变、不重做既有组合。P7-package-dependencies-first1发现模块遗漏并误报独立vendor/diff，second0；P7-prep-version-first0、mcp-first两项0、release-first13项0，首败保留。原派单“vsce”表述由总控纠正为既有双包构建入口，未切换工具链。
+
+唯一构建P7-prep-build-first真实0：C:/Python314/python.exe -B -X utf8 scripts/build.py --output dist/v0.9.61，cwd D:/GitRepo/texscholar；该新目录经预核不存在，v0.9.61本地/远端tag不存在、Release API预期404。产物D:/GitRepo/texscholar/dist/v0.9.61/texscholar-0.9.61.vsix SHA256 c348c96cceda535190c1014a8b29abcddfec4f4e0c5a5c32570bcb8536d12fd4；texscholar-0.9.61-source.zip SHA256 c5350c04bd58945f55d2db9d30afacc8ff47b518eedcbdb320eaea7055f62383；SHA256SUMS.txt SHA256 34e0219d5b3ea99fea706c7febe5eb68bd8b4dcb5b302f979f07f5e5f90b58bf。总控实际重读三产物摘要均与交包一致，只核版本/来源/摘要，不扩成包内容审计或冒烟；后续必须复用相同VSIX，不重复构建。完整命令/stdout/stderr/退出位于D:/latex-writing-checks/review-efficiency-20261122/P7-prep-*；说明草案D:/latex-writing-checks/paper-profile-20261123/P7-0.9.61-release-draft.md诚实注明真实迁移/启用未完成。未tag、Release、上传或安装，真实论文/P未动、不reload/restart。全部租约已冻结归还总控，无在途。下一步仅就已备好这一个包向用户请求解除必要运行限制及调整先安装启用再迁移、核对后正式发布的顺序，不重复请求原发行许可；未获调整前停止真实写入和安装/发行。
+
 ## 已查明的缺口
 
 1. “识别／确认论文文件角色”仍在命令面板、src/document_roles.js:134注册。任务助手只走任务→项目→范围→补充→预览，没有角色复用/调整步骤，项目文件范围还是单选；任务附件让AI稍后读file_roles，不能代替用户可见的角色确认。v0.9.59到v0.9.60相关文件无差异，现有有限历史不证明近期删掉过该流程。用户当前宿主未实测，不能归因未重载。
