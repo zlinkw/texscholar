@@ -2,6 +2,8 @@
 
 ## 目标与当前事实
 
+2026-11-24最终功能审核通过，Q返修1已闭合，待Q4同包正式发布安装。功能最终源码e180098f6bf008da94aa0b86db5ff42da0020e44已普通同步clean；总控已审完整8文件实现及R1四文件差异，不接管产品实现。交付沿用户既有“按之前流程发布并安装最新版”授权继续，版本预计0.9.62须实际预核；只做必要版本/发行检查、唯一构建、正式tag/Release及同VSIX安装，不再次重载/重启用户窗口或MCP，不做包后冒烟。
+
 用户2026-11-23报告：问题审核模式默认自动翻译及手动翻译均无效，原每张卡片的独立翻译按钮缺失，“变更片段”视图也无翻译。按既有总控兼最终验收＋唯一Terra执行流程直接复现、修复并验证，不重做已完成论文迁移。
 
 普通Windows仓库D:/GitRepo/texscholar，master跟踪origin/master，初始HEAD均9cfc2a0bc24102018a09a11f23b189b71917708d、clean，已发行/安装0.9.61。总控local/01a20811-7c1e-7a50-908c-c59a658531a0维护本计划/index及最终审核；唯一现任Terra local/01a208d4-2ab9-7a93-9994-56e2c5dfc6c7负责复现/实现/小验收/execution及获派交付，无新增代理。沿用原模型身份与caveman接替，不因新缺陷另建聊天。
@@ -20,7 +22,7 @@
 
 - [x] Q1 Terra在现有workbench真实协议/DOM入口建立失败信号，Q-ui-red/Q-host-red保留，e4b4773实现当前修复；总控审实际8文件diff及负责调用链。
 - [x] Q2 局部Q-editor-final5 90项、Q-feedback-final 10项及正常Development Q-ui-green4/5/6/7均exit0；单卡手动/全文片段/429/跨卡译文批注保存定位/可见自动/收起及全局按钮通过，合成供应商不称实网质量。各原失败和独立profile/pipe/私有桌面证据见execution。
-- [ ] Q3 完整冻结交包给总控，明确实际diff、有效输入/日志/退出、首败、未测、资源无在途并交回产品/测试/UI/隔离配置/Git租约。总控审真实diff/调用链及必要消费者，仅补未覆盖的跨模式/跨卡组合，不重复相同小验收。
+- [x] Q3 Terra两次完整冻结交包，总控审真实diff/调用链及原日志，Q-R1修复后完成独占正常Development跨模式/跨卡组合，结果及边界如下；全部测试/UI租约已停止使用，无在途。
 - [ ] Q4 最终通过后沿已有交付授权/规范处理具体版本包；必要检查、唯一构建、同包发布安装范围由总控一次派清，不把源码修复或模拟译文通过说成已安装或实网通过。
 
 每个内聚批最多2至3个相关问题、8个源码/测试/文档文件，优先负责边界而非新增框架。普通精确stage/commit/push origin master/fetch核一致，远端前移等停止不reset/rebase/merge/force。UTF8、pwsh7、Python -B -X utf8；完整日志和首败保存新证据根，不覆盖/删除。总控计划/index与Terra执行源码写入必须按租约串行；派单成功后总控无独立工作则角色空闲，按必要消息续接。
@@ -29,6 +31,10 @@
 
 2026-11-24总控最终审核发现Q-R1：问题模式questionTranslations按卡片身份缓存，未接上原(provider,text,kind,option)成功结果复用；README同时移除了原有跨有效卡片相同内容及问题复用说明，不能仅为新实现改变已有支持契约。外置controller-cache-check2.cjs实际调用当前createWorkbench，同一问题下两张有效卡的同文同方案A，消息各自精确路由2条但供应商调用2次，期望1次，真实exit1。证据D:/latex-writing-checks/question-translation-20261123/controller-cache-check2.cjs及.result.json/.stdout.log/.stderr.log。首个check夹具漏workspaceState，questionTable为空，断言0条exit1，不当作产品缺陷；新check2按实际协议补齐才证明重复调用。此为既有请求复用契约的正确性核对，无新增性能测试/阈值。
 
-Q3尚未通过，Q返修1。最小修复须将可复用成功翻译内容与卡片显示/批注的精确身份区分，优先复用原缓存及translationKey，不混用不同来源/内容类型/方案，不缓存失败为成功、不去掉旧版/迟到/草稿保护。问题与段落两个模式可复用同样的有效结果，仍逐卡精确返回；README恢复准确原有契约。仅重验受影响复用与路由链，既有GUI和后端有效覆盖按未变输入复用；总控跨模式/跨卡最终组合待返修冻结后补，不提前交付。
+Q-R1现已闭合，Q返修1。e180098f在既有translations/translationKey复用provider/text/kind/option成功内容，逐卡questionTranslations保留精确批注身份，失败不进入共享成功；README恢复原契约。Q1-cache-red及unit-red真实1，修复后cache-green/unit-green2和workbench-final45项0，未改client/后端/TeX，相应Q局部GUI/后端覆盖复用，无新增性能检查。
+
+总控独占最终组合D:/latex-writing-checks/review-efficiency-20261122/qtranslation-controller1，准备/运行脚本和外层日志位于D:/latex-writing-checks/question-translation-20261123/controller-ui-*。新独立profile/专属管道/私有未切CreateDesktopW，正常Development真实inline/workbench/后端及合成供应商：先段落3/A真实按钮取得译文，再问题模式1/A和3/A共用该成功结果而各自显示；切至同ID不同file/quote的问题不套用旧译文；问题1/B在途时切段落，释放后其旧结果不显示，再段落3/B正确显示；切全文后原同文A继续复用；真实输入未保存B草稿再回问题模式，该卡译文入口暂停、草稿保持且未外发。全部合成请求3次符合明确操作序列，无重放/预翻译；source/state逐字保持，未接受/保存批注/编译/Git。
+
+controller-ui1外层、host、observer均exit0；Default输入桌面及前中后HWND25630512相同，GUI不在Default、私有桌面已关闭。截图C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-4d7f5a6fd20a487a93b1fbff3e004292.png已实看保留，可见独立翻译/收起入口、正确原卡译文及另一卡未保存草稿提示。合成供应商只证明调度/渲染/身份，不声称实网质量；旧桌面MCP连接限制、真实论文/P/旧批注/对象/草稿/stage保护及其他原未测继续保留。此后不重复功能组或增加包后检查；仅交Terra Q4版本/构建/发行/安装/Git租约，总控等待正式交付后只核元数据结案。
 
 初次rg向Windows传字面通配src/review_workbench*.js报路径语法错误；后用rg -g实际枚举定位。猜测独立translation/questions模块路径不存在，已纠正为review_workbench.js/client及review_translate.py实际链，不以失败读取当证据。全局规则不另新增AGENTS/issue tracker/triage或领域框架；本轮只修当前功能。旧代全部失败/默认管道拒绝/隔离对象误删事实仍在原execution保留，本轮不重放相关组。
