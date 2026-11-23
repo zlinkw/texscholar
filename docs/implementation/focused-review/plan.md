@@ -70,7 +70,7 @@
 - [x] F3 实现D/E与F中有依据的相关修正，真实原布局及精确动作链复用，必要文档同步；保留其他0.9.59功能和取消语义。
 - [x] F4 Terra小验收：受影响editor/backend/MCP/保存/反馈/草稿/配置消费者定向覆盖；上一版批注滚动、暂留保留、无历史积累、已有格式及未安全checkpoint保护；工具栏选择/排序/取消/单项恢复默认；正常Development深浅和两模式局部UI、真实按钮及必要异常、截图实际查看。新夹具含多数已处理+少量待审/返修/暂留，核当前批数量正确，不只是三项空白样例；这是正确性场景，不写性能阈值或压测。引用未变链有效旧证据，不机械全组重跑。
 - [x] F5 Terra审实际diff、规定受影响覆盖与文档，源码精准commit/push/fetch，完整冻结交包，交还产品/测试/UI/隔离配置/Git租约；给总控局部已覆盖/尚欠、真实失败和可用外置协议，不能自签F6或发行。
-- [ ] F6 总控独占最终组合：审diff/存储消费者及原证据，补新鲜正常Development跨文件共享项、上一版批注/暂留与三稿/范围外stage、真实批接及无已处理空卡/重复导航、工具栏偏好跨进程及安装路径身份、未变设置/论文背景保护，按实际缺口组合而不重做Terra小验收。以最终候选、同等视口/字号和足量长内容抓段落深/浅、问题深/浅四张真实图，实际查看；完整证据/首次失败、源状态与宿主/观察器/外层真实退出保留。失败交原Terra具体返修，未通过不发行。
+- [x] F6 总控独占最终组合：审diff/存储消费者及原证据，补新鲜正常Development跨文件共享项、上一版批注/暂留与三稿/范围外stage、真实批接及无已处理空卡/重复导航、工具栏偏好跨进程及安装路径身份、未变设置/论文背景保护，按实际缺口组合而不重做Terra小验收。以最终候选、同等视口/字号和足量长内容抓段落深/浅、问题深/浅四张真实图，实际查看；完整证据/首次失败、源状态与宿主/观察器/外层真实退出保留。失败交原Terra具体返修，未通过不发行。
 - [ ] F7 **先向用户展示最终四张真实截图供其确认**。这是用户本轮明确先看截图顺序和前次视觉确认目的的落实；如有视觉反馈按原代修正，再仅补受影响检查。图须实际产品渲染，示例论文清楚说明，不贴原型或临时改CSS美化；不替用户重载/重启。截图提交和必要视觉确认完成前不进入发行安装。
 - [ ] F8 F6通过且F7完成后原Terra依既有授权核下一版本（预计0.9.60，以真实tag/Release检查为准），版本/MCP与发行工具必要检查、一次build、普通源码同步、附注tag及包摘要、正式Release/API digest、同一VSIX真实CLI安装及登记/manifest核、execution尾push/fetchclean。无包后冒烟，不reload/不重启MCP；总控仅核发行安装元数据、完整计划/index结案。
 
@@ -82,7 +82,7 @@
 
 所有真实失败与未测保留，不CLI0代替业务成功；未知写入不重放。没有新人工吞吐/性能承诺、实网AI/翻译质量、cleanup后段或真实用户升级重配根因验证。按全局事件协调只发完整交包、返修/租约和真正需决定的阻塞，不索取开工回执、不逐项唤醒。总控派发成功且无独立待办后角色空闲；本轮直到F8真实交付结案才整体完成。
 
-当前：F1–F5候选b6a3f335e8982003b775dc7d58ae1da0619a54e4已交包，总控F6组合发现下述真实R1，尚未通过；F7四图未交用户确认、F8未开始。返修计数1。总控自有进程均退出，R1正式派发后产品/测试/UI/隔离配置/Git租约交原Terra，总控保留plan/index。
+当前：R1修复候选17f00cbfa49bc89880e69e4ae657657315879f3d已冻结，F6按下述原有效组合、R1局部和最终独立profile补验通过；F7最终四图提交用户，等待视觉确认，F8未开始。返修计数1。所有自有进程均退出；产品冻结，产品/测试/UI/隔离配置/Git租约由总控持有，原Terra等待F7后正式发行交权，不先行发布安装。
 
 ## F6阶段事实与R1（2026-11-23）
 
@@ -108,4 +108,19 @@
 
 所有外置首次失败：controller-f6a1 prepare首次尝试与已有候选完全相同，被正确拒绝No content change，创建全新f6a2修夹具文案后通过；旧样例未重放。f6a2外层截图遗漏如上。f6c1失败后附加只读native诊断遇已退出CDP ECONNREFUSED，未产生界面或状态结论；f6d1另捕获真实原生栈，不改产品求绿。
 
-资源：正常Development四轮均私有未切桌面、GUI不在Default且desktop_closed=true；f6b1前/中/后HWND29166230与Default一致。f6a2及f6d1用户前台HWND在非测试窗口间改变，均未落自有隐藏GUI；如实保留，不声称每轮HWND全部一致。CIM核本轮自有Code/Node/Python均退出，无在途。真实论文/全局配置/活动窗口/MCP未操作，不reload/restart；只生成隔离合成数据与保留的证据，F6仍未通过，F7/F8不放行。
+资源：正常Development四轮均私有未切桌面、GUI不在Default且desktop_closed=true；f6b1前/中/后HWND29166230与Default一致。f6a2及f6d1用户前台HWND在非测试窗口间改变，均未落自有隐藏GUI；如实保留，不声称每轮HWND全部一致。CIM核这些自有Code/Node/Python均退出，无在途。真实论文/全局配置/活动窗口/MCP未操作，不reload/restart；只生成隔离合成数据与保留的证据。这是R1派发时结论，后续补验见下节，不能用后续通过覆盖此处真实首败。
+
+## R1修复、F6通过与F7待确认（2026-11-23）
+
+原Terra提交17f00cbfa49bc89880e69e4ae657657315879f3d并普通push/fetch核一致、clean，交回全部租约。总控审实际diff：仅inline_review.js的selectedOption和同类pdfStatus先确认对应映射记录存在，再比较版本及读取值；保留有效B、换版回A的既有契约，未伪造版本/吞异常/恢复历史/跳过compact，未变事务或后端。r1-consumers-second8项exit0，覆盖closed空versions、混合pending、方案及草稿/批量消费者；r1-unit-first隔离根缺失ENOENT exit1保留。新r1-ui-2正常Development只读复制已checkpoint合成项目至独立profile与扩展路径，真实content、3及Q1可加载，上一版/长期批注及源/state/stage保持，setup/run/host/observer均0；首次setup引号失败未启动UI，原记录保留。
+
+总控仅补此前失败的独立profile和最终四图，不重跑有效batch/checkpoint。controller-final1使用17f冻结源码、新项目/remote/profile/扩展路径/pipe和端口9583，复制已安全checkpoint的30正文/2回复合成项目，不重放接收或checkpoint。controller-final1-setup、controller-final1-run均exit0，host/observer各0，done.passed=true；真实页面无uiError、当前3可见，问题Q1仅待审3，无已完成空卡或段落重复索引。3紧邻上一版批注、5长期暂留批注及state/正文/回复/范围外stage前后保持。与前述f6b1跨进程工具栏/三稿、跨文件共享批接及真实无删除checkpoint组合构成本轮最终有效覆盖，F6通过；不把任何CLI0或失败轮单独签通过。
+
+最终四张原生产品截图，1920×1200、Webview1862×803，同等视口和产品原样式；全部实际查看。通过原生VSCode命令关闭测试侧栏/辅助栏、保留底部论文评论；无注入CSS或原型替代。捕获时没有接受/保存/checkpoint动作。四图及完整argv/env/cwd/退出、before/after、source-identity、run-result、host-result、done在controller-final1及同名前缀日志。
+
+- 段落深色：`C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-f6d6ed4fb5b14af2a355603a8fffabb5.png`。
+- 段落浅色：`C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-a426c9c2e9876fb44ac93fa8f123346e.png`。
+- 问题深色：`C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-18f8292c257e81814e46d4e9edec37c4.png`。
+- 问题浅色：`C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-40e386993f1506d8132ef5acf5b272b2.png`。
+
+本轮最终宿主沿CreateDesktopW未切私有桌面，GUI不在Default，前/中/后前台HWND26021160及input Default相同，desktop_closed=true；CIM无自有遗留进程。未操作真实论文/资料、活动窗口/MCP、全局配置或安装，不删除截图或文件。F7提交这四图等待用户视觉确认，F8尚未获阶段交权；未新增性能/实网/真实用户升级根因结论，全部首败、误删隔离对象事件和未测范围继续保留。
