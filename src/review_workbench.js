@@ -441,7 +441,7 @@ function createWorkbench(vscode, context, services) {
                         selected = annotationSelection(chosen);
                     } else selected = {side: 'original', start: 0, end: Array.from(loaded.original).length, quote: loaded.original,
                         option: /^[ABC]$/.test(state.scope) ? state.scope : undefined};
-                    await services.note({...active}, {...selected,purpose:state.purpose || 'revision'}, state.note);
+                    await services.note(selected.target || {...active}, {...(selected.selection || selected),purpose:state.purpose || 'revision'}, state.note);
                 }
                 await consumeRestoredDraft(restored, 'note');
                 if (panel !== operationPanel || !valid(target)) throw new Error('批注已保存，审核页已改变');

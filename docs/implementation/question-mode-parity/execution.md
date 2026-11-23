@@ -18,3 +18,5 @@ M1/M2 首批：正常 Development 私有桌面 M-ui-red1 实际 observer/外层 
 第二批：M-open-ui-red2 独立 Development 宿主实测点击问题卡“打开本项”后当前项已切换但仍停问题模式，段落深度审核和暂缓恢复未显现，observer/外层 exit 1；截图 ui-83a12396f11149948ba502067b4feed1.png 已看。原 M-open-setup-red 因临时脚本字符串边界写错 SyntaxError exit 1，未启动宿主；修正后 red2 才复现行为。现在按钮明确标为“打开本项（段落审核）”，沿既有精确 cardAction 握手核 session/问题/项/版本并受原切换草稿保护，成功进入该项段落审核，提示可切回问题模式；未绑定分支亦核确实未关联。M-open-unit 45 项 exit 0，M-open-ui-green 宿主/观察器/外层 exit 0，截图 ui-5062521929504b83bf18903810ff67d4.png 已看；私有桌面、专属 pipe，Default 输入桌面和前中后 HWND 保持，桌面关闭。截图在 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures，日志在既有 M-open-*。母集其余检查继续。
 
 第三批：新增跨卡原文选区后，原暂存核对只拿当前项全文比较，导致目标卡无变化时片段批注草稿也被标为不能恢复。现暂存核对按原 session、精确问题、目标项/版本、侧/方案和实际片段重算，成功恢复后仍由原保存边界再次核对；目标版本变化则保留草稿并拒绝直接恢复。M-stash-final 执行 node --test src/review_workbench.test.js，46 项 exit 0，覆盖跨卡暂存、恢复、准确保存和目标版本变更拒绝；不改 UI 或后端文件，沿用相应已验覆盖。
+
+第四批：检查保存并切换时发现原跨卡译文及新原文选区共用的 savePendingInputs 把目标包装当选区写给当前项，可能拒绝或错误绑定；已向总控提前报真实数据完整性风险，未触真实论文。M-switch-red 初次夹具缺 services.saved 报错，不作为产品缺陷；补齐后 M-switch-red2 exit 1，准确观察目标卡 2 被送到项 1。修复为使用已核 selected.target 与 selected.selection，原当前项处理不变；M-switch-green 46 项 exit 0，包括跨卡暂存恢复后“保存并切换”正确写卡 2 的精确选区，完整日志保留。
