@@ -31,3 +31,13 @@ F2进行中：候选新版本写边界按实际批注和上一版批注引用收
 `editor-sixth` 177项0；随后仅在设置读取边界增加有效动作/唯一顺序校验，非法外部设置明确报错，`editor-seventh` 177项0覆盖最终输入，`ui-ninth` 使用合法设置的真实交互仍适用。未改变业务接收事务、锁、定位/CAS或自动备份保护。截图中的旧备份失败与停止原因不能由图片证明；只读代码核现有安全拒绝与可见错误，未对真实论文fetch/push/retry，也未声称复现截图原因。
 
 F5范围外仍待总控F6：真实Git确认后跨文件共享项和活动依赖的完整checkpoint组合、上一版/暂留与三稿/stage、准确批接、设置跨进程/安装路径与profile隔离，最终同视口深浅两模式四图及F7作者视觉确认。不会运行包含完整文件删除的backup/cleanup检查；`backup-first` 的违规51项不得计作合规覆盖。未测试实网AI/翻译质量、吞吐、真实论文或其他平台。此记录与代码验证批一起提交后交回租约；不提前发行、安装、重载或重启。
+
+## F6 R1返修
+
+2026-11-23：总控F6未通过，本代实际返修计数1；现任执行 `local/01a20284-4ad8-70b1-87ff-61225eaec6aa`，实核gpt-6.1-terra/high/priority、match/continue，文档基线44a6232a41de5be7117f7699b7889cf8376eb8e3。总控controller-checkpoint-first已用真实Git、原plan/record/compact及writer/persist完成不运行cleanup的等价检查，先推送前拒绝、推后精简，活动依赖和批注保留；后续c1/d1独立profile打开已精简状态真实失败，原生栈为已完成条目空版本与未保存选择均undefined误相等，读取undefined.option，未发content。完整证据和首败在plan的F6 R1段与外置根。
+
+修复仅在选择/PDF状态消费者核实记录存在后比较版本，保留有效已选方案与旧版本失效，不伪造候选或改变数据、事务及校验。`r1-unit-first` exit1是隔离测试根尚未创建的ENOENT；新根 `r1-unit-second` 0。加入版本更新后旧选择不沿用的断言，`r1-consumers-second` 8项0，覆盖混合已精简/待审、已选B、新版本默认、批接预检、接收及四种草稿；不运行整组backend/editor或cleanup。
+
+真实UI新样例 `r1-ui-2` 从总控已成功真实checkpoint的合成项目只读复制，独立项目、localbare、profile、扩展目录、pipe及端口9582，最新源码，未重放接收或checkpoint。setup和run、host及observer均0，content真实发出，当前待审3正常显示，问题Q1无已完成空卡，上一版批注与5的长期暂留保留，前后state/正文/回复/stage一致；私有桌面不在Default、前中后HWND29166230与输入桌面Default一致、desktop关闭。截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-43d6105c9ad94a24afeee014e9be0703.png` 已实际查看并保留。首次 `r1-ui-setup-first` exit1是复制后Git配置中反斜线转义与断言不符，未启动UI或改产品；保留该未完成根，使用全新 `r1-ui-2` 和修正构建脚本，不覆盖现场。完整argv/cwd/env/stdout/stderr/真实退出在证据根同名前缀。
+
+总控仍需F6复核并以最终候选完成四图，F7先给用户看并确认，之后才可能F8；既往backup-first误删隔离对象事件及至少3项、其他未知和未测照前记录，严格不运行cleanup或删除。

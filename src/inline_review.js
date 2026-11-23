@@ -824,7 +824,7 @@ function createInlineReview(vscode, context, execute = run) {
     const choiceKey = c => JSON.stringify([c.repo, c.owner, c.id]);
     function selectedOption(c) {
         const saved = previewChoices.get(choiceKey(c));
-        return saved?.version === c.version ? saved.option : 'A';
+        return saved && saved.version === c.version ? saved.option : 'A';
     }
     const workbench = require('./review_workbench').createWorkbench(vscode, context, {
         toolbar: () => vscode.workspace.getConfiguration('localLatex').inspect('reviewToolbar')?.globalValue,
@@ -838,7 +838,7 @@ function createInlineReview(vscode, context, execute = run) {
             version: edit.versions.at(-1), source_match: edit.source_match, options: records.get(id)?.data?.options?.map(o => o.label), manual_options: records.get(id)?.data?.options?.filter(o => o.manually_edited).map(o => o.label), option: selectedOption({...activeScope, id, version: edit.versions.at(-1)}), location: locationTitle(edit), summary: displayText(records.get(id)?.data?.options?.[0]?.after || '').replace(/\s+/g, ' ').slice(0, 140), questions: (edit.questions || []).map(q => q.id), requests: (edit.requests || []).filter(n => n.status === 'open').length})),
         pdfStatus: c => {
             const entry = workbenchPDFStatus.get(choiceKey(c));
-            return entry?.version === c.version && entry.option === selectedOption(c) ? entry.text : 'PDF 尚未核对／待更新';
+            return entry && entry.version === c.version && entry.option === selectedOption(c) ? entry.text : 'PDF 尚未核对／待更新';
         },
         autoTranslate: () => config().get('translation.autoTranslate', true),
         provider: () => config().get('translation.provider', 'bing'),

@@ -138,6 +138,23 @@ test('hidden compatibility commands remain registered and review aliases open th
         assert.equal(typeof f.handlers.get(id),'function');
 });
 
+test('compacted closed items do not prevent the pending directory from loading its selected option', async () => {
+    const f = hostFixture();
+    f.allCards['2'] = {edit:{...structuredClone(f.edit), status:'accepted', versions:[]}};
+    await f.ui.ready; await f.ui.refresh({repo:f.root, owner:'reply.tex'});
+    const c = f.rows()[0].children[0].command.arguments[0];
+    await f.ui.open({...c, option:'B'}); await f.receive({type:'ready',instance:'page'});
+    const content = f.packets.findLast(packet=>packet.type==='content');
+    assert(content);
+    assert.deepEqual(content.directory.map(item=>item.id), ['1']);
+    assert.equal(content.directory[0].option, 'B');
+    f.edit.versions.push('v2'); f.data.version='v2';
+    await f.ui.refresh({repo:f.root, owner:'reply.tex'});
+    const next=f.rows()[0].children[0].command.arguments[0];
+    await f.ui.open(next);
+    assert.equal(f.packets.findLast(packet=>packet.type==='content').directory[0].option, 'A');
+});
+
 test('refresh reuses only exact immutable option differences and keeps fresh source metadata', async () => {
     const f=hostFixture(); await f.ui.ready;
     f.data.options.forEach((option,i)=>{option.changes=[{old_start:i,new_start:i}];option.scope={old_start:i};});
