@@ -131,3 +131,11 @@ P7-prep-version-first exit 0，package 与 MCP 版本一致；P7-prep-mcp-first 
 - D:/GitRepo/texscholar/dist/v0.9.61/SHA256SUMS.txt：34e0219d5b3ea99fea706c7febe5eb68bd8b4dcb5b302f979f07f5e5f90b58bf
 
 说明草案 D:/latex-writing-checks/paper-profile-20261123/P7-0.9.61-release-draft.md；候选包尚未发布或安装，未做包后冒烟。真实旧宿主对活输入的保护缺口、未完成真实迁移与原有未测项和全部首败/保护事件继续有效；后续需总控协调实际安全切换，不能凭此包声称真实迁移通过。
+
+## 0.9.61 同包安装与接替
+
+现任执行 local/01a208d4-2ab9-7a93-9994-56e2c5dfc6c7，实核 gpt-6.1-terra/high、match/continue，service_tier default；前任 local/01a20284-4ad8-70b1-87ff-61225eaec6aa 已明确释放安装/Git租约、无在途，其 turn 已结束并归档。P 返修计数仍为 1。总控负责真实窗口重载、迁移和最终验收；本次执行只持安装与本记录 Git 租约。
+
+安装前 VSIX 的 SHA256 为 c348c96cceda535190c1014a8b29abcddfec4f4e0c5a5c32570bcb8536d12fd4，与已审核候选包一致；包内 publisher/name/version 为 local-research/latex-writing-tools/0.9.61。CLI 原登记为 0.9.60，source=vsix、pinned=true。P7-install-0961-first 在 D:/GitRepo/texscholar 执行 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.61/texscholar-0.9.61.vsix`，未用 --force，真实 exit 0；stdout 报安装成功，stderr 含 Node DEP0169 弃用警告。完整 argv/cwd/退出及 stdout/stderr 位于 D:/latex-writing-checks/review-efficiency-20261122/P7-install-0961-first.*；runner 继承进程环境，仅记录预设的相关变量，本次记录为空，不能称为完整环境快照。
+
+安装后 CLI 登记 local-research.latex-writing-tools@0.9.61，实际安装目录 package.json 同为 0.9.61，extensions.json 记录 source=vsix、pinned=true。未重载或重启窗口，安装本身不证明活动宿主已更新；未执行真实迁移、正式发布或包后冒烟。既有失败、保护事件及未测项继续有效。
