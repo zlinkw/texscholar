@@ -224,7 +224,7 @@ function draftWarning() {
 function cardButtonDisabled(button) {
     const targetCurrent = current && button.dataset.target === current.id && button.dataset.targetVersion === current.version;
     const mismatch = button.dataset.targetMismatch === 'true' || targetCurrent && data?.source_match === false;
-    return !!waiting || button.dataset.intent === 'accept' && (coordinating || mismatch || targetCurrent && (unavailable || conflict)) ||
+    return !!waiting || button.dataset.intent === 'accept' && (coordinating || mismatch || button.dataset.postponed==='true' || targetCurrent && (unavailable || conflict)) ||
         button.dataset.intent === 'preview' && mismatch;
 }
 function buttons() {
@@ -398,11 +398,13 @@ function selectedCount() {
     accept.title = stale.length ? '请定位并重新选择所有失效项，或明确取消选择。' : '';
     const inQuestion = new Set(questionEntries().map(entry=>entry.id));
     const scoped = [...batchSelection.values()].filter(item=>inQuestion.has(item.id));
+    const unsaved=options.some(hasDraft) || candidateDraftStale || sourceDraftStale || !!data?.block && $('blockSource').value!==data.block.text.replace(/\r\n/g,'\n') || !!$('note').value.trim() || !!editingNote || !!$('batchNote').value.trim();
     const currentButton = document.querySelector('[data-action="questionAccept"]'), allButton = document.querySelector('[data-action="questionAcceptAll"]');
     currentButton.textContent = '接收当前问题已选 ' + scoped.length + ' 项';
     allButton.textContent = '接收全部已选 ' + batchSelection.size + ' 项（范围外 ' + (batchSelection.size-scoped.length) + ' 项）';
-    currentButton.disabled = !scoped.length || stale.some(item=>inQuestion.has(item.id)) || !!waiting || coordinating || unavailable || conflict;
-    allButton.disabled = !batchSelection.size || !!stale.length || !!waiting || coordinating || unavailable || conflict;
+    currentButton.disabled = !scoped.length || stale.some(item=>inQuestion.has(item.id)) || !!waiting || coordinating || unavailable || conflict || unsaved;
+    allButton.disabled = !batchSelection.size || !!stale.length || !!waiting || coordinating || unavailable || conflict || unsaved;
+    currentButton.title=allButton.title=unsaved ? '请先保存或暂存候选、原文及返修草稿。' : '';
     if ($('batchNote').value.trim()) remember();
 }
 function renderStash() {
@@ -565,6 +567,8 @@ function renderQuestionMode() {
                         const button=document.createElement('button'); button.dataset.action='questionCard'; button.dataset.intent=intent;
                         button.dataset.target=entry.id; button.dataset.targetVersion=entry.version; button.dataset.questionKey=selectedQuestion; button.dataset.option=option.label;
                         button.dataset.targetMismatch=String(!!entry.conflict || entry.source_match===false);
+                        button.dataset.postponed=String(!!entry.card.postponed);
+                        if (intent==='accept' && entry.card.postponed) button.title='本项已暂缓；请打开本项并恢复到活跃队列。';
                         button.textContent=label; if (intent!=='accept') button.className='secondary'; actions.appendChild(button);
                         button.disabled=cardButtonDisabled(button);
                     }

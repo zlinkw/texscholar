@@ -843,6 +843,7 @@ function createWorkbench(vscode, context, services) {
                     !entry?.card || message.intent !== 'open' && !entry.card.options.some(option => option.label === message.option) || !record ||
                     record.c.repo !== c.repo || record.c.owner !== c.owner || record.c.version !== entry.version)
                     throw new Error('问题卡片身份或版本已变化，请重新核对。');
+                if (message.intent==='accept' && entry.card.postponed) throw new Error('本项已暂缓，请先打开并恢复到活跃队列。');
                 const target = {...record.c}, request = showRequest, originClient = client;
                 await show(target);
                 const latest = lastRecords.get(target.id);

@@ -35,7 +35,7 @@ test('question card actions route only to the exact linked item, version and ses
     const data=id=>({id,version:id==='1'?'v1':'v2',original:'old '+id,source_match:true,edit:{file:id+'.tex',kind:'manuscript',versions:[id==='1'?'v1':'v2'],requests:[],questions:[{id:'Q',file:'r',quote:'same'}]},options:[{label:'A',after:'new '+id,reason:'A',changes:[]}]});
     const records=new Map([['1',{c:one,data:data('1')}],['2',{c:two,data:data('2')}]]);
     const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{showWarningMessage:async()=>undefined,createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
-    const state={get:(_k,fallback)=>fallback,update:async()=>{}};
+    const values={},state={get:(k,fallback)=>values[k]??fallback,update:async(k,v)=>{values[k]=v;}};
     const services={session:()=>session,read:async c=>{if(gate && c.id==='2') await gate;return structuredClone(records.get(c.id).data);},style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[],questions:()=>[{key:'q',snapshot:'[]',entries:[{id:'1',version:'v1'},{id:'2',version:'v2'}]}],preview:async (...args)=>calls.push(args)};
     const view=createWorkbench(vscode,{subscriptions:[],workspaceState:state},services);view.setRecords(records);await view.show(one);await receive({type:'ready',instance:'page'});
     const action={type:'questionCard',instance:'page',repo:one.repo,owner:one.owner,id:'1',version:'v1',session:'batch',questionKey:'q',target:'2',targetVersion:'v2',option:'A',intent:'preview'};
@@ -65,6 +65,9 @@ test('question card actions route only to the exact linked item, version and ses
     assert.equal(opened.intent,'open');assert.equal(opened.c.id,'2');assert.equal(opened.c.version,'v2');
     await receive({type:'cardActionClaim',instance:'page',token:opened.token});
     assert.equal(messages.findLast(m=>m.type==='cardActionGrant').action.intent,'open');
+    values.reviewPostponed={[JSON.stringify(['/fixture','owner','batch'])]:['1']};
+    await receive({...action,id:'2',version:'v2',target:'1',targetVersion:'v1',intent:'accept'});
+    assert(messages.findLast(m=>m.type==='result')?.message.includes('已暂缓'));
 });
 
 test('translation keeps candidate identity separate and reports a pure display formula', async () => {
