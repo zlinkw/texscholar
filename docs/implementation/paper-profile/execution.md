@@ -139,3 +139,13 @@ P7-prep-version-first exit 0，package 与 MCP 版本一致；P7-prep-mcp-first 
 安装前 VSIX 的 SHA256 为 c348c96cceda535190c1014a8b29abcddfec4f4e0c5a5c32570bcb8536d12fd4，与已审核候选包一致；包内 publisher/name/version 为 local-research/latex-writing-tools/0.9.61。CLI 原登记为 0.9.60，source=vsix、pinned=true。P7-install-0961-first 在 D:/GitRepo/texscholar 执行 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.61/texscholar-0.9.61.vsix`，未用 --force，真实 exit 0；stdout 报安装成功，stderr 含 Node DEP0169 弃用警告。完整 argv/cwd/退出及 stdout/stderr 位于 D:/latex-writing-checks/review-efficiency-20261122/P7-install-0961-first.*；runner 继承进程环境，仅记录预设的相关变量，本次记录为空，不能称为完整环境快照。
 
 安装后 CLI 登记 local-research.latex-writing-tools@0.9.61，实际安装目录 package.json 同为 0.9.61，extensions.json 记录 source=vsix、pinned=true。未重载或重启窗口，安装本身不证明活动宿主已更新；未执行真实迁移、正式发布或包后冒烟。既有失败、保护事件及未测项继续有效。
+
+## P8 正式发行
+
+总控已在目标窗口重载一次后完成真实宿主核验及迁移，具体结果与失败保留在 plan 和 D:/latex-writing-checks/paper-profile-20261123/controller-p7-live1；本执行者未操作真实论文、P 或窗口。桌面既有 MCP 连接仍为 0.9.60 并拒绝版本，需重启拥有连接的 Codex MCP；本轮未重启或修改连接。旧后台备份失败提示未重试。
+
+发行前 master 与远端均为 efba5359e774356b700bbe089e07b5d896386934，工作区干净，本地和远端无 v0.9.61 标签；P8-release-preflight 实际 exit 1 为 Release API 预期 HTTP 404。三项产物摘要与候选记录一致。附注标签 v0.9.61 对象 78259ca1f9c7198c71b3fa1683d5d121079aeafd 指向构建输入 ee0e95dc1755526e0e7d98556d8ef55dc67da786，附注含 SOURCE-COMMIT 及两包 SHA256；创建和普通推送均 exit 0，远端标签及解引用目标已核一致。
+
+在 D:/GitRepo/texscholar 执行 `C:/Python314/python.exe -B -X utf8 scripts/publish_release.py --tag v0.9.61 --repo zlinkw/texscholar --artifacts dist/v0.9.61`，exit 0。[正式 Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.61) API 返回 draft=false、prerelease=false，VSIX、源码包及 SHA256SUMS.txt 三项 digest 分别为 c348c96cceda535190c1014a8b29abcddfec4f4e0c5a5c32570bcb8536d12fd4、c5350c04bd58945f55d2db9d30afacc8ff47b518eedcbdb320eaea7055f62383、34e0219d5b3ea99fea706c7febe5eb68bd8b4dcb5b302f979f07f5e5f90b58bf，与本地产物一致。已安装的同一 VSIX 及登记证据见上一节；未重建、重复安装或包后冒烟。
+
+实际 argv/cwd/退出及 stdout/stderr 位于 D:/latex-writing-checks/review-efficiency-20261122/P8-release-*；runner 继承环境，仅记录预设相关变量，本次为空，完整环境快照未知。既有首败、默认管道拒绝及隔离对象误删记录保留。
