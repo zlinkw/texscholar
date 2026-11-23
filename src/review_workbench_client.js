@@ -1121,7 +1121,7 @@ window.addEventListener('message', ({data: message}) => {
         if (changed && options.some(o => drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n'))) candidateDraftStale = true;
         selectedBlockRevision = undefined;
         data.block = message.block; data.source_match = message.source_match; data.conflict = message.conflict;
-        if (data.block && !sourceDraftStale) $('blockSource').value = data.block.text.replace(/\r\n/g, '\n');
+        if (data.block && !sourceDraftStale && !sourceDirty) $('blockSource').value = data.block.text.replace(/\r\n/g, '\n');
         $('blockEditor').hidden = !data.block && !sourceDraftStale;
         $('currentBlockPanel').hidden = !data.block || message.source_match !== false && !candidateDraftStale && !sourceDraftStale && !(oldOriginal && $('note').value.trim());
         $('currentBlock').value = data.block?.text.replace(/\r\n/g, '\n') || '';
