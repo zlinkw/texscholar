@@ -131,7 +131,7 @@ def rule_packet(args):
         raise Conflict('Unknown rule module; use the published module names')
     missing = [name for name in requested if name not in loaded]
     parts = []
-    headings = {'writing': ['写入源码注释，而不是新增跟踪文件', '参考引导与整体逻辑', 'AI 的工具入口'],
+    headings = {'writing': ['保存论文约定与局部上下文', '参考引导与整体逻辑', 'AI 的工具入口'],
                 'abstract': ['摘要'], 'introduction': ['Introduction'], 'method': ['Method'],
                 'experiments': ['Experiments'], 'figures': ['图表、讨论与结论'], 'response': ['回复信'], 'backup': ['每批成果']}
     for name in missing:
