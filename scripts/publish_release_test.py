@@ -12,12 +12,22 @@ from unittest.mock import patch
 import zipfile
 
 import publish_release as release
-from build import archive_bytes
+from build import archive_bytes, RUNTIME
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 import update_check
 
 
 class Publish(unittest.TestCase):
+    def test_legacy_profile_and_candidate_runtime_dependencies_are_packaged(self):
+        src = Path(__file__).resolve().parent.parent / 'src'
+        for consumer, dependency in (('source_review.py', 'review_option_migration.py'),
+                                     ('review_host_legacy.js', 'profile_transition_check.py'),
+                                     ('profile_transition_check.py', 'review_header_migration.py')):
+            with self.subTest(consumer=consumer):
+                self.assertIn(consumer, RUNTIME)
+                self.assertIn(dependency, RUNTIME)
+                self.assertIn(Path(dependency).stem, (src / consumer).read_text(encoding='utf-8'))
+
     def setUp(self):
         self.files = {Path('texscholar-1.0.0.vsix'): 'sha256:a', Path('texscholar-1.0.0-source.zip'): 'sha256:b'}
         self.full = {'id': 1, 'draft': False, 'html_url': 'https://github.com/example/paper/releases/tag/v1.0.0',
