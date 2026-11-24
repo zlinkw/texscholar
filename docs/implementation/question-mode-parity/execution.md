@@ -124,3 +124,11 @@ U1 附件：根据用户要求只输出所选范围的批注正文、状态、�
 问题模式可通过方案框非交互区域选择对应项、版本和方案；复选框可取消，键盘选择、目录选择、计数和高亮同步。拖选文字及操作控件不触发批选。
 
 验证：U-choice-tests3 94/94，exit 0；独立 Development 的 U-choice-ui-run4 exit 0，覆盖 B/C 切换、共享项、目录更新、取消、键盘、拖选和编辑按钮，隔离源文件及状态字节不变，默认桌面与前台保持。截图 ui-1a0f65bc918c41788ea8f455eb7a63f8.png 已查看。U-choice-ui-run2 因观察脚本引号错误 exit 1，原日志保留；修正后 run3、run4 exit 0。
+
+### U4 正式交付
+
+预核 v0.9.66 本地及远端标签不存在、Release API 返回 404、输出目录不存在；专用隔离 host/pipe 的 MCP 检查及发行工具检查均 exit 0。版本与 MCP 核对 U-delivery-version 首次因未设置 PYTHONPATH 无法导入 exit 1，设置后 version2 exit 0；一次版本编辑命令引号错误未写入，后续修正。原失败保留。运行清单已含本轮受影响文件，无新增依赖。
+
+版本与总控计划同批提交并普通 push/fetch；唯一构建 U-delivery-build exit 0，源码 d117c52ab97b5e7f3c4f9c4b0ce9d1f2973c10df。dist/v0.9.66/texscholar-0.9.66.vsix SHA256 2db62b1caa82e7a235f7d0000e0bfd30bb6c26838d4a95f5180c20375c9d5bef；texscholar-0.9.66-source.zip 98f23877e9f35c2713008163e36aa6465eca3952009698bebd2b2f6eb6fed02a；SHA256SUMS.txt bf3fd6849835316faf5d37193576334a3f535735b7e50750c276bd19fad956a2。附注 tag v0.9.66 对象 9731e11aeb9c187207d151df51aaf3881ca1f9ec 指向该源码，附注记录 SOURCE-COMMIT 和双包摘要，普通推送 exit 0。
+
+U-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.66 非 draft、非 prerelease，API 三附件摘要与本地一致，U-delivery-verify exit 0。实际 C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.66/texscholar-0.9.66.vsix 于仓库执行 exit 0，无 force；CLI、manifest 为 local-research.latex-writing-tools 0.9.66，登记 source=vsix、pinned=true。未重载用户窗口或 MCP，安装不证明活动宿主已加载；真实备份是否重试未核。未触真实论文或删除清理。完整命令及日志位于 D:/latex-writing-checks/review-efficiency-20261122/U-delivery-*。
