@@ -92,3 +92,5 @@ T3 交付：预核 v0.9.65 本地及远端 tag 不存在、Release API 404、输
 dist/v0.9.65/texscholar-0.9.65.vsix SHA256 38d307664fd84f0850c74a7b6e6b291ee5c267d8343889123f172e8347ea592c；texscholar-0.9.65-source.zip bad16c4379378cc4031ee3ab887611a7b73b3f598123fc4c7e6c6eb654174fe8；SHA256SUMS.txt b8ebe7e4be9a40f2d12f49c41ac8e15b2cfc476b8ef2764ce1d7742671eac79a。远端附注 tag v0.9.65 对象 fe3a854862e1ff2e5dea8418414668b2008f54db 指向构建输入，SOURCE-COMMIT 和双包摘要精确，普通推送 exit 0。
 
 T-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.65 非 draft、非 prerelease，API 三附件摘要与本地一致，T-delivery-verify exit 0。实际 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.65/texscholar-0.9.65.vsix` 于仓库目录执行 exit 0，无 force；CLI 与实际 manifest 为 local-research.latex-writing-tools 0.9.65，登记 source=vsix、pinned=true。未重载用户窗口，安装不代表活动宿主已加载；未探测默认管道/MCP、未操作真实论文或删除清理。原首败和 T2 总控补充错误传播检查保留。
+
+U1 附件：根据用户要求只输出所选范围的批注正文、状态、版本和必要选区身份，移除全文、候选、背景、习惯、协议和不真实的 known_feedback 收据；给出精确按需读取入口且明确作者约定仍须遵守。U-attachment-tests 在独立合成根运行 inline_review 测试 exit 0，覆盖本项/所选/全部范围及版本校验；MCP 按需链和其他用户新增目标仍待后续功能批验证，未宣称整阶段完成。

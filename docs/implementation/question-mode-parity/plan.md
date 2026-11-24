@@ -116,3 +116,18 @@ T最终功能审核通过，返修0，基线5121cc450e7e8acc2139d0d5e3b2774a6ef8
 T全阶段完成，返修0。0.9.65正式发布并同包安装，唯一构建输入23690cc69572933be3967c9c74a61ea1d00ed615；必要版本/MCP/发行工具检查通过。总控实核远端附注tag对象fe3a854862e1ff2e5dea8418414668b2008f54db及构建目标、SOURCE-COMMIT与双包摘要；controller-tree-release-meta.py实读Release API确认非draft/prerelease，三附件digest与本地同包一致，实际manifest及登记为local-research.latex-writing-tools 0.9.65、source=vsix/pinned=true，exit0，完整摘要见execution。API原始输出/退出与结果在D:/latex-writing-checks/question-mode-latency-20261124/controller-tree-release*。
 
 修复解决接收移除旧项与列表定位交叠的已复现路径，未改正文定位、作者批注或接收语义。真实论文/P/草稿/范围外stage及用户窗口本轮未操作；旧真实保存false原因等历史限制仍保留，不夸为全部故障已修。无重构建、包后冒烟、删除或自动重载/重启；安装不证明活动宿主已加载，需用户重载目标VSCode窗口启用。全部租约已交回、无在途，execution尾与plan/index集中结案。
+
+## U阶段：按需返修上下文与无跳转接收
+
+2026-11-24用户明确要求返修交接仅提供对应批注内容和状态，其余个人习惯、论文要求/背景、原文/候选、其他批注由AI像读取SKILL一样按需查看；随后补充接收时不要跳到源码再回审核页。两个目标均连续实现并按既有授权验证、发行安装。起点master==origin/master==7f0af3b7a0f2357f2af43faf25c19cb0960b6141、clean，已安装0.9.65；沿原总控及唯一Terra，U返修0。
+
+已核入口：inline_review.addRequests默认附件包含完整original/全部options/旧快照、paper_background/personal_prompts及完整反馈协议；read_context/read_feedback随后又自动附加背景、习惯和协议。仅缩短附件而下一次工具再次全量灌入不满足目标。read_paper_background、read_personal_prompts、read_file_roles、get_instructions及ids/scopes定向读取已经存在，应优先复用并明确读取指引，不新建通用检索/RAG或资料副本。read_context默认所有pending及known_feedback完整附件收据的语义必须准确：精简附件不得冒充已有原文/全部方案，不能继续发送这种收据让AI跳过必要内容。共享接口变化以必要消费者组有界回归，旧入口及明确全量读取能力保留。
+
+接收跳转来自review_host_transaction获取不可见文档时showTextDocument(preserveFocus:true)，其显示仍能替换审核页所在组；共享applyHostEdit依赖TextEditor.edit。目标是已有受保护事务后台编辑/保存文档，审核页不被替换、焦点/草稿/阅读位置不跳。优先既有VSCode文档/工作区编辑API，必须保留宿主资格、writer、确切version/text、脏稿拒绝、迟到作者修改拒绝、保存结果和中断恢复；不可用磁盘直写、隐藏盲保存或先切走再跳回冒充无感。共享helper的migration/legacy调用若受接口变化影响须一并处理而不操作真实迁移。
+
+- [ ] U1 原Terra按强相关批次收窄返修附件：默认只含本次明确范围内的作者批注正文、状态和必要准确身份/版本/文件/选区/用途及极短读取入口，不自动附个人/论文资料、完整原文/ABC、无关批注或全协议。所选、本项、明确全部入口保持各自范围；旧版/上一轮/暂留/译文/问题批注保留精确定位，可用现有工具显式取得其不可变内容，不截断作者文字或改写状态。连同CLI/MCP实际读取链按需化，资料/规则须可发现、可获取，正式写作仍须读适用作者约定。默认返修读取不能隐式读所有pending或又附其他层资料；明确全量请求继续支持。不自动改全局SKILL。
+- [ ] U2 原Terra最小修复单项/批量接收在审核页可见时的后台编辑保存，保持所有事务和活编辑器数据保护。必要共享调用方、单测与文档同批；正常私有Development用源码未打开的同组审核页实际单项及多文件批接，核审核页从未被源码替换、Tab/焦点/三稿及最终持久化正确；保存拒绝、脏稿和并发作者编辑继续真实拒绝。无性能测试/新阈值，不重跑未变功能组。
+- [ ] U3 整阶段局部验证通过后冻结交包，总控审真实diff、精简附件及实际MCP返回/按需取回、无跳转真实宿主链，只补未覆盖必要组合；必修交原Terra，不总控实现自签。旧批注及数据保护不得因节省上下文而减弱。
+- [ ] U4 最终通过后另派原Terra预核下一版0.9.66实际无冲突、必要版本/发行检查、唯一构建及同包正式发布安装；总控核元数据并集中结案。不自动reload/restart，不包后冒烟或删除。
+
+仍为普通Windows原仓，分批每批最多8源码/测试/文档文件及2至3强相关问题，按依赖顺序而非凑数拆批。当前总控只写完整plan/index增量，交Terra随首个成功功能批纳入，不单独提交；实施期间全部产品/测试/UI/隔离配置/Git租约给原Terra，总控不并行写/测。仅隔离合成项目、专属pipe/profile，UI遵循CreateDesktopW私有未切桌面、不在Default及前台输入保护，截图实看保留。真实论文/P/任何作者稿件、批注、模板、范围外暂存、默认pipe/MCP和用户窗口不操作；不发送真实内容至外部服务/AI，无cleanup/删除。普通精确stage/commit/push origin master/fetch，远端前移/权限冲突停相关动作，不reset/rebase/merge/force/改remote。pwsh7、UTF8、Python -B -X utf8；首败与未知保留，局部过程记execution，只有完整交包或实质阻断发必要消息。

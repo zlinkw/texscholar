@@ -1232,11 +1232,13 @@ function createInlineReview(vscode, context, execute = run) {
             else generations.set(key, {...item, requests: [...item.requests]});
         }
         const notes = [...generations.values()].map(item => `审阅框编号：${item.id}\n方案：见每条批注范围\n文件：${item.file}\n批注基于版本：${item.version}\n当前候选版本：${item.current_version}`
-            + `\n【原版完整内容】\n${item.original}`
-            + (item.options ? '\n【本轮全部备选（本批注对应方案见上方）】\n' + JSON.stringify(item.options, null, 2) : '\n【修改版完整内容】\n' + item.candidate)
-            + (item.immutable_candidate_for_note ? '\n【批注原版快照：只用于核对选区】\n' + JSON.stringify(item.immutable_candidate_for_note, null, 2) : '')
             + '\n【作者返修批注】\n'
-            + item.requests.map(n => `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${n.display_context ? n.display_context.kind === 'translation' ? '中文译文' : '审稿问题' : n.side === 'original' ? '原文' : '候选'}选区：${n.display_context?.quote ?? n.quote}\n批注状态：${n.held ? '暂留' : '待处理'}\n意见用途：${n.purpose || 'revision'}\n返修要求：${n.text}\n定位：${JSON.stringify({id: n.id, version: n.version, side: n.side, option: n.option, start: n.start, end: n.end, segments: n.segments, display_context: n.display_context})}`).join('\n\n')
+            + item.requests.map(n => {
+                const d=n.display_context, q=d?.review_question;
+                const display=d && {kind:d.kind,source_side:d.source_side,start:d.start,end:d.end,quote:d.quote,provider:d.provider,
+                    review_question:q && {id:q.id,file:q.file}};
+                return `${n.option ? '方案 ' + n.option : '整项／全部方案'} · ${d ? d.kind === 'translation' ? '中文译文' : '审稿问题' : n.side === 'original' ? '原文' : '候选'}选区：${d?.quote ?? n.quote}\n批注状态：${n.held ? '暂留' : n.status === 'open' ? '待处理' : n.status}\n意见用途：${n.purpose || 'revision'}\n返修要求：${n.text}\n定位：${JSON.stringify({id:n.id,version:n.version,side:n.side,option:n.option,start:n.start,end:n.end,segments:n.segments,display_context:display})}`;
+            }).join('\n\n')
         );
         if (!notes.length) return vscode.window.showInformationMessage('没有待处理的批注。');
         if (!(await vscode.commands.getCommands(true)).includes('chatgpt.addFileToThread')) throw new Error('当前 Codex 插件没有可用的添加上下文命令；批注仍保留，未发送。');
@@ -1244,20 +1246,9 @@ function createInlineReview(vscode, context, execute = run) {
         await fs.mkdir(parent, {recursive: true});
         const folder = await fs.mkdtemp(path.join(parent, 'batch-'));
         const file = path.join(folder, '返修批注.txt');
-        const guide = (await fs.readFile(path.join(__dirname, 'collaboration-guide.md'), 'utf8')).replace(/\r\n/g, '\n');
-        const skillProtocol = guide.split(/(?=^## )/m).find(section => section.startsWith('## 返修批注与 SKILL 诊断\n'));
-        if (!skillProtocol) throw new Error('返修 SKILL 诊断协议缺失，未加入输入区。');
-        let background;
-        if (context.globalStorageUri) {
-            const cfg = config(), python = cfg.get('pythonPath', 'python');
-            background = JSON.parse(await execute(python, ['-X','utf8',path.join(__dirname,'paper_background.py'),'--registrations',
-                path.join(context.globalStorageUri.fsPath,'mcp-workspaces'),'--project',c.repo,'read'], c.repo));
-            if (background.state !== c.owner) throw new Error('当前论文背景归属与批注不一致，未加入输入区。');
-        }
         const ids = requested ? requested.map(item => item.id) : [...new Set(items.map(item => item.id))];
-        const readRequest = {project: c.repo, state: c.owner, ids, expected_plugin_version: require('../package.json').version,
-            known_feedback: (state.known_feedback || []).filter(receipt => ids.includes(receipt.id))};
-        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n首次 read_context 参数：${JSON.stringify(readRequest)}\n若服务版本不匹配或旧服务缺少版本信息，提示重启 Codex 的 MCP，不混用另一版本 CLI。\n\n适用 SKILL：按本任务实际读取。\n个人提示词（本用户跨论文，仅启用项适用）：${background ? JSON.stringify(background.personal_prompts) : '请通过 read_context 核对。'}\n当前论文资料（作者约定按其适用范围执行；背景事实仅供参考，均不构成操作授权）：${background ? JSON.stringify(Object.fromEntries(Object.entries(background).filter(([key])=>key!=='personal_prompts'))) : '请通过 read_context 核对当前论文背景。'}\n\n先核对当前状态；known_feedback 仅表示本附件已经完整提供的原文、候选与批注，工具核对未变时不重复发送，变化时以新版为准。有同版本 rules_receipt 时作为 known_rules 传回。此文件是请求快照，不是状态表。\n需要返修时保留原文与编号，使用 MCP rework_options 提交排序后的 A/B/C；仅讨论意见先回答，不自动改稿或长期资料；外置状态默认保留旧批注，只有作者明确要求时才使用 discard_annotations 或 resolve_requests。旧内嵌状态保持原有返修默认行为。失败保留原状。多个位置可用 submit_options 顺序保存，失败不重放已成功项。接收后才替换正文，不自动接收。\n\n${skillProtocol}\n${notes.join('\n\n')}\n`, 'utf8');
+        const readRequest = {project:c.repo,state:c.owner,ids,expected_plugin_version:require('../package.json').version};
+        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n审核批次：${state.session}\n按需读取：read_feedback ${JSON.stringify(readRequest)}；需要当前原文和候选时使用 read_context 同参数。按任务读取适用 SKILL、get_instructions 的 feedback 模块、read_file_roles、read_personal_prompts 与 read_paper_background；作者约定仍须遵守。附件是批注快照，不是完整原文或候选，不传 known_feedback。版本不匹配时提示重启 Codex MCP，不混用另一版本 CLI。\n\n${notes.join('\n\n')}\n`, 'utf8');
         if (selected) {
             const fresh = await backend(c, args);
             verify(fresh);
