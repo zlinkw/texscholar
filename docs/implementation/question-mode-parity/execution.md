@@ -180,3 +180,13 @@ W-ui-run1 因未先准备隔离项目导致宿主无法打开文件而 exit 1；
 W-r1-backup7 在新隔离 bare 仓库实际验证：断网不精简；远端确认后模拟精简失败可见且待重试；重试仅移除有证明且无依赖的候选引用，held、共享依赖及 pending 保持；无引用对象可预览，磁盘文件均保留，exit 0。W-r1-backup-extra2 原旧式备份和无变化确认两项 exit 0。备份测试首轮因原测试未隔离需要复核的候选而不再触发旧断言 exit 1，测试隔离该受保护场景后通过；backup2 因恢复分支未回传精简 ID、backup4 因 anchor 仍引用旧对象各 exit 1，修正后 backup7 通过，首败保留。
 
 自动精简只释放状态和后台凭据引用，不做物理删除；现有自动备份不调用 cleanup，作者成果收尾才依原受保护检查点机制处理对象。真实23条旧记录只由总控做过只读预览，尚未 apply；真实文件精确预览和清理仍由总控协调。本次未操作真实项目/窗口/默认 pipe/MCP、未删除文件或执行 cleanup apply。
+
+### W4 正式交付
+
+总控 W-R1 最终审核通过后，预核本地/远端 v0.9.68 tag 不存在、Release API 返回 404、输出目录不存在；原登记为 0.9.67。版本与 MCP 一致，独立 FakeHost/专属 pipe 的 MCP 和发行工具检查 W4-mcp、W4-publisher 均 exit 0；运行清单包含受影响模块，无新增依赖。W4-version 首次因独立脚本未加入 src 导入路径 exit 1，补齐后 W4-version2 exit 0；只读查询不存在的 `.vscodeignore` 及 PowerShell 展开 tag 后缀时各有错误，均未写业务数据，远端标签后由 W4-tag-remote 正确核验。
+
+版本及总控 plan/index 同批普通 push/fetch，唯一构建 W4-build exit 0，实际输入 a8c59927a01bafd397d2b8436e09fca6569c1ade。`dist/v0.9.68/texscholar-0.9.68.vsix` SHA256 `98e568a125584c49e32c5ac5382546517403d4f2bb2134a4ae43bba50313424c`；`texscholar-0.9.68-source.zip` `2a29cff4a72c04e875047cb7018084f28a9c766e8c4ca49e4596011226de9e9b`；`SHA256SUMS.txt` `3654b35815b4c242bc38b39ac7501cebcae2c391619fa4bd4a81b2a7336b1534`。
+
+远端附注 tag v0.9.68 对象 e0ed041f750ccd2561de1f61da3822479015f5f4 指向实际构建输入，附注精确含 SOURCE-COMMIT/VSIX-SHA256/SOURCE-SHA256。W4-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.68 为非 draft、非 prerelease；W4-verify 核三个 API digest 与本地相同，exit 0。实际在仓库运行 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.68/texscholar-0.9.68.vsix` 无 force，exit 0；CLI、manifest 和登记均为 local-research.latex-writing-tools 0.9.68，source=vsix、pinned=true。完整 argv、cwd、环境和日志在 `D:/latex-writing-checks/review-efficiency-20261122/W4-*`。
+
+总控已独占处理真实23条完成批注并核状态；其首次后置比较因 state SHA 必然变化 exit 1，后续只读验证通过，源/index/object 后置断言未执行，不能称已实测。407个无引用对象未删除。此次未触真实项目/用户窗口/默认 pipe/MCP，无重载重启或包后冒烟；安装登记不证明活动宿主已加载。
