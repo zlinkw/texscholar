@@ -108,6 +108,56 @@ def prune_completed(r):
     return {}, {'removed_notes':removed, 'files_deleted':False}
 
 
+def compact_automatic(r):
+    """Release accepted candidate references only after their verified saved backup."""
+    r.assert_ready()
+    backup = r.backup_status()
+    saved = backup.get('saved_done') or {}
+    proof = saved.get('review') or {}
+    commit = saved.get('commit')
+    if (not r.sidecar or r.state.get('pending_backup') or backup.get('job') or backup.get('saved_job')
+            or not commit or proof.get('session') != r.state.get('session')):
+        return {}, {'compacted_ids': [], 'files_deleted': False}
+    if any(r.git('rev-parse', ref).decode().strip() != commit for ref in ('HEAD', 'origin/master')):
+        raise Conflict('自动备份检查点已变化；不精简审核历史。')
+    edits = r.state['edits']
+    eligible = set()
+    already = []
+    for id_, version in proof.get('accepted', {}).items():
+        edit = edits.get(id_)
+        if edit and edit['status'] == 'accepted' and not edit['versions'] and edit.get('checkpoint') == commit:
+            already.append(id_)
+            continue
+        if not (edit and edit['status'] == 'accepted' and edit['versions'] and edit['versions'][-1] == version
+                and edit.get('freshness') != 'needs-recheck' and not protected_feedback(edit)):
+            continue
+        source = proof.get('sources', {}).get(edit['file']) or {}
+        if not source.get('blob') or r.git('rev-parse', commit + ':' + edit['file']).decode().strip() != source['blob']:
+            raise Conflict('自动备份正文凭据不一致；不精简审核历史。')
+        eligible.add(id_)
+    needed = set(edits) - eligible
+    queue = list(needed)
+    while queue:
+        for dependency in edits[queue.pop()].get('deps', []):
+            if dependency not in needed:
+                needed.add(dependency)
+                queue.append(dependency)
+    compacted = sorted(eligible - needed)
+    for id_ in compacted:
+        edit = edits[id_]
+        version = edit['versions'][-1]
+        edit['versions'] = []
+        for key in ('requests', 'previous_feedback', 'accepted_option', 'option_migration', 'migration_item_id', 'anchor'):
+            edit.pop(key, None)
+        edit['checkpoint'] = commit
+        if r.state.get('auto_backup_items', {}).get(id_) == version:
+            r.state['auto_backup_items'].pop(id_)
+        (r.state.get('option_migration_manifest') or {}).pop(id_, None)
+    if 'option_migration_manifest' in r.state and not r.state['option_migration_manifest']:
+        r.state.pop('option_migration_manifest')
+    return {}, {'compacted_ids':sorted(set(compacted + already)), 'checkpoint':commit, 'files_deleted':False}
+
+
 def compact(r):
     r.assert_ready()
     saved = r.state.get('pending_backup')
@@ -330,7 +380,7 @@ def main():
     parser.add_argument('--git', default='git')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--expect')
-    parser.add_argument('operation', choices=['plan', 'record', 'compact', 'cleanup', 'prune-completed'])
+    parser.add_argument('operation', choices=['plan', 'record', 'compact', 'cleanup', 'prune-completed', 'compact-automatic'])
     args = parser.parse_args()
     r = Review(args.project, args.state, args.git)
     with r.writer_lock() if args.apply else nullcontext():
@@ -350,10 +400,28 @@ def dispatch(r, args):
             result = cleanup(r, args.apply)
             result.update({'sha256': digest(r.raw), 'applied': args.apply})
             return result
-        updated, result = record(r, json.loads(sys.stdin.read())) if args.operation == 'record' else prune_completed(r) if args.operation == 'prune-completed' else compact(r)
+        if args.operation == 'record':
+            updated, result = record(r, json.loads(sys.stdin.read()))
+        elif args.operation == 'prune-completed':
+            updated, result = prune_completed(r)
+        elif args.operation == 'compact-automatic':
+            updated, result = compact_automatic(r)
+        else:
+            updated, result = compact(r)
         if args.apply:
             r.persist(updated, args.expect)
             r = Review(args.project, args.state, args.git)
+            if args.operation == 'compact-automatic' and result['compacted_ids']:
+                journal = r.object_root.parent / 'automatic-backup.json'
+                data = json.loads(journal.read_text(encoding='utf-8'))
+                saved = data.get('saved_done') or {}
+                proof = saved.get('review') or {}
+                if saved.get('commit') != result['checkpoint'] or proof.get('session') != r.state['session']:
+                    raise Conflict('备份凭据已变化；已精简的审核项未移除旧凭据。')
+                for id_ in result['compacted_ids']:
+                    proof.get('accepted', {}).pop(id_, None)
+                    proof.get('history', {}).pop(id_, None)
+                r.write(journal, json.dumps(data, ensure_ascii=False).encode('utf-8'))
             if args.operation == 'compact':
                 journal = r.object_root.parent / 'automatic-backup.json'
                 if journal.is_symlink() or journal.is_junction() or journal.exists() and not journal.is_file():

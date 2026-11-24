@@ -465,6 +465,7 @@ test('saved backup proves fixed-block acceptance after a separate safe author ed
         'block=apply("prepare_block",{"file":"main.tex","kind":"paragraph","start":0,"end":len(text),"source_revision":r.source_digest(text)})',
         'item=apply("propose",{"file":"main.tex","kind":"manuscript","block_id":block["block_id"],"before":"Original","after":"Revised"})',
         'r=Review(root,".codex-review/state.json"); apply("decide",[item["id"]],[],{item["id"]:r.state["edits"][item["id"]]["versions"][-1]})',
+        'r=Review(root,".codex-review/state.json"); r.state["edits"][item["id"]]["freshness"]="needs-recheck"; r.persist({},digest(r.raw))',
         'p=root/"main.tex"; p.write_bytes(p.read_bytes().replace(b"sentence.",b"sentence. Additional author text."))'
     ].join('\n');
     await run(PYTHON,['-X','utf8','-c',code,f.root],f.root);
@@ -496,6 +497,54 @@ test('saved backup proves fixed-block acceptance after a separate safe author ed
     await assert.rejects(run(PYTHON,[...common,'--apply','--expect',latest.sha256,'begin','--round','blocked','--files','main.tex'],f.root),/请先完成已接收成果/);
     fs.writeFileSync(ledgerFile,original);
     await run(PYTHON,[...common,'--apply','--expect',latest.sha256,'begin','--round','round-2','--files','main.tex'],f.root);
+});
+
+test('automatic compact waits for verified backup and preserves held and shared candidates', async () => {
+    const f=await fixture('automatic-compact');
+    fs.writeFileSync(path.join(f.root,'main.tex'),'Alpha. Beta. Gamma. Delta.\n','utf8');
+    await f.git(['add','main.tex']); await f.git(['commit','-m','fixture input']); await f.git(['push','origin','master']);
+    const code=[
+        'import sys', 'from pathlib import Path', 'from source_review import Review,digest', 'root=Path(sys.argv[1])',
+        'def apply(method,*args,initialize=False):',
+        ' r=Review(root,".codex-review/state.json",initialize=initialize)',
+        ' with r.writer_lock():',
+        '  r=Review(root,".codex-review/state.json",initialize=initialize); updated,result=getattr(r,method)(*args); r.persist(updated,digest(r.raw))',
+        ' return result',
+        'apply("begin","round-1",["main.tex"],initialize=True)',
+        'r=Review(root,".codex-review/state.json"); text=r.read("main.tex")',
+        'block=apply("prepare_block",{"file":"main.tex","kind":"paragraph","start":0,"end":len(text),"source_revision":r.source_digest(text)})',
+        'for text in ("Alpha.","Beta.","Gamma."):',
+        ' apply("propose",{"file":"main.tex","kind":"manuscript","block_id":block["block_id"],"before":text,"after":text.upper()})',
+        'apply("propose",{"file":"main.tex","kind":"manuscript","block_id":block["block_id"],"before":"Delta.","after":"DELTA.","deps":["3"]})',
+        'r=Review(root,".codex-review/state.json"); version=r.state["edits"]["2"]["versions"][-1]',
+        'apply("feedback",{"id":"2","version":version,"side":"original","start":0,"end":0,"quote":"","text":"Keep held"})',
+        'r=Review(root,".codex-review/state.json"); r.state["edits"]["2"]["requests"][0]["held"]=True; r.persist({},digest(r.raw))',
+        'r=Review(root,".codex-review/state.json"); apply("decide",["1","2","3"],[],{i:r.state["edits"][i]["versions"][-1] for i in ("1","2","3")})'
+    ].join('\n');
+    await run(PYTHON,['-X','utf8','-c',code,f.root],f.root);
+    const stateFile=path.join(f.root,'.codex-review/state.json'), objects=path.join(f.root,'.codex-review/objects');
+    const before=JSON.parse(fs.readFileSync(stateFile,'utf8')), paths=fs.readdirSync(objects);
+    const options={git:GIT,gh:'fixture-gh',python:PYTHON};
+    const offline=(exe,args,cwd,input)=>args[0]==='fetch' ? Promise.reject(Error('fixture offline')) : f.execute(exe,args,cwd,input);
+    await assert.rejects(automaticBackup(f.root,'.codex-review/state.json',options,()=>{},offline),/fixture offline/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(stateFile,'utf8')).edits['1'].versions,before.edits['1'].versions);
+    const blockedCompact=(exe,args,cwd,input)=>args.some(arg=>String(arg).endsWith('review_checkpoint.py')) ? Promise.reject(Error('fixture compact blocked')) : f.execute(exe,args,cwd,input);
+    const reports=[];
+    const partial=await automaticBackup(f.root,'.codex-review/state.json',options,value=>reports.push(value),blockedCompact);
+    assert.match(partial.compact_error,/备份已成功.*fixture compact blocked/);
+    assert(reports.some(value=>value.message.includes('审核历史暂未精简')));
+    assert.deepEqual(JSON.parse(fs.readFileSync(stateFile,'utf8')).edits['1'].versions,before.edits['1'].versions);
+    const result=await automaticBackup(f.root,'.codex-review/state.json',options,()=>{},f.execute);
+    const after=JSON.parse(fs.readFileSync(stateFile,'utf8'));
+    assert.deepEqual(result.compacted_ids,['1']); assert.deepEqual(after.edits['1'].versions,[]);
+    assert.deepEqual(after.edits['2'],before.edits['2']); assert.deepEqual(after.edits['3'],before.edits['3']);
+    assert.deepEqual(after.edits['4'],before.edits['4']);
+    assert(paths.every(name=>fs.existsSync(path.join(objects,name))), 'no object files are deleted by automatic compact');
+    const check='import sys,json; from review_checkpoint import unused_objects; from source_review import Review; r=Review(sys.argv[1],".codex-review/state.json",sys.argv[2]); print(json.dumps(unused_objects(r)))';
+    const unused=JSON.parse(await run(PYTHON,['-X','utf8','-c',check,f.root,GIT],f.root));
+    assert(unused.some(name=>path.basename(name)===before.edits['1'].versions[0]+'.json'));
+    assert(!unused.some(name=>path.basename(name)===before.edits['2'].versions[0]+'.json'));
+    assert(!unused.some(name=>path.basename(name)===before.edits['3'].versions[0]+'.json'));
 });
 
 test('unchanged accepted original is confirmed against remote without an empty commit', async () => {

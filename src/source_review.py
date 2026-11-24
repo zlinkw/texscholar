@@ -269,7 +269,6 @@ def locate(text, needle, left="", right=""):
 class Review:
     def __init__(self, repo, state, git="git", storage=None, initialize=False):
         started = time.perf_counter()
-        self._decision_pruned = False
         self.repo = Path(repo).resolve(strict=True)
         self.git_exe = git
         self.env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
@@ -1571,15 +1570,12 @@ class Review:
         return locate(text, item['before'])
 
     def decide(self, accept, reject, expected_versions=None, option=None):
-        self._decision_pruned = False
         previous = self.state
         previous_cache = self._read_cache
         self._read_cache = {}
         self.state = copy.deepcopy(previous)
         try:
-            result = self._decide(accept, reject, expected_versions, option)
-            self._decision_pruned = any(len(self.state['edits'][id_].get('requests', [])) + len((self.state['edits'][id_].get('previous_feedback') or {}).get('requests', [])) < len(previous['edits'][id_].get('requests', [])) + len((previous['edits'][id_].get('previous_feedback') or {}).get('requests', [])) for id_ in accept + reject)
-            return result
+            return self._decide(accept, reject, expected_versions, option)
         except Exception:
             # Restore the in-memory ledger too; no partial decisions on failure.
             self.state = previous
@@ -2065,8 +2061,6 @@ class Review:
                 intent_raw = None
                 if updated:
                     intent_files = {}
-                    if self._decision_pruned:
-                        intent_files['state-before'] = self.raw
                     for i, (rel, raw) in enumerate(targets.items()):
                         intent_files[f"{i}-old"] = self.original[rel]
                         intent_files[f"{i}-new"] = raw
@@ -2121,8 +2115,6 @@ class Review:
         try:
             with HostSession(self.repo) as host:
                 intent_files = {}
-                if self._decision_pruned:
-                    intent_files['state-before'] = self.raw
                 for i, (rel, raw) in enumerate(targets.items()):
                     intent_files[f'{i}-old'] = self.original[rel]
                     intent_files[f'{i}-new'] = raw

@@ -151,6 +151,30 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(result['edits'][id_]['versions'], versions)
         self.assertEqual(result['edits']['2'], state['edits']['2'])
 
+    def test_automatic_compact_requires_matching_backup_and_source_proof(self):
+        import copy
+        from types import SimpleNamespace
+        from review_checkpoint import compact_automatic
+        id_ = self.proposal(); state = copy.deepcopy(self.review().state)
+        edit = state['edits'][id_]; edit['status'] = 'accepted'; version = edit['versions'][-1]
+        proof = {'session':state['session'], 'accepted':{id_:version}, 'sources':{'main.tex':{'blob':'verified-blob'}}}
+        saved = {'saved_done':{'commit':'verified-commit', 'review':proof}}
+        class Fixture:
+            sidecar = True
+            def __init__(self): self.state = copy.deepcopy(state); self.backup = copy.deepcopy(saved); self.refs = {'HEAD':'verified-commit', 'origin/master':'verified-commit', 'verified-commit:main.tex':'verified-blob'}
+            def assert_ready(self): pass
+            def backup_status(self): return self.backup
+            def git(self, *args): return self.refs[args[-1]].encode()
+        r=Fixture(); r.backup['saved_done']['review']['session']='other'
+        self.assertEqual(compact_automatic(r)[1]['compacted_ids'], [])
+        self.assertEqual(r.state['edits'][id_]['versions'], [version])
+        r=Fixture(); r.refs['origin/master']='advanced'
+        with self.assertRaisesRegex(Conflict, '检查点已变化'): compact_automatic(r)
+        self.assertEqual(r.state['edits'][id_]['versions'], [version])
+        r=Fixture(); r.refs['verified-commit:main.tex']='other-blob'
+        with self.assertRaisesRegex(Conflict, '正文凭据不一致'): compact_automatic(r)
+        self.assertEqual(r.state['edits'][id_]['versions'], [version])
+
     def install_sidecar(self, state):
         owner = self.root / 'reply.tex'
         owner.write_text(''.join(line for line in owner.read_bytes().decode('utf-8').splitlines(keepends=True)
@@ -287,7 +311,11 @@ class NativeReview(unittest.TestCase):
         version = r.state['edits'][result['id']]['versions'][-1]
         updated, _ = r.feedback({'id':result['id'], 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'事务前批注'})
         r.persist(updated, digest(r.raw))
-        r = review(); state_before = r.raw
+        r = review()
+        updated, _ = r.feedback({'id':result['id'], 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'事务中保留的暂留批注'})
+        r.state['edits'][result['id']]['requests'][-1]['held'] = True
+        r.persist(updated, digest(r.raw))
+        r = review()
         updated, _ = r.decide([result['id']], [], {result['id']: version})
         write = FakeHostSession.write
         def interrupt(path, raw):
@@ -299,7 +327,8 @@ class NativeReview(unittest.TestCase):
                 r.persist(updated, digest(r.raw))
         interrupted = review()
         self.assertTrue(interrupted.interrupted)
-        self.assertEqual(interrupted.object_bytes(interrupted.state['transaction']['commit'], 'state-before'), state_before)
+        snapshot = json.loads((interrupted.object_root / (interrupted.state['transaction']['commit'] + '.json')).read_text(encoding='utf-8'))
+        self.assertNotIn('state-before', snapshot['files'])
         (self.root / 'main.tex').write_text('Author edited after interruption.\n', encoding='utf-8')
         with self.assertRaisesRegex(Conflict, 'author/concurrent edits'):
             interrupted.recover(digest(interrupted.raw))
@@ -310,6 +339,7 @@ class NativeReview(unittest.TestCase):
         self.assertIn('The model is reliable.', review().read('main.tex'))
         self.assertEqual((self.root / 'reply.tex').read_bytes(), owner)
         self.assertNotIn('transaction', review().state)
+        self.assertEqual([n['text'] for n in review().state['edits'][result['id']]['requests']], ['事务中保留的暂留批注'])
         self.assertNotIn('auto_backup_projection_error', review().state)
 
     def test_fixed_block_detects_author_edit_and_missing_marker_without_relocation(self):

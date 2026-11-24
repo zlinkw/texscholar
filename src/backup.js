@@ -111,6 +111,25 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
         return JSON.parse(await (operation === 'saved-status' || independent ? invoke() : metadata(invoke, operation === 'saved-local' || operation === 'saved-update', recover)));
     };
     const notify = value => {value = {...value, elapsed_ms:performance.now()-started}; report(value);};
+    const compactFinished = async (remoteVerified = false) => {
+        if (!owner) return {};
+        const args = ['-X','utf8',options.checkpointScript || path.join(__dirname,'review_checkpoint.py'),
+            '--project',root,'--state',owner,'--git',options.git || 'git'];
+        const invoke = extra => execute(options.python || 'python',[...args,...extra,'compact-automatic'],root);
+        try {
+            const preview = JSON.parse(await metadata(() => invoke([])));
+            if (!preview.compacted_ids.length) return {};
+            if (!remoteVerified) {
+                const plan = {root,git,execute,options,repository:githubRepository((await git(['remote','get-url','--push','origin'])).trim())};
+                await verifyPrivate(plan);
+                await git(['fetch','origin','master']);
+            }
+            const result = JSON.parse(await metadata(() => invoke(['--apply','--expect',preview.sha256])));
+            return {compacted_ids:result.compacted_ids};
+        } catch (error) {
+            return {compact_error:'备份已成功，审核历史暂未精简：' + error.message};
+        }
+    };
     let local;
     try {
         if (!require('./tools').samePath(fs.realpathSync((await git(['rev-parse','--show-toplevel'])).trim()),root)) throw new Error('论文文件夹与 Git 根目录不一致');
@@ -172,8 +191,10 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
                         throw new Error('远端 master 已推进或分叉；未记录审核发布凭据');
                     await helper('saved-local', {parent:head, files, new_files:newFiles, trigger, owner, confirm_review:local.review_proof});
                 }
+                const compact = await compactFinished(!!local.review_proof || head !== remote);
                 const value = head !== remote ? {status:'done',commit:head,message:'已有本地提交已备份 ' + head.slice(0,8)} : {status:'idle',message:'已保存项目无变化'};
-                const recorded = await helper('saved-event',{action:'idle',...value}); notify(recorded.saved_status || value); return head !== remote ? {commit:head} : {skipped:true};
+                if (compact.compact_error) value.message += '；' + compact.compact_error;
+                const recorded = await helper('saved-event',{action:'idle',...value}); notify(recorded.saved_status || value); return {...(head !== remote ? {commit:head} : {skipped:true}),...compact};
             }
         }
         notify({status:'local',commit:local.commit,message:'本地备份已提交，远端待上传'});
@@ -186,12 +207,15 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
         const pushed = actualRemote === local.commit ? local.commit : await pushPrivate(plan,local.commit);
         if (pushed !== local.commit) throw new Error('推送后检查点不一致，未标记完成');
         const completed = await helper('saved-update',{token:local.token,commit:pushed,done:true});
+        const compact = await compactFinished(true);
         if (resuming && !afterResume) {
-            notify({status:'queued',commit:pushed,message:'已恢复上次备份，正在检查后续保存'});
-            return automaticBackup(root,owner,options,report,execute,trigger,true,metadata);
+            notify({status:'queued',commit:pushed,message:'已恢复上次备份，正在检查后续保存' + (compact.compact_error ? '；' + compact.compact_error : '')});
+            const next = await automaticBackup(root,owner,options,report,execute,trigger,true,metadata);
+            return {...next, ...(compact.compacted_ids?.length ? {compacted_ids:[...new Set([...compact.compacted_ids,...(next.compacted_ids || [])])]} : {}),
+                ...(compact.compact_error ? {compact_error:compact.compact_error} : {})};
         }
-        notify({status:'done',commit:pushed,message:completed.saved_status?.status === 'done' ? completed.saved_status.message : '已备份 ' + pushed.slice(0,8)});
-        return {commit:pushed};
+        notify({status:'done',commit:pushed,message:(completed.saved_status?.status === 'done' ? completed.saved_status.message : '已备份 ' + pushed.slice(0,8)) + (compact.compact_error ? '；' + compact.compact_error : '')});
+        return {commit:pushed,...compact};
     } catch (error) {
         const value = {status:'failed', ...(local?.commit ? {commit:local.commit} : {}),
             message:(local?.commit ? '本地提交已保存，远端未确认。' : '') + '后台备份失败：' + error.message};
