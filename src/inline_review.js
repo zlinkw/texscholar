@@ -819,6 +819,7 @@ function createInlineReview(vscode, context, execute = run) {
         updateSaved(c, saved);
         vscode.window.showInformationMessage(`${c.id} 批注已保存，原文和编号保留；尚未发送给 Codex。`);
         if (!saved.card.source_match) vscode.window.showWarningMessage('批注已保存，但原文随后发生变化；请核对并刷新，不会猜测重新定位。');
+        return {id:c.id, version:saved.card.version, file:saved.card.edit.file, kind:saved.card.edit.kind, source:'requests', note:saved.request};
     }
     function updateSaved(c, saved) {
         ownerAfterWrite = saved.owner_text;
@@ -1228,16 +1229,23 @@ function createInlineReview(vscode, context, execute = run) {
     async function addRequests(target, selected, session) {
         await vscode.commands.executeCommand('localLatex.checkMCPVersion', false);
         const c = target || await discover();
-        const requested = selected || (target ? [{id:target.id, version:target.version}] : undefined);
-        if (requested && (!requested.length || new Set(requested.map(item => item.id)).size !== requested.length)) throw new Error('请选择不同的审核项。');
-        const args = ['feedback-context', ...(requested || []).flatMap(item => ['--id', item.id])];
-        const state = await backend(c, args);
+        const status = await backend(c, ['status']);
+        const available = feedbackRows(status).filter(row => row.note.id && row.note.version);
+        if (!selected) {
+            const picks = await vscode.window.showQuickPick(available.filter(row => !target || row.id === target.id).map(row => ({label:`${row.id} · ${row.file} · ${row.note.held ? '暂留' : '待处理'}`, description:row.note.text, detail:`版本 ${row.note.version} · ${row.note.display_context?.quote ?? row.note.quote}`, row})), {canPickMany:true, title:'选择要交接的具体批注', placeHolder:'仅发送明确选择的批注'});
+            if (!picks || !picks.length) return;
+            selected = picks.map(pick => pick.row);
+            session = status.session;
+        }
+        if (!selected.length || new Set(selected.map(row => JSON.stringify([row.id,row.note?.id,row.note?.version]))).size !== selected.length || selected.some(row => !available.some(now => now.id===row.id && now.version===row.version && now.file===row.file && now.source===row.source && JSON.stringify(now.note)===JSON.stringify(row.note)))) throw new Error('所选批注已变化或不可交接，请重新选择。');
+        const requested = [...new Map(selected.map(row => [row.id,{id:row.id,version:row.version}])).values()];
+        const state = status;
         const verify = result => {
-            if (selected && result.session !== session || requested && requested.some(item => result.current_versions?.[item.id] !== item.version))
+            if (result.session !== session || requested.some(item => result.edits?.[item.id]?.versions.at(-1) !== item.version))
                 throw new Error('候选已更新或批次已变化，请核对新版再交接。');
         };
         verify(state);
-        const items = state.items;
+        const items = selected.map(row => ({id:row.id,file:row.file,version:row.note.version,current_version:row.version,requests:[row.note]}));
         const generations = new Map();
         for (const item of items) {
             const key = JSON.stringify([item.id, item.version]);
@@ -1263,12 +1271,12 @@ function createInlineReview(vscode, context, execute = run) {
         const readRequest = {project:c.repo,state:c.owner,ids,expected_plugin_version:require('../package.json').version};
         await fs.writeFile(file, `插件版本：${require('../package.json').version}\n审核批次：${state.session}\n按需读取：read_feedback ${JSON.stringify(readRequest)}；需要当前原文和候选时使用 read_context 同参数。按任务读取适用 SKILL、get_instructions 的 feedback 模块、read_file_roles、read_personal_prompts 与 read_paper_background；作者约定仍须遵守。附件是批注快照，不是完整原文或候选，不传 known_feedback。版本不匹配时提示重启 Codex MCP，不混用另一版本 CLI。\n\n${notes.join('\n\n')}\n`, 'utf8');
         if (selected) {
-            const fresh = await backend(c, args);
+            const fresh = await backend(c, ['status']);
             verify(fresh);
             if (fresh.sha256 !== state.sha256) throw new Error('审核状态已更新，请重新选择后交接；未加入输入区。');
         }
         await vscode.commands.executeCommand('chatgpt.addFileToThread', vscode.Uri.file(file));
-        vscode.window.showInformationMessage((selected ? '所选批注' : target ? '本项待处理批注' : '全部批注') + '已作为上下文加入 Codex 输入区，请检查后自行发送。');
+        vscode.window.showInformationMessage('所选批注已作为上下文加入 Codex 输入区，请检查后自行发送。');
     }
     function command(name, handler, displayOnly = false) {
         context.subscriptions.push(vscode.commands.registerCommand(name, async (...args) => {

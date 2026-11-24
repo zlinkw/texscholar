@@ -63,7 +63,7 @@ function hostFixture({tex = true, state = true, autoPDF = true, questionStore = 
             createTextEditorDecorationType: disposable, registerUriHandler: disposable, onDidChangeActiveTextEditor: disposable,
             onDidChangeTextEditorSelection: f => {selectionHandler = f; return disposable();},
             async showTextDocument(target, options) {calls.push(['showTextDocument', target, options]); return editor;},
-            withProgress: async (_, action) => action(), showInformationMessage: m => notices.push(m),
+            withProgress: async (_, action) => action(), showInformationMessage: m => notices.push(m), showQuickPick: async choices => choices.slice(0,1),
             showWarningMessage: async m => {notices.push(m);}, showErrorMessage: m => notices.push(m)},
         workspace: {isTrusted: true, workspaceFolders: [{uri: uri(root)}], textDocuments: [document],
             getWorkspaceFolder: () => ({uri: uri(root)}),
@@ -93,7 +93,8 @@ function hostFixture({tex = true, state = true, autoPDF = true, questionStore = 
             return snapshot;
         }
         if (args.includes('inspect')) return JSON.stringify(allCards[args[args.indexOf('--id') + 1]]);
-        if (args.includes('feedback')) {edit.requests.push({...input, status: 'open'}); return JSON.stringify({card: data, owner_text: 'fixture owner'});}
+        if (args.includes('feedback')) {const request={...input,id:'note-'+(edit.requests.length+1),version:input.version,status:'open'}; edit.requests.push(request); return JSON.stringify({card: data, request, owner_text: 'fixture owner'});}
+        if (args.at(-1)==='status') return JSON.stringify({session:'batch',sha256:'fixture',edits:Object.fromEntries(Object.entries(allCards).map(([id,item])=>[id,item.edit]))});
         if (args.includes('feedback-context')) {
             const ids = args.flatMap((value, i) => value === '--id' ? [args[i + 1]] : []);
             const items = [
@@ -443,6 +444,8 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     await f.receive({type: 'note', id: '1', version: 'v1', ...selection, text: '请更准确。'});
     assert.equal(f.edit.requests[0].quote, 'First');
     assert.equal(f.edit.requests[0].side, 'original');
+    f.edit.requests.push({id:'old',version:'v1',side:'original',quote:'First',text:'旧批注',status:'open',held:true});
+    f.allCards['2']={...f.data,edit:{...f.edit,file:'second.tex',requests:[{id:'other',version:'v1',side:'original',quote:'First',text:'请更准确。',status:'open'}]}};
     const before = f.backendCalls.length;
     await f.ui.addRequests();
     assert(f.calls.some(c => c[0] === 'chatgpt.addFileToThread'));
@@ -452,24 +455,30 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     const content = fs.readFileSync(attachment, 'utf8');
     assert(content.includes('read_personal_prompts') && content.includes('read_paper_background'));
     assert(!content.includes('Better sentence.') && !content.includes('Original 2'), 'attachment excludes original and candidate prose');
-    assert(content.includes('other item'));
+    assert(!content.includes('other item'));
     await f.ui.addRequests(c);
     const scoped = fs.readFileSync(f.calls.findLast(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
-    assert(scoped.includes('请更准确。') && scoped.includes('同一版本另一个方案的要求'));
+    assert(scoped.includes('请更准确。') && !scoped.includes('同一版本另一个方案的要求'));
     assert(!scoped.includes('other item'), 'combined action must not export another item');
     assert(!scoped.includes('first-receipt') && !scoped.includes('other-receipt'), 'no receipt may claim unseen prose');
     assert(scoped.includes('不传 known_feedback') && scoped.includes('read_feedback'));
-    await f.ui.addRequests(c, [{id:'1',version:'v1'}, {id:'2',version:'v1'}, {id:'3',version:'v1'}], 'batch');
+    const exact = {id:'1',version:'v1',file:f.edit.file,kind:f.edit.kind,source:'requests',note:f.edit.requests[0]};
+    const second={id:'2',version:'v1',file:'second.tex',kind:f.edit.kind,source:'requests',note:f.allCards['2'].edit.requests[0]};
+    await f.ui.addRequests(c, [exact,second], 'batch');
     const selected = fs.readFileSync(f.calls.findLast(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
-    assert(selected.includes('Note 2') && selected.includes('Note 3') && selected.includes('请更准确。'));
+    assert.equal((selected.match(/返修要求：请更准确。/g) || []).length,2); assert(!selected.includes('旧批注'));
     assert(!selected.includes('Note 4') && !selected.includes('other item') && !selected.includes('Candidate 4'));
     const selectedCount = f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length;
-    await assert.rejects(f.ui.addRequests(c, [{id:'2',version:'v1'}], 'old-batch'), /批次已变化/);
-    await assert.rejects(f.ui.addRequests(c, [{id:'2',version:'old'}], 'batch'), /候选已更新/);
+    await assert.rejects(f.ui.addRequests(c, [exact], 'old-batch'), /批次已变化/);
+    await assert.rejects(f.ui.addRequests(c, [{...exact,version:'old'}], 'batch'), /已变化/);
+    const snapshot=structuredClone(exact); f.edit.requests[0].text='已被修改';
+    await assert.rejects(f.ui.addRequests(c, [snapshot], 'batch'), /已变化/);
+    f.edit.requests[0].text=snapshot.note.text;
     assert.equal(f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length, selectedCount);
     const sent = f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length;
-    await assert.rejects(f.ui.addRequests({...c, version: 'outdated'}), /候选已更新/);
+    await assert.rejects(f.ui.addRequests({...c, version: 'outdated'}, [{...exact,version:'old'}], 'batch'), /已变化/);
     assert.equal(f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length, sent);
+    f.allCards['2'].edit.status='accepted';
     assert(!f.backendCalls.slice(0, before).some(c => c.args.some(a => String(a).endsWith('review_pdf.py'))));
     await f.ui.preview(c); await f.ui.preview(c);
     assert.equal(f.calls.filter(c => c[0] === 'workbench.action.moveEditorToNewWindow').length, 1);

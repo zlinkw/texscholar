@@ -1,5 +1,7 @@
 # TeXScholar 实施索引
 
+当前计划：[按具体批注限定返修消息](question-mode-parity/plan.md#v阶段按具体批注限定返修消息)。返修附件只包含明确的 request；助手任务提示精简，资料按需读取。作者习惯和论文要求允许为空，保留历史来源及候选绑定，既有真实资料的重置由总控核验协调。
+
 最新完成计划：[按需返修上下文与无跳转接收](question-mode-parity/plan.md#u阶段按需返修上下文与无跳转接收)。U返修0完成：[0.9.66正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.66)并同包安装，总控已核远端tag/构建目标、三附件API摘要与本机登记。精简返修与按需读取、无源码跳转接收、问题分组目录、正式本地文件及暂存备份和方案框批选已交付；跨问题/跨文件B/C批接、目录收敛与无源Tab真实组合通过。未自动重载/重启、包后冒烟或删除；需重载目标VSCode窗口及重启现有MCP连接启用。真实全量自动备份重试未核。
 
 最新完成计划：[评论列表定位失败](question-mode-parity/plan.md#t阶段评论列表定位失败)。T返修0完成：[0.9.65正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.65)并同包安装，总控已核远端附注tag/构建目标、三附件API摘要和本机manifest/登记。真实隔离VSCode复现接收移除旧项与reveal交叠的Cannot resolve tree item，修复后准确进入下一项；92项定向及总控真实错误传播/后续队列恢复组合通过。真实论文、批注和草稿未动，未自动重载/重启、包后冒烟或删除；需重载目标VSCode窗口启用。

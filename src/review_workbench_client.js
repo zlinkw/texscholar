@@ -164,9 +164,10 @@ const noteKey = row => JSON.stringify([row.id, row.note.id, row.note.version]);
 function saveNoteSelection() {
     api.postMessage({type:'noteSelection', instance, repo:current.repo, owner:current.owner, session:currentSession, items:[...noteSelection.values()]});
 }
+const noteInScope = row => $('notesScope').value === 'all' || ($('notesScope').value === 'selected' ? batchSelection.has(row.id) : row.id === current.id);
 function renderFeedbackManager() {
     const root = $('notesRows'); root.replaceChildren();
-    const rows = feedbackRows.filter(row => $('notesScope').value === 'all' || row.id === current.id);
+    const rows = feedbackRows.filter(noteInScope);
     for (const row of rows) {
         const key = noteKey(row), selected = noteSelection.get(key), label = document.createElement('label'), check = document.createElement('input');
         check.type = 'checkbox'; check.checked = !!selected; check.disabled = !row.note.id || !row.note.version;
@@ -1122,10 +1123,14 @@ document.addEventListener('click', event => {
     if (type === 'toolbarCancel') {$('toolbarDialog').close(); return;}
     if (type === 'toolbarReset') {toolbarDraft={order:[...toolbarDefault.order],visible:[...toolbarDefault.visible]}; renderToolbarChoices(); return;}
     if (type === 'toolbarSave') {$('toolbarStatus').textContent='正在保存…'; send(type,{toolbar:toolbarDraft},false); return;}
-    if (type === 'manageNotes') {renderFeedbackManager(); $('notesDialog').showModal(); return;}
+    if (type === 'manageNotes' || type === 'handoff' || type === 'handoffSelected') {
+        if (type !== 'manageNotes') {noteSelection.clear(); saveNoteSelection(); $('notesScope').value=type==='handoffSelected' ? 'selected' : 'all'; if (type==='handoffSelected') $('directoryDialog').close();}
+        renderFeedbackManager(); $('notesDialog').showModal(); return;
+    }
     if (type === 'closeNotes') {$('notesDialog').close(); return;}
-    if (type === 'clearNotes') {for (const [key,row] of noteSelection) if ($('notesScope').value === 'all' || row.id === current.id) noteSelection.delete(key); saveNoteSelection(); renderFeedbackManager(); return;}
-    if (type === 'selectNotes') {for (const row of feedbackRows.filter(row => row.note.id && row.note.version && ($('notesScope').value === 'all' || row.id === current.id))) if (!noteSelection.has(noteKey(row))) noteSelection.set(noteKey(row),row); saveNoteSelection(); renderFeedbackManager(); return;}
+    if (type === 'clearNotes') {for (const [key,row] of noteSelection) if (noteInScope(row)) noteSelection.delete(key); saveNoteSelection(); renderFeedbackManager(); return;}
+    if (type === 'selectNotes') {for (const row of feedbackRows.filter(row => row.note.id && row.note.version && noteInScope(row))) if (!noteSelection.has(noteKey(row))) noteSelection.set(noteKey(row),row); saveNoteSelection(); renderFeedbackManager(); return;}
+    if (type === 'sendSelectedNotes') {if (!noteSelection.size) {$('notesStatus').textContent='请先选择要交接的批注。';return;} send('handoffSelected',{items:[...noteSelection.values()],session:currentSession}); return;}
     if (['holdNotes','releaseNotes','deleteNotes'].includes(type)) {
         if (!noteSelection.size) {$('notesStatus').textContent='请先选择批注。'; return;}
         $('notesStatus').textContent=''; send('manageFeedback',{session:currentSession,items:[...noteSelection.values()],action:{holdNotes:'hold',releaseNotes:'release',deleteNotes:'delete'}[type]}); return;
@@ -1144,7 +1149,7 @@ document.addEventListener('click', event => {
     if (type === 'resetAppearance') {saveAppearance({reset: true}); return;}
     if (type === 'selectAll') {for (const row of $('directoryResults').children) {const input=row.querySelector('input'); if(input && !input.checked) {input.checked=true; input.dispatchEvent(new Event('change'));}} return;}
     if (type === 'clearSelection') {batchSelection.clear(); saveBatchSelection(); filterDirectory(); return;}
-    if (type === 'acceptBatch' || type === 'handoffSelected') {send(type,{items:[...batchSelection.values()], session:currentSession}); return;}
+    if (type === 'acceptBatch') {send(type,{items:[...batchSelection.values()], session:currentSession}); return;}
     if (type === 'batchNote') {send(type,{items:[...batchSelection.values()].map(item => $('batchNoteScope').value === 'chosen' ? item : {id:item.id,version:item.version}),session:currentSession,text:$('batchNote').value,purpose:$('batchPurpose').value,scope:$('batchNoteScope').value}); return;}
     if (type === 'directory') {filterDirectory(); $('directoryDialog').showModal(); $('directoryQuery').focus(); return;}
     if (type === 'clearFilter') {$('directoryQuery').value = ''; $('directoryKind').value = ''; $('directoryNotes').checked = false; $('directoryQueue').value = 'active'; filterDirectory(); return;}
