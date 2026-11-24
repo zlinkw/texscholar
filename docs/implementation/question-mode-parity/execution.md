@@ -86,3 +86,9 @@ T 定位：总控只读现场 exthost.log 发现 ep、eq 两个解析失败，�
 修复在 reveal 进行中合并延后树刷新，结束后应用最新记录；同一 session 的文件、审核项及批注对象保持稳定，切换 session 或文件不复用旧身份，旧 session 队列不再选中新项。快速切项仍合并为最新目标，真正 reveal 错误仍向原调用方报告；不加等待延时或重试。T-tests-final 执行 inline_review/workbench 测试 exit 0，涵盖 id 解析、同卡刷新、批注父子、快速切项、移除及 session 换代。T-accept-ui 修复版同一隔离条件下在 reveal 门控期间实际接收合成项1，释放后选中下一项2、事务完成；host/observer/外层 exit 0，输入 Default 前中后 HWND 264506 不变、GUI 在私有桌面且关闭，截图 ui-38b71429ea65438393205f667c3e4a41.png 已看。正常刷新交叠 T-ui-run 另行 exit 0，截图 ui-baca384a4c9d4f099ff1df99836d9f1d.png 已看。
 
 保留边界：旧代码同 id 刷新或合成 session 切换的 T-real-red、red2 未重现真实拒绝；red4 在 getChildren 门控下模拟移除但未拒绝，red5 等待第二次 provider 调用未观察到该调用、未拒绝；这些不是通过修复的证据。T-red 初期按对象引用模拟过严，不单独作为真实故障证明。所有原日志、完整 argv、隔离资料与截图保留于 D:/latex-writing-checks/review-efficiency-20261122/T-*；未触真实论文、用户窗口或默认管道。
+
+T3 交付：预核 v0.9.65 本地及远端 tag 不存在、Release API 404、输出目录不存在；版本/MCP一致性、专用隔离 host/pipe 的 MCP 检查、发行工具测试均 exit 0，受影响运行文件已在原打包清单，无新增依赖。日志为 D:/latex-writing-checks/review-efficiency-20261122/T-delivery-*。版本与总控支持计划同批提交并普通 push/fetch；唯一构建 T-delivery-build exit 0，输入 23690cc69572933be3967c9c74a61ea1d00ed615。
+
+dist/v0.9.65/texscholar-0.9.65.vsix SHA256 38d307664fd84f0850c74a7b6e6b291ee5c267d8343889123f172e8347ea592c；texscholar-0.9.65-source.zip bad16c4379378cc4031ee3ab887611a7b73b3f598123fc4c7e6c6eb654174fe8；SHA256SUMS.txt b8ebe7e4be9a40f2d12f49c41ac8e15b2cfc476b8ef2764ce1d7742671eac79a。远端附注 tag v0.9.65 对象 fe3a854862e1ff2e5dea8418414668b2008f54db 指向构建输入，SOURCE-COMMIT 和双包摘要精确，普通推送 exit 0。
+
+T-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.65 非 draft、非 prerelease，API 三附件摘要与本地一致，T-delivery-verify exit 0。实际 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.65/texscholar-0.9.65.vsix` 于仓库目录执行 exit 0，无 force；CLI 与实际 manifest 为 local-research.latex-writing-tools 0.9.65，登记 source=vsix、pinned=true。未重载用户窗口，安装不代表活动宿主已加载；未探测默认管道/MCP、未操作真实论文或删除清理。原首败和 T2 总控补充错误传播检查保留。

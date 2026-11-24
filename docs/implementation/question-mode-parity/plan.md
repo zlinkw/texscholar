@@ -105,10 +105,14 @@ S全阶段完成，返修1。0.9.64已正式发布并同包安装，唯一构建
 
 - [x] T1 原Terra在现有inline host夹具及正常隔离Development复现原错误，定位负责边界，最小修复；已有队列/选择/评论子节点与父节点、同卡刷新、快速切项、项移除及session变化按受影响调用链验证，真实不存在的项不得选错对象。保留审核页草稿、选区/版本、作者批注及既有决定语义。完整日志与首败保留，UI使用独立profile/专属pipe和CreateDesktopW私有未切桌面，不在Default，不抢焦；无真稿、默认pipe/MCP、用户窗口、删除或重载动作。原定位/翻译/批接功能按未变输入复用，不重跑全部功能组。
 - [x] T2 整包冻结交回后，总控审真实diff/复现及必要受影响链，只补未覆盖且能影响交付的组合；完整返修交原Terra。总控不实现自签、不重复同清单。
-- [ ] T3 最终通过后另派原Terra必要版本/发行检查、唯一构建、正式Release/附注tag及同VSIX安装；预核下一版0.9.65实际无冲突才用。总控核必要元数据，execution尾与plan/index集中收尾。仍不自动重载/重启，不包后冒烟或删除。
+- [x] T3 最终通过后另派原Terra必要版本/发行检查、唯一构建、正式Release/附注tag及同VSIX安装；预核下一版0.9.65实际无冲突才用。总控核必要元数据，execution尾与plan/index集中收尾。仍不自动重载/重启，不包后冒烟或删除。
 
 本增量与索引先由总控写入但不独立提交，交原Terra随首个验证通过功能批纳入。授权产品/测试/UI/隔离配置/Git租约给原Terra，实施期间总控不并行写计划或测试；无在途才交回。普通精确stage/commit/push origin master/fetch，远端前移或权限拒绝停相关动作，不改历史/remote。真实论文及所有批注/候选/稿件/模板/范围外stage保持，旧原事务恢复事实不重放。
 
 T最终功能审核通过，返修0，基线5121cc450e7e8acc2139d0d5e3b2774a6ef82ea7。总控审完整diff及本机VSCode实际按id解析实现，现场新日志16:33 ep/eq与接收移除的身份/业务顺序一致；旧版正常私有Development T-accept-red门控reveal入口并实际接收移除合成项，真实VSCode拒绝同类Cannot resolve tree item，修复版T-accept-ui同条件选中下一项2、事务为空。门控在调用入口，不冒称现场逐毫秒内部时序已证。总控实看ui-38b71429ea65438393205f667c3e4a41.png，目录选中与审核页2一致，批注节点保留；两轮host/observer/外层0、Default前中后各自不变且GUI私有。复用92项有效定向测试，不重跑同组。
 
 总控独占补controller-tree-final.cjs：在真实workbench/inline调用链注入一次真正reveal失败，同时两次刷新并切到项2、追加作者批注；原错误明确reject，队列继续选中最新项2及其最新批注，未调用decide/decide-batch，exit0。证据在D:/latex-writing-checks/question-mode-latency-20261124/controller-tree-final*。首次读取两个UI process文件漏-run后缀只读失败，随后按实际文件名核实，未改日志；Terra全部首败/未复现对照保留。无剩余阻塞，允许T3按原范围必要检查、预核0.9.65无冲突后唯一构建及同包正式发布安装。计划/索引支持更新随版本批纳入，交付execution尾留总控集中结案；不自动重载/重启、包后冒烟或删除。
+
+T全阶段完成，返修0。0.9.65正式发布并同包安装，唯一构建输入23690cc69572933be3967c9c74a61ea1d00ed615；必要版本/MCP/发行工具检查通过。总控实核远端附注tag对象fe3a854862e1ff2e5dea8418414668b2008f54db及构建目标、SOURCE-COMMIT与双包摘要；controller-tree-release-meta.py实读Release API确认非draft/prerelease，三附件digest与本地同包一致，实际manifest及登记为local-research.latex-writing-tools 0.9.65、source=vsix/pinned=true，exit0，完整摘要见execution。API原始输出/退出与结果在D:/latex-writing-checks/question-mode-latency-20261124/controller-tree-release*。
+
+修复解决接收移除旧项与列表定位交叠的已复现路径，未改正文定位、作者批注或接收语义。真实论文/P/草稿/范围外stage及用户窗口本轮未操作；旧真实保存false原因等历史限制仍保留，不夸为全部故障已修。无重构建、包后冒烟、删除或自动重载/重启；安装不证明活动宿主已加载，需用户重载目标VSCode窗口启用。全部租约已交回、无在途，execution尾与plan/index集中结案。
