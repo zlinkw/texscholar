@@ -62,3 +62,7 @@ S 首批：真实 CPU 采样指出 questionRows 中同一审核源位置被反�
 翻译片段共享：同一审核卡原文/方案未变时复用定位差异，前端一次渲染复用相同结果；原文或候选改变即重算，保留原选区和版本核对。S-translate-final-test、S-translate2-ui exit 0；合成翻译验证片段、跨卡中文批注和 429 可见，截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-b541bb17d76b438494c3c90ed66521e4.png 已看，私有桌面、Default 前中后 HWND 66058 不变。网络耗时与实网质量未测，未改变服务排队或超时。
 
 六项隔离测量：S-speed8 在 246 总记录/68 活跃项、合成长正文、两个编辑器组中，从点击到选择清除及当前问题剩余项可见为 633ms，六项状态均 accepted/A、事务已清；host/observer/外层 exit 0，截图 ui-a1b7610ddcf84cc0b18f1172232a4126.png 已看。专属 pipe/profile 和私有桌面均核实，Default 输入桌面不变，但前中后前台 HWND 不同，不能声称前台恒定或把此轮签成完整 UI 保护验收；无证据将其归因于隔离窗口。单组源码显示时 S-speed4 观察器 CDP 会话断开并提前结束隔离宿主，隔离事务保留，不能当作成功或真实现场根因；S-speed5 同类双组业务 669ms、前台亦变化。S-speed6 业务观察 515ms，但外层对空桌面枚举返回 false/last-error=0 断言失败；S-speed7 修正该夹具判定后业务 563ms、外层 0，前台仍变化。S-speed/2 准备夹具状态写入及计数器分别出错，S-speed3 观察器引号语法错误，全部首败保留，未对任何未知结果重放或清理。以上不替代受保护前台恒定条件下的最终复核，也不能说明真实事务已恢复。
+
+S-speed9 以相同合成规模在最新修改下测得点击到完成显示 546ms；六项均 accepted、事务为空，host/observer/外层 exit 0，Default 输入桌面和前中后 HWND 132560 不变，GUI 在私有桌面且桌面关闭。截图 ui-7fa71f8142064cf981129ed6e7b8dc43.png 已查看。该结果不代表真实论文事务已恢复或网络翻译耗时。
+
+保存失败补充保护：隔离宿主注入实际保存后返回 false，验证正文可能已写而事务仍保留；界面显示恢复提示，禁止当前及其他卡再次接收，保留选择供核对。S-savefail3-test 49 项及 S-savefail3-ui、S-savefail3-verify exit 0，前中后 HWND 132560 不变，截图 ui-467d7bcc5f554b39b55a727caafa4d96.png 已查看。S-savefail 首次外层因空桌面枚举夹具判定 exit 1；S-savefail2-test 首次实现过宽禁用其他卡而有一项失败，收窄事务标志后通过；两者原日志保留。此人工注入无法确定真实保存失败原因。另一次只读验证脚本路径猜错和一次 PowerShell 引号错误均 exit 1，随后只读状态成功，无文件被删除。

@@ -15,7 +15,7 @@ test('question entries use open note counts from their respective data contracts
 test('question card controls reflect coordination and their own target state', () => {
     const fs=require('node:fs'),vm=require('node:vm');
     const source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
-    const context={current:{id:'1',version:'v1'},data:{source_match:false},waiting:false,coordinating:false,unavailable:true,conflict:true};
+    const context={current:{id:'1',version:'v1'},data:{source_match:false},waiting:false,coordinating:false,unavailable:true,conflict:true,transactionBlocked:false};
     const disabled=vm.runInNewContext('('+source.slice(source.indexOf('function cardButtonDisabled('),source.indexOf('\nfunction buttons()',source.indexOf('function cardButtonDisabled(')))+')',context);
     const button=(id,intent,mismatch=false)=>({dataset:{target:id,targetVersion:'v1',intent,targetMismatch:String(mismatch)}});
     assert(disabled(button('1','accept')));assert(disabled(button('1','preview')));
@@ -26,6 +26,7 @@ test('question card controls reflect coordination and their own target state', (
     context.coordinating=true;assert(disabled(button('2','accept')));assert(!disabled(button('2','preview')));assert(!disabled(button('2','editToggle')));assert(!disabled(button('2','optionNote')));
     context.waiting=true;for(const intent of ['accept','preview','editToggle','optionNote']) assert(disabled(button('2',intent)));
     context.waiting=false;context.coordinating=false;assert(!disabled(button('2','accept')));
+    context.transactionBlocked=true;assert(disabled(button('2','accept')));assert(!disabled(button('2','preview')));
 });
 
 test('question card actions route only to the exact linked item, version and session', async () => {
@@ -1227,6 +1228,17 @@ test('saved batch with a failed refresh clears the selection and warns against r
     await receive({type:'acceptBatch',instance:'page',id:'1',version:'v1',session:'s',items:[{id:'1',version:'v1',option:'A'}]});
     assert(messages.some(m=>m.type==='batchAccepted'));
     assert.match(messages.findLast(m=>m.type==='unavailable').message,/接收已保存.*勿重复接收/);
+});
+
+test('interrupted host transaction blocks further batch actions until status is reloaded', async () => {
+    let receive; const messages=[], c={repo:'/batch',owner:'state',id:'1',version:'v1'};
+    const data={id:'1',version:'v1',original:'Old',source_match:true,edit:{file:'m',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'New'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+    const services={session:()=> 's',read:async()=>data,style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',version:'v1',...data.edit}],acceptBatch:async()=>{throw Error('审核宿主事务失败；请核对待恢复意图');}};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    await receive({type:'acceptBatch',instance:'page',id:'1',version:'v1',session:'s',items:[{id:'1',version:'v1',option:'A'}]});
+    assert.match(messages.findLast(m=>m.type==='unavailable').message,/审核宿主事务失败/);
+    assert(!messages.some(m=>m.type==='batchAccepted'));
 });
 
 test('translation selection resolves the exact candidate cache key and rejects stale provider', async () => {

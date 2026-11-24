@@ -1111,7 +1111,7 @@ function createWorkbench(vscode, context, services) {
                 const accepted = await services.acceptBatch(items.map(i => ({...c, ...i, repo: c.repo, owner: c.owner})), session);
                 if (batchScope === selectionScope(c, session)) batchItems = batchItems.filter(selected => !items.some(item => item.id === selected.id && item.version === selected.version && item.option === selected.option));
                 if (panel === operationPanel) post({type:'batchAccepted', items, session, repo:c.repo, owner:c.owner});
-                if (accepted?.refresh_error) return post({type:'unavailable', message:'接收已保存，但刷新审核页失败；请重新读取状态，勿重复接收：' + accepted.refresh_error});
+                if (accepted?.refresh_error) return post({type:'unavailable', transaction:true, message:'接收已保存，但刷新审核页失败；请重新读取状态，勿重复接收：' + accepted.refresh_error});
                 if (request !== showRequest) return;
                 try {
                 const remaining = directory();
@@ -1131,7 +1131,7 @@ function createWorkbench(vscode, context, services) {
                 }
                 if (next) await show(lastRecords.get(next.id).c, undefined, true);
                 else post({type:'unavailable', message:`接收已保存；当前筛选范围没有下一可审核项。暂缓 ${remaining.filter(i => i.postponed).length} 项，定位冲突 ${remaining.filter(i => i.source_match === false).length} 项；可在目录调整筛选或恢复暂缓项。其他批注与科学问题状态独立保留。`});
-                } catch (error) {return post({type:'unavailable', message:'接收已保存，但无法进入下一项；请重新读取状态，勿重复接收：' + error.message});}
+                } catch (error) {return post({type:'unavailable', transaction:true, message:'接收已保存，但无法进入下一项；请重新读取状态，勿重复接收：' + error.message});}
             } else if (message.type === 'accept' || message.type === 'reject') {
                 if (dirty || noteDirty) throw new Error('请先保存候选和返修要求，再接收或拒绝。');
                 if (message.type === 'accept' && !options(loaded).some(o => o.label === message.option)) throw new Error('请选择具体接收方案。');
@@ -1153,7 +1153,8 @@ function createWorkbench(vscode, context, services) {
             else throw new Error('不支持的审核操作。');
             post({type: 'result', message: ''});
         } catch (error) {
-            if (panel === operationPanel) post({type: message.type === 'manageFeedback' ? 'feedbackManaged' : 'result', error: true, message: error.message});
+            const interrupted = message.type === 'acceptBatch' && error.message.includes('审核宿主事务失败');
+            if (panel === operationPanel) post({type: interrupted ? 'unavailable' : message.type === 'manageFeedback' ? 'feedbackManaged' : 'result', transaction:interrupted, error: true, message: error.message});
             else vscode.window.showErrorMessage(error.message);
         }
         finally {

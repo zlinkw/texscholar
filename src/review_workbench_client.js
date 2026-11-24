@@ -2,7 +2,7 @@
 'use strict';
 const api = acquireVsCodeApi(), $ = id => document.getElementById(id);
 const feedbackNode = $('status');
-let current, data, options = [], preview = 'A', selected, waiting = false, coordinating = false, unavailable = false, conflict = false, focused, chinese = true;
+let current, data, options = [], preview = 'A', selected, waiting = false, coordinating = false, unavailable = false, conflict = false, transactionBlocked = false, focused, chinese = true;
 let currentSession, pendingCardAction, consumedCardAction;
 let reviewMode = 'paragraph', selectedQuestion = '';
 let editingNote, appearance, appearanceRequest, directoryItems = [], pendingSelection, selectionStale = false;
@@ -224,7 +224,7 @@ function draftWarning() {
 function cardButtonDisabled(button) {
     const targetCurrent = current && button.dataset.target === current.id && button.dataset.targetVersion === current.version;
     const mismatch = button.dataset.targetMismatch === 'true' || targetCurrent && data?.source_match === false;
-    return !!waiting || button.dataset.intent === 'accept' && (coordinating || mismatch || button.dataset.postponed==='true' || targetCurrent && (unavailable || conflict)) ||
+    return !!waiting || button.dataset.intent === 'accept' && (coordinating || transactionBlocked || mismatch || button.dataset.postponed==='true' || targetCurrent && (unavailable || conflict)) ||
         button.dataset.intent === 'preview' && mismatch;
 }
 function buttons() {
@@ -1303,7 +1303,7 @@ window.addEventListener('message', ({data: message}) => {
         conflict = true;
         if (!$('latest')) {const b = document.createElement('button'); b.id = 'latest'; b.dataset.action = 'latest'; b.textContent = '载入最新（需确认放弃草稿）'; $('pageFeedback').appendChild(b);}
     }
-    if (message.type === 'unavailable') {unavailable = true; $('empty').hidden = false; $('review').hidden = true;}
+    if (message.type === 'unavailable') {unavailable = true; transactionBlocked = !!message.transaction; $('empty').hidden = false; $('review').hidden = true;}
     if (message.type === 'stashes') {
         stashes = message.stashes || [];
         const priorStash = $('stashChoice').value;
@@ -1347,7 +1347,7 @@ window.addEventListener('message', ({data: message}) => {
         $('originalZh').hidden = !chinese;
         $('mathMode').textContent = sourceMode ? '公式预览' : 'LaTeX 源码';
         $('mathMode').setAttribute('aria-pressed', String(sourceMode));
-        preview = message.preview; unavailable = conflict = false; $('latest')?.remove();
+        preview = message.preview; unavailable = conflict = transactionBlocked = false; $('latest')?.remove();
         style(message.style); $('empty').hidden = true; $('review').hidden = false;
         $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (data.edit.location || data.edit.file) + ' · 候选 v' + (data.edit.generation ?? data.edit.versions.length);
         pdfStatus(message.pdfStatus);
