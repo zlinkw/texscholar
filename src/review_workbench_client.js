@@ -1215,7 +1215,19 @@ window.addEventListener('message', ({data: message}) => {
     }
     if (message.type === 'cardActionGrant') {executeCardAction(message.action); return;}
     if (message.type === 'relatedReturn') {showRelatedReturn(message.id); return;}
-    if (message.type === 'questionRows') {const before=selectedQuestion; renderQuestionTable(message.questions); if (reviewMode==='question' && selectedQuestion!==before) send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false); return;}
+    if (message.type === 'questionRows') {
+        const before=selectedQuestion, composer=$('noteComposer'), rect=composer.getBoundingClientRect();
+        const preserveComposer=reviewMode==='question' && !composer.hidden && rect.bottom>0 && rect.top<innerHeight;
+        const card=reviewMode==='question' && [...$('questionModeCards').querySelectorAll('article[data-question-target]')].find(node=>node.getBoundingClientRect().bottom>document.querySelector('header').getBoundingClientRect().bottom);
+        const cardKey=card && [card.dataset.questionTarget,card.dataset.questionVersion], top=preserveComposer ? rect.top : card?.getBoundingClientRect().top;
+        renderQuestionTable(message.questions);
+        if (reviewMode==='question' && selectedQuestion===before && top!==undefined) {
+            const target=preserveComposer ? composer : [...$('questionModeCards').querySelectorAll('article[data-question-target]')].find(node=>node.dataset.questionTarget===cardKey[0] && node.dataset.questionVersion===cardKey[1]);
+            if (target?.isConnected) window.scrollBy(0,target.getBoundingClientRect().top-top);
+        }
+        if (reviewMode==='question' && selectedQuestion!==before) send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);
+        return;
+    }
     if (message.type === 'focusQuestion') {
         if (reviewMode!=='question' || message.session!==currentSession) return;
         const row=message.questionKey==='__unbound__' ? null : questionRows.find(item=>item.key===message.questionKey);

@@ -109,3 +109,7 @@ U1 附件：根据用户要求只输出所选范围的批注正文、状态、�
 - U-directory-tests4 exit 0（93 项）；私有 Development U-directory-ui-run5 exit 0，实际切换问题、同名不同文件问题、跨文件卡及刷新，未保存批注及 [0,9) 原目标版本不变，前台/Default 不变；截图 ui-fa5958b783c34c25ab482008d16677ac.png 已看。
 - U-directory-ui-run、run2 exit 1 为 UI 夹具使用无效无障碍名称，run2 实见问题分组；改用树实际文本后 run3/4/5 exit 0。U-directory-tests2 exit 1 为夹具缺少第二文件源码，补充后 tests3/4 exit 0。原日志保留。
 - 最终身份复核提示加入后，U-directory-tests5 及 U-directory-ui-run6 均 exit 0；截图 ui-f63d990bacb043a0b235cbe16d09bf9a.png 已看。
+
+- U-handoff-ui-run 与 U-handoff-mcp 均 exit 0：隔离真实后端导出选中批注，按附件参数实调 MCP 窄读、原文及资料按需取回；截图 ui-e48aa7b6e8864eb1a2328a6ecac0919d.png 已看。
+- U-host-ui-run4 暴露关联卡移除后刷新保持绝对滚动值但批注位置漂移；同步刷新时保留可见批注或卡片的相对位置。run5 因子像素差 0.0625 严格相等失败，run6 按小于一像素验证 exit 0；内容、身份、版本及选区不变，单项/跨文件接收后目录已刷新。截图 ui-645291a85dbf44ff815a9c4ab0978c19.png 已看，原日志均保留。
+- 总控按新授权已普通推送真实仓库既有格式化提交 323f78c，远端已核相同；未触真实暂存或正文。后台重试及旧提示状态未核。
