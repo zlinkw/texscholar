@@ -1,5 +1,7 @@
 # TeXScholar 实施索引
 
+当前计划：[评论列表定位失败](question-mode-parity/plan.md#t阶段评论列表定位失败)。用户报告0.9.64评论目录Cannot resolve tree item；沿原两角色流程复现刷新/节点生命周期问题并修复，禁止把此TreeView错误当成正文锚丢失。真实论文和批注受保护，不自动重载或重启。
+
 最新完成计划：[问题模式延迟与接收收尾](question-mode-parity/plan.md#s阶段问题模式延迟事务收尾与接收后导航)。S返修1完成：[0.9.64正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.64)并同包安装，总控已核远端附注tag/构建目标、Release三附件摘要及本机manifest/登记。同源定位/片段复用、6项隔离批接546ms、可见内容编号合并翻译、接收后导航与失败防重复已交付，AI解释展示已移除。真稿原事务经真实宿主恢复，正文/其他状态/Git保持；Bing仅合成3段实际服务兼容通过，其他服务及网络速度不作承诺。未自动重载/重启、包后冒烟或删除；需重载目标VSCode窗口启用新版。
 
 最新完成计划：[问题审核与段落审核能力对照及优化](question-mode-parity/plan.md)。跨卡划词/精确批注、草稿保存目标、取舍与事实依据、明确深审入口、暂缓/冲突/草稿接收限制及窄窗布局已修，M返修1最终通过；有效M92/46、MR1 46和真实隔离UI/总控刷新组合复用。[0.9.63正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.63)并同包安装，总控实核远端附注tag/构建目标、Release三附件API摘要及本机manifest/登记。真实论文/P/旧批注未触，实网翻译质量未测；未自动重载用户窗口/MCP，无包后冒烟。重载目标VSCode窗口后启用。

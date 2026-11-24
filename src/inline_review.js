@@ -323,7 +323,7 @@ function createInlineReview(vscode, context, execute = run) {
     }
     const listEvents = new vscode.EventEmitter();
     let fileRows = [];
-    let listSelection = Promise.resolve(), pendingListSelection;
+    let listSelection = Promise.resolve(), pendingListSelection, listRevealActive = false, listUpdatePending = false, listActiveSession;
     const listProvider = {
         onDidChangeTreeData: listEvents.event,
         getTreeItem: item => item,
@@ -333,26 +333,35 @@ function createInlineReview(vscode, context, execute = run) {
     const reviewList = vscode.window.createTreeView('texscholar.reviewList', {treeDataProvider: listProvider, showCollapseAll: true});
     context.subscriptions.push(listEvents, reviewList);
     function updateList() {
+        if (listRevealActive) {listUpdatePending = true; return;}
+        const previousFiles = new Map(fileRows.map(row => [row.id, row]));
+        const previousItems = new Map(fileRows.flatMap(row => row.children).map(row => [row.id, row]));
+        const previousNotes = new Map(fileRows.flatMap(row => row.children).flatMap(row => row.children).map(row => [row.id, row]));
         const files = new Map();
         for (const record of orderedRecords()) {
             const {c, data} = record, file = data.edit.file;
             if (!files.has(file)) {
-                const group = new vscode.TreeItem(file, vscode.TreeItemCollapsibleState.Expanded);
-                group.id = JSON.stringify([c.repo, c.owner, batch, 'file', file]);
+                const groupId = JSON.stringify([c.repo, c.owner, batch, 'file', file]);
+                const group = previousFiles.get(groupId) || new vscode.TreeItem(file, vscode.TreeItemCollapsibleState.Expanded);
+                group.id = groupId;
                 group.children = []; files.set(file, group);
             }
             const notes = (data.edit.requests || []).filter(n => n.status === 'open');
-            const item = new vscode.TreeItem(`${c.id} · ${locationTitle(data.edit) || file}`,
-                notes.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
-            item.id = JSON.stringify([c.repo, c.owner, batch, c.id]);
+            const itemId = JSON.stringify([c.repo, c.owner, batch, c.id]), label = `${c.id} · ${locationTitle(data.edit) || file}`;
+            const collapse = notes.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None;
+            const old = previousItems.get(itemId);
+            const item = old?.parent === files.get(file) ? old : new vscode.TreeItem(label, collapse);
+            item.id = itemId; item.label = label; item.collapsibleState = collapse;
             const state = notes.length || data.edit.status === 'rework' ? '返修' : '待审';
             item.description = (record.displayConflict ? '原文位置待核对' : state) + (notes.length ? ` · ${notes.length} 条批注` : '');
             item.tooltip = `${c.id} · ${file} · 候选 v${data.edit.generation ?? data.edit.versions.length}`;
             item.command = {command: 'localLatex.reviewWorkbench', title: '打开论文审核页', arguments: [c]};
             item.parent = files.get(file);
             item.children = notes.map((note, index) => {
-                const child = new vscode.TreeItem(note.text.replace(/\s+/g, ' '), vscode.TreeItemCollapsibleState.None);
-                child.id = JSON.stringify([c.repo, c.owner, batch, c.id, 'note', note.id]);
+                const childId = JSON.stringify([c.repo, c.owner, batch, c.id, 'note', note.id]), label = note.text.replace(/\s+/g, ' ');
+                const old = previousNotes.get(childId);
+                const child = old?.parent === item ? old : new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+                child.id = childId; child.label = label;
                 const ctx = note.display_context;
                 child.description = (ctx?.question ? ctx.question.id : note.option ? '方案 ' + note.option : '整项')
                     + (ctx?.kind === 'translation' ? '译文' : ctx?.kind === 'question' ? '审稿问题' : '');
@@ -365,18 +374,24 @@ function createInlineReview(vscode, context, execute = run) {
         fileRows = [...files.values()];
         reviewList.message = records.size ? `${records.size} 项待审 · 点击编号在同一审核页切换` : '暂无待审候选；请先让 AI 按插件规则生成。';
         listEvents.fire();
-        if (workbench.active) selectReviewItem(workbench.active).catch(error => vscode.window.showErrorMessage('论文评论定位失败：' + error.message));
+        if (workbench.active && listActiveSession === batch) selectReviewItem(workbench.active, false).catch(error => vscode.window.showErrorMessage('论文评论定位失败：' + error.message));
     }
-    function selectReviewItem(c) {
-        pendingListSelection = c;
+    function selectReviewItem(c, activeChange = true) {
+        if (activeChange) listActiveSession = batch;
+        pendingListSelection = {c, session:batch};
         const revealLatest = async () => {
-            const target = pendingListSelection; pendingListSelection = undefined;
-            if (!target) return;
+            const selected = pendingListSelection; pendingListSelection = undefined;
+            if (!selected || selected.session !== batch) return;
+            const target = selected.c;
             const item = fileRows.flatMap(group => group.children).find(row => {
                 const c = row.command.arguments[0];
                 return c.repo === target.repo && c.owner === target.owner && c.id === target.id;
             });
-            if (item && reviewList.selection[0] !== item) await reviewList.reveal(item, {select: true, focus: false});
+            if (item && reviewList.selection[0] !== item) {
+                listRevealActive = true;
+                try {await reviewList.reveal(item, {select: true, focus: false});}
+                finally {listRevealActive = false; if (listUpdatePending) {listUpdatePending = false; updateList();}}
+            }
         };
         // Serialize reveals and coalesce queued events. A later request can also
         // recover from a reported reveal failure without leaving the queue stuck.

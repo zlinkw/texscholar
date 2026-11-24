@@ -34,7 +34,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     fs.writeFileSync(file, value, 'utf8');
     if (state) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n% CODEX-REVIEW-STATE-END', 'utf8');
     const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [], reveals = [];
-    let receive, panels = 0, provider, fileChanged, texChanged, saveHandler, configurationChanged, selectionHandler, sourceValue, cardsHook, cardsTransform, pdfHook, migrationHook, manualHook, syncHook, saveSourceHook, batchHook;
+    let receive, panels = 0, provider, fileChanged, texChanged, saveHandler, configurationChanged, selectionHandler, sourceValue, cardsHook, cardsTransform, pdfHook, migrationHook, manualHook, syncHook, saveSourceHook, batchHook, revealHook;
     const original = value, edit = {file: path.basename(file), kind: 'manuscript', deferred: true, status: 'pending', versions: ['v1'], requests: [], questions: []};
     const start = Array.from(original.slice(0, original.indexOf('First'))).length;
     const data = {version: 'v1', edit, original: 'First sentence.', candidate: 'Better sentence.', options: [
@@ -58,7 +58,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         TextEditorRevealType: {InCenterIfOutsideViewport: 1}, ProgressLocation: {Notification: 15},
         window: {activeTextEditor: editor, visibleTextEditors: [editor], tabGroups: {all: [pdfGroup], activeTabGroup: pdfGroup},
             createTreeView(id, options) {provider = options.treeDataProvider; trees.push(id); return {dispose() {}, message: '', selection: [],
-                async reveal(item, options) {assert(provider.getParent(item)); reveals.push({item, options}); this.selection = [item];}};},
+                async reveal(item, options) {if(revealHook) await revealHook(item,provider); assert(provider.getParent(item)); reveals.push({item, options}); this.selection = [item];}};},
             createWebviewPanel() {panels++; return {visible: true, onDidChangeViewState: disposable, webview: {html: '', cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}), postMessage: m => packets.push(m), onDidReceiveMessage: f => {receive = f;}}, reveal() {}, onDidDispose() {}, dispose() {}};},
             createTextEditorDecorationType: disposable, registerUriHandler: disposable, onDidChangeActiveTextEditor: disposable,
             onDidChangeTextEditorSelection: f => {selectionHandler = f; return disposable();},
@@ -120,7 +120,7 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
     };
     const ui = createInlineReview(vscode, {subscriptions: []}, backend);
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
-        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set cardsTransform(fn) {cardsTransform = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;}, set syncHook(fn) {syncHook = fn;}, set saveSourceHook(fn) {saveSourceHook = fn;}, set batchHook(fn) {batchHook = fn;},
+        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set cardsTransform(fn) {cardsTransform = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;}, set syncHook(fn) {syncHook = fn;}, set saveSourceHook(fn) {saveSourceHook = fn;}, set batchHook(fn) {batchHook = fn;}, set revealHook(fn) {revealHook = fn;},
         rows: () => provider.getChildren(), receive: m => receive(m),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
         changed: () => fileChanged(uri(owner)), saved: () => saveHandler(document), savedDocument: doc => saveHandler(doc), texChanged: () => texChanged(uri(file)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
@@ -499,6 +499,59 @@ test('accept shortcut binds the visible card instead of an unrelated editor curs
     assert.equal(call.args[call.args.indexOf('--version')+1],'v1');
 });
 
+test('a reveal in progress resolves against the live tree after a refresh', async () => {
+    const f=hostFixture();await f.ui.ready;await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    let release, started;const begun=new Promise(resolve=>{started=resolve;});
+    f.revealHook=async (item,provider)=>{
+        started();await new Promise(resolve=>{release=resolve;});
+        const parent=provider.getParent(item), liveParent=provider.getChildren().find(row=>row.id===parent.id);
+        if (!liveParent || !provider.getChildren(liveParent).some(row=>row.id===item.id)) throw Error('Cannot resolve tree item for element '+item.id);
+    };
+    const row=f.rows()[0].children[0], opening=f.ui.workbench.show(row.command.arguments[0]);await begun;
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    release();await opening;
+    assert.equal(f.reveals.at(-1).item,f.rows()[0].children[0]);
+    assert(!f.notices.some(message=>message.includes('Cannot resolve tree item')));
+});
+
+test('removed items and a new session are not selected by an old queued reveal', async () => {
+    for (const change of ['remove','session']) {
+        const f=hostFixture();await f.ui.ready;await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+        let release, started, calls=0;const begun=new Promise(resolve=>{started=resolve;});
+        f.revealHook=async (item,provider)=>{
+            if (++calls===1) {started();await new Promise(resolve=>{release=resolve;});}
+            const parent=provider.getParent(item), liveParent=provider.getChildren().find(row=>row.id===parent.id);
+            if (!liveParent || !provider.getChildren(liveParent).some(row=>row.id===item.id)) throw Error('Cannot resolve tree item');
+        };
+        const row=f.rows()[0].children[0], opening=f.ui.workbench.show(row.command.arguments[0]);await begun;
+        if (change==='remove') f.edit.status='accepted';
+        else f.cardsTransform=packet=>({...packet,session:'new-session'});
+        await f.ui.refresh({repo:f.root,owner:'reply.tex'});release();await opening;
+        await new Promise(resolve=>setImmediate(resolve));
+        assert.equal(calls,1,change+' must not reveal an old-session or removed row');
+        if (change==='remove') assert.equal(f.rows().length,0);
+        else assert.notEqual(f.rows()[0].children[0],row);
+        assert(!f.notices.some(message=>message.includes('Cannot resolve tree item')));
+    }
+});
+
+test('rapid item switches select the latest live row after an in-flight reveal', async () => {
+    const f=hostFixture();await f.ui.ready;f.allCards['2']=structuredClone(f.data);
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    let release, started, calls=0;const begun=new Promise(resolve=>{started=resolve;});
+    f.revealHook=async (item,provider)=>{
+        if (++calls===1) {started();await new Promise(resolve=>{release=resolve;});}
+        const parent=provider.getParent(item), liveParent=provider.getChildren().find(row=>row.id===parent.id);
+        if (!liveParent || !provider.getChildren(liveParent).some(row=>row.id===item.id)) throw Error('Cannot resolve tree item');
+    };
+    const [one,two]=f.rows()[0].children;
+    const first=f.ui.workbench.show(one.command.arguments[0]);await begun;
+    const latest=f.ui.workbench.show(two.command.arguments[0]);
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});release();await Promise.all([first,latest]);
+    assert.equal(f.ui.workbench.active.id,'2');assert.equal(f.reveals.at(-1).item.command.arguments[0].id,'2');
+    assert.equal(f.reveals.at(-1).item,f.rows()[0].children[1]);
+});
+
 test('same-line items have separate IDs and event-driven versions switch one page without source navigation', async () => {
     const f = hostFixture(); await f.ui.ready;
     const second = structuredClone(f.data);
@@ -527,6 +580,10 @@ test('same-line items have separate IDs and event-driven versions switch one pag
     assert.equal(noted.children.length, 1);
     assert.match(noted.children[0].label, /保留数值，缩小修改范围/);
     assert.match(noted.children[0].tooltip, /方案 B/);
+    const group=f.rows()[0], note=noted.children[0];
+    await f.changed();
+    assert.equal(f.rows()[0],group);assert.equal(f.rows()[0].children.find(row=>row.command.arguments[0].id==='2'),noted);
+    assert.equal(noted.children[0],note);assert.equal(note.parent,noted);
     await f.handlers.get(noted.children[0].command.command)(noted.children[0].command.arguments[0]);
     assert.equal(f.reveals.at(-1).item, noted);
     second.version = 'v2'; second.edit.versions.push('v2');

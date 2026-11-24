@@ -96,3 +96,15 @@ S4现交原Terra做必要版本/发行检查，实际预核下一版0.9.64无冲
 S全阶段完成，返修1。0.9.64已正式发布并同包安装，唯一构建输入ba62764f843c0fef91343c0a09ade8bb5ac20488；总控实核远端附注tag对象100e0cee71dfd9c20e679c2c8778bd162b833188及目标一致。controller-release-meta.py实际读取Release API，确认非draft/非prerelease、三附件digest与本地包逐项一致：VSIX db12dc9566f971b1a856b26a2f1edfb52ab71aed5ec1891846db1940ea1c0122，source.zip b5950b4527993d2869cb7cb62ae47a8897f3584bc6e85ce19dd904594aa4bd52，SHA256SUMS 3cc583bc27d6e56f4cd03bfd55b5d52286631b8c6e10cfbd3ed5fb18193e8681；本机manifest/登记为local-research.latex-writing-tools 0.9.64、source=vsix/pinned=true，脚本exit0。原API与process/result在D:/latex-writing-checks/question-mode-latency-20261124/controller-release*。
 
 本轮交付包含同源扫描复用、六项批接提速、可见文本编号合批翻译、接收后下一可审核问题导航、失败防重复及AI说明精简；真实原事务已按上文保护完成收尾。六项546ms仅为已核隔离规模，实际网络耗时、其他供应商编号兼容及原保存false原因仍按上述限制披露。全部首败保留，无重复构建、包后冒烟、自动重载/重启或删除；安装不证明活动窗口加载，需用户重载目标VSCode窗口启用。Terra冻结交回全部租约，无在途；发行执行尾与本次plan/index结案集中提交。
+
+## T阶段：评论列表定位失败
+
+2026-11-24用户报告“论文评论定位失败：Cannot resolve tree item for element 1/[真实root,.codex-review/state.json,e74dbc117a5f4cf4991bfb17187ca9c9,eq] from extension local-research.latex-writing-tools”。当前master==origin/master==4b9dc9cd596277a0c58c6a769187d77141bd89d5、clean，正式安装0.9.64。此错误来自VSCode评论目录TreeView.reveal，不能当成论文正文锚丢失或批注损坏，现场具体触发仍须复现。沿用原总控及唯一Terra，T返修0，目标是消除刷新/切项时可达的节点解析失败并保留准确列表选中和审核页路由，按既有授权验证后发布安装。
+
+静态入口：inline_review.js updateList每次重建TreeItem/parent对象后fire全树，再异步selectReviewItem；现有串行队列合并目标但未固定节点生命周期。需分别用真实调用反馈区分刷新导致旧对象失效、进行中reveal与树重建交叠、当前项已移除/换session、父节点尚未注册等原因。禁止仅吞reveal错误、延时猜等待、无限重试或关闭目录跟随；优先复用稳定身份和现有刷新边界。真实存在的错误与未知保留，不新增无关框架/配置/依赖或性能测试。
+
+- [ ] T1 原Terra在现有inline host夹具及正常隔离Development复现原错误，定位负责边界，最小修复；已有队列/选择/评论子节点与父节点、同卡刷新、快速切项、项移除及session变化按受影响调用链验证，真实不存在的项不得选错对象。保留审核页草稿、选区/版本、作者批注及既有决定语义。完整日志与首败保留，UI使用独立profile/专属pipe和CreateDesktopW私有未切桌面，不在Default，不抢焦；无真稿、默认pipe/MCP、用户窗口、删除或重载动作。原定位/翻译/批接功能按未变输入复用，不重跑全部功能组。
+- [ ] T2 整包冻结交回后，总控审真实diff/复现及必要受影响链，只补未覆盖且能影响交付的组合；完整返修交原Terra。总控不实现自签、不重复同清单。
+- [ ] T3 最终通过后另派原Terra必要版本/发行检查、唯一构建、正式Release/附注tag及同VSIX安装；预核下一版0.9.65实际无冲突才用。总控核必要元数据，execution尾与plan/index集中收尾。仍不自动重载/重启，不包后冒烟或删除。
+
+本增量与索引先由总控写入但不独立提交，交原Terra随首个验证通过功能批纳入。授权产品/测试/UI/隔离配置/Git租约给原Terra，实施期间总控不并行写计划或测试；无在途才交回。普通精确stage/commit/push origin master/fetch，远端前移或权限拒绝停相关动作，不改历史/remote。真实论文及所有批注/候选/稿件/模板/范围外stage保持，旧原事务恢复事实不重放。
