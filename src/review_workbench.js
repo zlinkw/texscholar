@@ -116,6 +116,7 @@ function createWorkbench(vscode, context, services) {
     let questionVisible = new Set(), questionView = '';
     let lastRecords = new Map(), sourceSelection;
     let reviewMode = context.globalState?.get('reviewMode', 'paragraph') || 'paragraph', paragraphVisible = new Set();
+    let questionPosition = '';
     let ready = false, client, uiState, notice, reading, handoffRetry, restoredDraft;
     let batchScope, batchItems = [];
     const selectionScope = (c, session) => JSON.stringify([c.repo, c.owner, session]);
@@ -788,6 +789,7 @@ function createWorkbench(vscode, context, services) {
             if (!['paragraph','question'].includes(message.mode) || !['snippets','full'].includes(message.viewStyle) || typeof message.questionKey !== 'string') return;
             if (message.repo !== active.repo || message.owner !== active.owner || message.id !== active.id || message.version !== active.version) return;
             if (reviewMode!==message.mode) {reviewMode=message.mode; translationEpoch++;paragraphVisible.clear();}
+            questionPosition = message.questionKey;
             try {
                 await context.globalState?.update('reviewMode', message.mode);
                 await context.globalState?.update('reviewQuestionViewStyle', message.viewStyle);
@@ -797,6 +799,7 @@ function createWorkbench(vscode, context, services) {
                     await context.workspaceState.update('reviewQuestionPosition', positions);
                 }
                 if (reviewMode==='paragraph') autoTranslate();
+                services.modeChanged?.();
             } catch (error) {post({type:'result', error:true, message:'审核模式未保存：' + error.message});}
             return;
         }
@@ -1217,6 +1220,17 @@ function createWorkbench(vscode, context, services) {
     }
     context.subscriptions.push({dispose() {panel?.dispose();}});
     return {show, sync, observeSession, setRecords(records) {lastRecords = records; trimTranslations();},
+        focusQuestion(target) {
+            if (!active || reviewMode !== 'question' || target.repo !== active.repo || target.owner !== active.owner || target.session !== services.session(active))
+                throw new Error('审核模式或批次已变化，请重新选择问题。');
+            const rows = questionTable(active);
+            const entries = target.questionKey === '__unbound__' ? directory().filter(item => !rows.some(row => row.entries.some(entry => entry.id === item.id))) :
+                rows.find(row => row.key === target.questionKey)?.entries.filter(entry => entry.card);
+            if (!entries?.length || target.id && !entries.some(entry => entry.id === target.id && entry.version === target.version))
+                throw new Error('问题或审核项已变化，请重新选择。');
+            panel.reveal();
+            post({type:'focusQuestion', session:target.session, questionKey:target.questionKey, target:target.id, version:target.version});
+        },
         coordinating(scope, busy) {
             if (busy) coordinatingScope = scope;
             else if (coordinatingScope === scope) coordinatingScope = undefined;
@@ -1238,6 +1252,6 @@ function createWorkbench(vscode, context, services) {
         backupStatus(value) {post({type: 'backupStatus', ...value});},
         updateStyle() {if (active) post({type: 'style', style: services.style()});},
         settingsChanged() {if (active) {translationEpoch++; questionVisible.clear(); post({type:'questionTranslationReset'}); autoTranslate();}},
-        get active() {return active;}, whenTranslationIdle: () => Promise.all([translationRun, questionTranslationRun])};
+        get active() {return active;}, get mode() {return reviewMode;}, get questionPosition() {return questionPosition;}, whenTranslationIdle: () => Promise.all([translationRun, questionTranslationRun])};
 }
 module.exports = {createWorkbench, html, filterItems, staleBatchSelections};

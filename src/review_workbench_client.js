@@ -546,6 +546,7 @@ function renderQuestionMode() {
         const column=document.createElement('section'), heading=document.createElement('h4'); heading.textContent=label; column.appendChild(heading);
         for (const entry of entries.filter(e=>e.kind===kind)) {
             const card=document.createElement('article'), title=document.createElement('h4');
+            card.dataset.questionTarget=entry.id; card.dataset.questionVersion=entry.version;
             const activeDraft=questionEntryDraft(entry);
             title.textContent=entry.id + ' · ' + entry.file + (entry.version ? ' · 版本 ' + entry.version.slice(0,8) : '') + (entry.location ? ' · ' + (entry.location.heading || '') : '') + (entry.conflict ? ' · 定位冲突' : '') + (entry.card?.postponed ? ' · 暂缓' : '') + (entry.status==='rework' ? ' · 返修' : '') + (activeDraft ? ' · 未保存草稿，变化标记待保存后重算' : '') + (entry.openRequests ? ' · 有待处理批注' : '') + (!entry.card ? ' · 已处理或历史不可用' : '');
             if (entry.version) title.title='完整版本：'+entry.version;
@@ -1214,7 +1215,20 @@ window.addEventListener('message', ({data: message}) => {
     }
     if (message.type === 'cardActionGrant') {executeCardAction(message.action); return;}
     if (message.type === 'relatedReturn') {showRelatedReturn(message.id); return;}
-    if (message.type === 'questionRows') {renderQuestionTable(message.questions); return;}
+    if (message.type === 'questionRows') {const before=selectedQuestion; renderQuestionTable(message.questions); if (reviewMode==='question' && selectedQuestion!==before) send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false); return;}
+    if (message.type === 'focusQuestion') {
+        if (reviewMode!=='question' || message.session!==currentSession) return;
+        const row=message.questionKey==='__unbound__' ? null : questionRows.find(item=>item.key===message.questionKey);
+        const entries=message.questionKey==='__unbound__' ? directoryItems.filter(item=>!questionRows.some(group=>group.entries.some(entry=>entry.id===item.id))) : row?.entries.filter(entry=>entry.card);
+        if (!entries?.length || message.target && !entries.some(entry=>entry.id===message.target && entry.version===message.version)) {status('问题或审核项已变化，请重新选择。',true);return;}
+        selectedQuestion=message.questionKey;
+        if (message.target) $('questionType').value='';
+        renderQuestionMode();
+        const card=[...$('questionModeCards').querySelectorAll('article[data-question-target]')].find(node=>node.dataset.questionTarget===message.target && node.dataset.questionVersion===message.version);
+        (card || $('questionModeChoice')).scrollIntoView({block:'start'});
+        send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);
+        return;
+    }
     if (message.type === 'handoffRetry') {$('retryHandoff').hidden = !message.available; return;}
     if (message.type === 'busy') {waiting = message.action; buttons(); activateCardAction(); return;}
     if (message.type === 'coordinating') {coordinating = message.busy; buttons(); return;}
@@ -1411,7 +1425,7 @@ window.addEventListener('message', ({data: message}) => {
         highlightSelection();
         dirty();
     }
-    if (message.type === 'content') {waiting = message.busy; coordinating = message.coordinating; reviewMode=message.mode || 'paragraph'; $('questionViewStyle').value=message.questionViewStyle || 'snippets'; selectedQuestion=message.questionPosition || selectedQuestion; pendingCardAction=message.pendingCardAction; renderQuestionMode();}
+    if (message.type === 'content') {waiting = message.busy; coordinating = message.coordinating; reviewMode=message.mode || 'paragraph'; $('questionViewStyle').value=message.questionViewStyle || 'snippets'; selectedQuestion=message.questionPosition || selectedQuestion; pendingCardAction=message.pendingCardAction; renderQuestionMode(); if (reviewMode==='question') send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);}
     if (message.message) status(message.message, message.error, message.action);
     buttons();
     activateCardAction();

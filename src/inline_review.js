@@ -323,7 +323,7 @@ function createInlineReview(vscode, context, execute = run) {
     }
     const listEvents = new vscode.EventEmitter();
     let fileRows = [];
-    let listSelection = Promise.resolve(), pendingListSelection, listRevealActive = false, listUpdatePending = false, listActiveSession;
+    let listSelection = Promise.resolve(), pendingListSelection, listRevealActive = false, listUpdatePending = false, listActiveSession, questionDirectoryTarget;
     const listProvider = {
         onDidChangeTreeData: listEvents.event,
         getTreeItem: item => item,
@@ -338,27 +338,33 @@ function createInlineReview(vscode, context, execute = run) {
         const previousItems = new Map(fileRows.flatMap(row => row.children).map(row => [row.id, row]));
         const previousNotes = new Map(fileRows.flatMap(row => row.children).flatMap(row => row.children).map(row => [row.id, row]));
         const files = new Map();
+        const questionMode = workbench.mode === 'question';
         for (const record of orderedRecords()) {
             const {c, data} = record, file = data.edit.file;
-            if (!files.has(file)) {
-                const groupId = JSON.stringify([c.repo, c.owner, batch, 'file', file]);
-                const group = previousFiles.get(groupId) || new vscode.TreeItem(file, vscode.TreeItemCollapsibleState.Expanded);
+            const questions = data.edit.questions || [];
+            const groups = questionMode ? (questions.length ? questions.map(q => ({key:JSON.stringify([q.id,q.file,q.quote]), label:q.id + ' · ' + q.file + ' · ' + q.quote.replace(/\s+/g,' ').slice(0,80), tooltip:q.quote})) : [{key:'__unbound__',label:'未绑定问题的修改'}]) : [{key:file,label:file}];
+            for (const entry of groups) {
+            if (!files.has(entry.key)) {
+                const groupId = JSON.stringify([c.repo, c.owner, batch, questionMode ? 'question' : 'file', entry.key]);
+                const group = previousFiles.get(groupId) || new vscode.TreeItem(entry.label, vscode.TreeItemCollapsibleState.Expanded);
                 group.id = groupId;
-                group.children = []; files.set(file, group);
+                group.label = entry.label; group.tooltip = entry.tooltip;
+                if (questionMode) group.command = {command:'localLatex.reviewQuestionDirectory', title:'打开问题', arguments:[{repo:c.repo,owner:c.owner,session:batch,questionKey:entry.key}]};
+                group.children = []; files.set(entry.key, group);
             }
             const notes = (data.edit.requests || []).filter(n => n.status === 'open');
-            const itemId = JSON.stringify([c.repo, c.owner, batch, c.id]), label = `${c.id} · ${locationTitle(data.edit) || file}`;
+            const itemId = JSON.stringify(questionMode ? [c.repo,c.owner,batch,'question',entry.key,c.id] : [c.repo, c.owner, batch, c.id]), label = `${c.id} · ${locationTitle(data.edit) || file}`;
             const collapse = notes.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None;
             const old = previousItems.get(itemId);
-            const item = old?.parent === files.get(file) ? old : new vscode.TreeItem(label, collapse);
+            const item = old?.parent === files.get(entry.key) ? old : new vscode.TreeItem(label, collapse);
             item.id = itemId; item.label = label; item.collapsibleState = collapse;
             const state = notes.length || data.edit.status === 'rework' ? '返修' : '待审';
             item.description = (record.displayConflict ? '原文位置待核对' : state) + (notes.length ? ` · ${notes.length} 条批注` : '');
             item.tooltip = `${c.id} · ${file} · 候选 v${data.edit.generation ?? data.edit.versions.length}`;
-            item.command = {command: 'localLatex.reviewWorkbench', title: '打开论文审核页', arguments: [c]};
-            item.parent = files.get(file);
+            item.command = questionMode ? {command:'localLatex.reviewQuestionDirectory',title:'定位问题卡片',arguments:[{...c,session:batch,questionKey:entry.key}]} : {command: 'localLatex.reviewWorkbench', title: '打开论文审核页', arguments: [c]};
+            item.parent = files.get(entry.key);
             item.children = notes.map((note, index) => {
-                const childId = JSON.stringify([c.repo, c.owner, batch, c.id, 'note', note.id]), label = note.text.replace(/\s+/g, ' ');
+                const childId = JSON.stringify([itemId, 'note', note.id]), label = note.text.replace(/\s+/g, ' ');
                 const old = previousNotes.get(childId);
                 const child = old?.parent === item ? old : new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
                 child.id = childId; child.label = label;
@@ -369,10 +375,11 @@ function createInlineReview(vscode, context, execute = run) {
                 child.command = item.command; child.parent = item;
                 return child;
             });
-            files.get(file).children.push(item);
+            files.get(entry.key).children.push(item);
+            }
         }
         fileRows = [...files.values()];
-        reviewList.message = records.size ? `${records.size} 项待审 · 点击编号在同一审核页切换` : '暂无待审候选；请先让 AI 按插件规则生成。';
+        reviewList.message = records.size ? `${records.size} 项待审 · ${questionMode ? '按问题查看关联修改' : '点击编号在同一审核页切换'}` : '暂无待审候选；请先让 AI 按插件规则生成。';
         listEvents.fire();
         if (workbench.active && listActiveSession === batch) selectReviewItem(workbench.active, false).catch(error => vscode.window.showErrorMessage('论文评论定位失败：' + error.message));
     }
@@ -383,10 +390,12 @@ function createInlineReview(vscode, context, execute = run) {
             const selected = pendingListSelection; pendingListSelection = undefined;
             if (!selected || selected.session !== batch) return;
             const target = selected.c;
-            const item = fileRows.flatMap(group => group.children).find(row => {
+            const groups = workbench.mode === 'question' ? fileRows.filter(group => group.command?.arguments[0].questionKey === workbench.questionPosition) : fileRows;
+            const focused = questionDirectoryTarget?.session === batch && questionDirectoryTarget.questionKey === workbench.questionPosition ? questionDirectoryTarget : undefined;
+            const item = groups.flatMap(group => group.children).find(row => {
                 const c = row.command.arguments[0];
-                return c.repo === target.repo && c.owner === target.owner && c.id === target.id;
-            });
+                return c.repo === target.repo && c.owner === target.owner && c.id === (focused ? focused.id : target.id);
+            }) || (workbench.mode === 'question' ? groups[0] : undefined);
             if (item && reviewList.selection[0] !== item) {
                 listRevealActive = true;
                 try {await reviewList.reveal(item, {select: true, focus: false});}
@@ -872,6 +881,10 @@ function createInlineReview(vscode, context, execute = run) {
         toolbar: () => vscode.workspace.getConfiguration('localLatex').inspect('reviewToolbar')?.globalValue,
         saveToolbar: value => vscode.workspace.getConfiguration('localLatex').update('reviewToolbar', value, vscode.ConfigurationTarget.Global),
         style, read: c => readCurrent(c, false), readNext: c => currentFromRecords(c, false), selection: selectedOption, activeChanged: selectReviewItem,
+        modeChanged: () => {
+            if (workbench.mode !== 'question' || questionDirectoryTarget?.session !== batch || questionDirectoryTarget?.questionKey !== workbench.questionPosition) questionDirectoryTarget = undefined;
+            updateList();
+        },
         session: c => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? latestReviewState?.session : undefined,
         feedbackRows: c => {
             if (latestReviewScope?.repo !== c.repo || latestReviewScope.owner !== c.owner || !latestReviewState) return [];
@@ -1302,6 +1315,7 @@ function createInlineReview(vscode, context, execute = run) {
         }
     });
     command('localLatex.reviewWorkbench', openWorkbench, true);
+    command('localLatex.reviewQuestionDirectory', target => {workbench.focusQuestion(target); questionDirectoryTarget = target;}, true);
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.checkReviewBeforeReload', () => workbench.assertReloadSafe()));
     command('localLatex.inlineReviewAt', c => open(c));
     command('localLatex.inlineNext', arg => select(true, arg), true);

@@ -27,7 +27,7 @@ test('one PDF queue coalesces pending document updates and preserves running wor
     assert.equal(events.at(-1), 'recovered');
 });
 
-function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
+function hostFixture({tex = true, state = true, autoPDF = true, questionStore = false} = {}) {
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'review-list-'));
     const file = path.join(root, tex ? 'paper.tex' : 'main.js'), owner = path.join(root, 'reply.tex');
     let value = tex ? '\\documentclass{article}\n😀 First sentence. Second sentence.' : 'const x = 1;';
@@ -118,13 +118,39 @@ function hostFixture({tex = true, state = true, autoPDF = true} = {}) {
         }
         throw new Error('Unexpected backend operation: ' + args.join(' '));
     };
-    const ui = createInlineReview(vscode, {subscriptions: []}, backend);
+    const storage = () => {const values = new Map(); return {get:(key,fallback)=>values.has(key) ? values.get(key) : fallback, update:async(key,value)=>{values.set(key,value);}};};
+    const context = {subscriptions: [], ...(questionStore ? {workspaceState:storage(), globalState:storage()} : {})};
+    const ui = createInlineReview(vscode, context, backend);
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
         get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set cardsTransform(fn) {cardsTransform = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;}, set syncHook(fn) {syncHook = fn;}, set saveSourceHook(fn) {saveSourceHook = fn;}, set batchHook(fn) {batchHook = fn;}, set revealHook(fn) {revealHook = fn;},
         rows: () => provider.getChildren(), receive: m => receive(m),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
         changed: () => fileChanged(uri(owner)), saved: () => saveHandler(document), savedDocument: doc => saveHandler(doc), texChanged: () => texChanged(uri(file)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
 }
+
+test('question directory groups exact identities, shared items and rejects stale navigation', async () => {
+    const f = hostFixture({questionStore:true});
+    const q1={id:'R1',file:'one.txt',quote:'first'}, q2={id:'R1',file:'two.txt',quote:'second'};
+    f.edit.questions=[q1,q2];
+    f.allCards['2']={...structuredClone(f.data),edit:{...structuredClone(f.edit),file:'reply.tex',kind:'response',questions:[q1]}};
+    f.allCards['3']={...structuredClone(f.data),edit:{...structuredClone(f.edit),questions:[]}};
+    f.cardsTransform=packet=>{packet.sources['reply.tex']=f.original;return packet;};
+    await f.ui.ready;await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const c=f.rows()[0].children[0].command.arguments[0];await f.ui.open(c);await f.receive({type:'ready',instance:'directory'});
+    const qkey=JSON.stringify([q1.id,q1.file,q1.quote]);
+    await f.receive({type:'reviewMode',instance:'directory',repo:c.repo,owner:c.owner,id:c.id,version:c.version,mode:'question',questionKey:qkey,viewStyle:'full'});
+    const groups=f.rows();assert.equal(groups.length,3);
+    const first=groups.find(row=>row.command.arguments[0].questionKey===qkey),second=groups.find(row=>row.command.arguments[0].questionKey===JSON.stringify([q2.id,q2.file,q2.quote]));
+    assert.deepEqual(first.children.map(row=>row.command.arguments[0].id),['1','2']);
+    assert.deepEqual(second.children.map(row=>row.command.arguments[0].id),['1']);
+    assert.equal(groups.find(row=>row.command.arguments[0].questionKey==='__unbound__').children[0].command.arguments[0].id,'3');
+    await f.handlers.get('localLatex.reviewQuestionDirectory')(first.children[1].command.arguments[0]);
+    assert.deepEqual(f.packets.findLast(p=>p.type==='focusQuestion'),{type:'focusQuestion',session:'batch',questionKey:qkey,target:'2',version:'v1'});
+    await f.handlers.get('localLatex.reviewQuestionDirectory')({...first.children[1].command.arguments[0],version:'old'});
+    assert(f.notices.some(message=>message.includes('已变化')));
+    await f.receive({type:'reviewMode',instance:'directory',repo:c.repo,owner:c.owner,id:c.id,version:c.version,mode:'paragraph',questionKey:qkey,viewStyle:'full'});
+    assert(f.rows().every(row=>!row.command));
+});
 
 test('hidden compatibility commands remain registered and review aliases open the workbench', async () => {
     const f=hostFixture(); await f.ui.ready; await f.ui.refresh({repo:f.root, owner:'reply.tex'});
