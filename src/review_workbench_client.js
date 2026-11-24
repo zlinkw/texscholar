@@ -486,11 +486,13 @@ function observeQuestionTranslations() {
     questionObserver=new IntersectionObserver(changes=>{
         for (const change of changes) {const key=change.target.dataset.translationKey;if(change.isIntersecting) questionVisible.add(key); else questionVisible.delete(key);}
         publish();
+        const requests=[];
         for (const key of questionVisible) {
             const value=questionNodes.get(key);
             if (!value || questionClosed.has(value.closeKey) || questionTranslations.has(key)) continue;
-            send('questionTranslate',{...value,node:undefined,button:undefined,draw:undefined,auto:true,retry:false},false);
+            requests.push({...value,node:undefined,button:undefined,draw:undefined,auto:true,retry:false});
         }
+        if (requests.length) send('questionTranslateBatch',{requests},false);
     });
     for (const [key,value] of questionNodes) {value.node.parentElement.dataset.translationKey=key;questionObserver.observe(value.node.parentElement);}
 }

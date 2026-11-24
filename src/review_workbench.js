@@ -110,7 +110,8 @@ function createWorkbench(vscode, context, services) {
     const pendingSynchronized = new Map();
     const translations = new Map();
     let translationRun, translationRequested = false, retryTranslation = false, translationEpoch = 0;
-    let questionTranslationRun = Promise.resolve();
+    let questionTranslationRun = Promise.resolve(), questionTranslationPending = [], questionTranslationTimer;
+    const questionTranslationInflight = new Map();
     const questionTranslations = new Map();
     let questionVisible = new Set(), questionView = '';
     let lastRecords = new Map(), sourceSelection;
@@ -606,6 +607,34 @@ function createWorkbench(vscode, context, services) {
             ...(data.edit.questions || []).map((q, i) => ({key: 'question' + i, text: q.quote}))];
     }
     function translationKey(provider, item) {return JSON.stringify([provider,item.text,item.kind || '',item.option || '']);}
+    function requestQuestionTranslation(item, provider, repo, stillValid) {
+        return new Promise(resolve => {
+            questionTranslationPending.push({item, provider, repo, stillValid, resolve});
+            if (questionTranslationTimer) return;
+            questionTranslationTimer = setTimeout(async () => {
+                questionTranslationTimer = undefined;
+                const pending = questionTranslationPending; questionTranslationPending = [];
+                const groups = new Map();
+                for (const entry of pending) {
+                    if (!entry.stillValid()) {entry.resolve(); continue;}
+                    const groupKey = JSON.stringify([entry.provider, entry.repo]);
+                    if (!groups.has(groupKey)) groups.set(groupKey, []);
+                    groups.get(groupKey).push(entry);
+                }
+                await Promise.all([...groups.values()].map(async group => {
+                    const unique = new Map();
+                    for (const entry of group) unique.set(translationKey(entry.provider, entry.item), entry.item);
+                    const items = [...unique.values()];
+                    try {
+                        const results = services.translateMany ? await services.translateMany(items, group[0].provider, group[0].repo) :
+                            await Promise.all(items.map(item => services.translate(item.text, group[0].provider, item)));
+                        const mapped = new Map(items.map((item, i) => [translationKey(group[0].provider, item), typeof results[i] === 'string' ? {text:results[i]} : results[i]]));
+                        for (const entry of group) entry.resolve(mapped.get(translationKey(entry.provider, entry.item)));
+                    } catch (error) {for (const entry of group) entry.resolve({error:error.message});}
+                }));
+            }, 0);
+        });
+    }
     async function receive(message) {
         if (message.type === 'checkUpdates') {
             try {
@@ -621,6 +650,11 @@ function createWorkbench(vscode, context, services) {
             client = message.instance; ready = true; sendContent(); return;
         }
         if (!active || !panel) return;
+        if (message.type === 'questionTranslateBatch') {
+            if (message.instance !== client || !Array.isArray(message.requests)) return;
+            await Promise.all(message.requests.map(request => receive({...message, ...request, type:'questionTranslate', requests:undefined})));
+            return;
+        }
         if (message.type === 'paragraphTranslationView') {
             if (message.instance!==client || message.repo!==active.repo || message.owner!==active.owner || message.id!==active.id || message.version!==active.version ||
                 !Array.isArray(message.visible) || message.visible.some(key=>typeof key!=='string')) return;
@@ -646,6 +680,7 @@ function createWorkbench(vscode, context, services) {
             if (message.instance !== client || message.repo !== active.repo || message.owner !== active.owner ||
                 message.id !== active.id || message.version !== active.version || message.session !== services.session?.(active) ||
                 typeof message.view !== 'string' || !Array.isArray(message.visible) || message.visible.some(value=>typeof value!=='string')) return;
+            if (questionView !== message.view) translationEpoch++;
             questionView = message.view; questionVisible = new Set(message.visible); return;
         }
         if (message.type === 'questionTranslate') {
@@ -669,7 +704,7 @@ function createWorkbench(vscode, context, services) {
             const identity = JSON.stringify([message.session,message.questionKey,message.target,message.targetVersion,message.side,message.option || '',message.viewStyle,source,provider]);
             const item = {text:source, ...(message.side === 'candidate' ? {kind:'candidate',option:message.option} : {})};
             const cacheKey = translationKey(provider,item);
-            questionTranslationRun = questionTranslationRun.then(async () => {
+            const run = (async () => {
                 const stillValid = () => {
                     if (!valid(origin) || epoch!==translationEpoch || !panel?.visible || provider!==services.provider() || services.session(active)!==message.session || questionView!==view) return false;
                     const latest=lastRecords.get(message.target), latestRows=questionTable(active), latestRow=latestRows.find(item=>item.key===message.questionKey);
@@ -687,7 +722,16 @@ function createWorkbench(vscode, context, services) {
                 if (result?.error) result = undefined;
                 result ||= questionTranslations.get(identity);
                 if (!result || message.retry && result.error) {
-                    try {const value = await services.translate(source, provider, item); result = typeof value === 'string' ? {text:value} : value;}
+                    const flightKey=JSON.stringify([epoch, identity, !!message.auto]);
+                    try {
+                        let flight=questionTranslationInflight.get(flightKey);
+                        if (!flight) {
+                            flight=requestQuestionTranslation(item, provider, origin.repo, stillValid);
+                            questionTranslationInflight.set(flightKey,flight);
+                            flight.finally(()=>{if (questionTranslationInflight.get(flightKey)===flight) questionTranslationInflight.delete(flightKey);});
+                        }
+                        result = await flight;
+                    }
                     catch (error) {result = {error:error.message};}
                     if (!stillValid()) return;
                     if (!result.error) translations.set(cacheKey,result);
@@ -695,8 +739,9 @@ function createWorkbench(vscode, context, services) {
                 questionTranslations.set(identity,result);
                 post({type:'questionTranslation', questionKey:message.questionKey,target:message.target,targetVersion:message.targetVersion,
                     side:message.side,option:message.option,viewStyle:message.viewStyle,source,provider,displayKey,view,...result});
-            });
-            await questionTranslationRun;
+            })();
+            questionTranslationRun = Promise.all([questionTranslationRun, run]);
+            await run;
             return;
         }
         if (message.type === 'cardActionClaim') {

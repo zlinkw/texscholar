@@ -873,6 +873,16 @@ function createInlineReview(vscode, context, execute = run) {
         },
         autoTranslate: () => config().get('translation.autoTranslate', true),
         provider: () => config().get('translation.provider', 'bing'),
+        translateMany: async (items, provider, repo) => {
+            const http = vscode.workspace.getConfiguration('http');
+            const proxy = ['google', 'googleapi'].includes(provider) ? null : http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;
+            const request = items.map((item, i) => ({...item, key:String(i), text:displayText(item.text)}));
+            const result = JSON.parse(await execute(config().get('pythonPath', 'python'), ['-X', 'utf8', path.join(__dirname, 'review_translate.py')], repo,
+                {provider, proxy, items:request, batch:true}));
+            return request.map(({key}) => result.errors[key] ? {error:result.errors[key]} :
+                typeof result.results[key] === 'string' ? {text:result.results[key], noTranslation:result.skipped?.[key], warning:result.warnings?.[key]} :
+                    {error:'翻译服务未返回该段译文，请重试。'});
+        },
         translate: async (text, provider, item) => {
             const http = vscode.workspace.getConfiguration('http');
             const proxy = ['google', 'googleapi'].includes(provider) ? null : http.get('proxySupport') === 'off' ? '' : http.get('proxy') || null;

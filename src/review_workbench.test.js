@@ -150,17 +150,18 @@ test('question translation requests use the displayed card identity and do not t
 
 test('question translation discards late results and retries a visible provider failure only on request', async () => {
     let receive, release, attempt=0, provider='fixture'; const messages=[];
+    let signal; const started=new Promise(resolve=>{signal=resolve;});
     const c={repo:'/fixture',owner:'state',id:'1',version:'v1'}, question={id:'Q',file:'review.txt',quote:'Explain.'};
     const questionKey=JSON.stringify([question.id,question.file,question.quote]);
     const data={version:'v1',original:'Old text',source_match:true,edit:{file:'main.tex',kind:'manuscript',versions:['v1'],requests:[],questions:[question]},options:[{label:'A',after:'New text',reason:'A',changes:[]}]};
     const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
     const state={get:(_k,fallback)=>fallback,update:async()=>{}};
-    const services={read:async()=>data,session:()=> 'session',style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>true,provider:()=>provider,directory:()=>[],questions:()=>[{key:questionKey,question,entries:[{id:'1',version:'v1'}],snapshot:'[]'}],translate:async()=>{attempt++;if(attempt===1)return await new Promise(resolve=>{release=resolve;});if(attempt===2)throw Error('HTTP 429');return {text:'新文'};}};
+    const services={read:async()=>data,session:()=> 'session',style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>true,provider:()=>provider,directory:()=>[],questions:()=>[{key:questionKey,question,entries:[{id:'1',version:'v1'}],snapshot:'[]'}],translate:async()=>{attempt++;if(attempt===1)return await new Promise(resolve=>{release=resolve;signal();});if(attempt===2)throw Error('HTTP 429');return {text:'新文'};}};
     const view=createWorkbench(vscode,{subscriptions:[],workspaceState:state},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
     const key=JSON.stringify(['session',questionKey,'1','v1','candidate','A','full','New text']), current=JSON.stringify(['session',questionKey,'full','question']);
     const sendView=(viewKey,visible)=>receive({type:'questionTranslationView',instance:'page',...c,session:'session',view:viewKey,visible});
     const request={type:'questionTranslate',instance:'page',...c,session:'session',questionKey,target:'1',targetVersion:'v1',side:'candidate',option:'A',viewStyle:'full',source:'New text',view:current,displayKey:key,auto:true};
-    await sendView(current,[key]);const pending=receive(request);await new Promise(resolve=>setImmediate(resolve));
+    await sendView(current,[key]);const pending=receive(request);await started;
     await sendView(JSON.stringify(['session',questionKey,'snippets','question']),[]);release({text:'旧译文'});await pending;
     assert(!messages.some(message=>message.type==='questionTranslation'));
     await sendView(current,[key]);await receive({...request,auto:false,retry:true});
@@ -170,6 +171,30 @@ test('question translation discards late results and retries a visible provider 
     assert(messages.some(message=>message.type==='questionTranslation' && message.text==='新文'));
     provider='other';view.settingsChanged();await sendView(current,[key]);await receive({...request,auto:false,retry:true});
     assert.equal(attempt,4);assert(messages.some(message=>message.type==='questionTranslation' && message.provider==='other'));
+});
+
+test('visible question translations batch together and a stale slow batch does not block the new view', async () => {
+    let receive, release, started; const calls=[], messages=[];
+    const firstStarted=new Promise(resolve=>{started=resolve;});
+    const c={repo:'/fixture',owner:'state',id:'1',version:'v1'}, question={id:'Q',file:'q.txt',quote:'Why?'};
+    const q=JSON.stringify([question.id,question.file,question.quote]);
+    const data={version:'v1',original:'Old',source_match:true,edit:{file:'m',kind:'manuscript',versions:['v1'],requests:[],questions:[question]},options:[{label:'A',after:'First text'},{label:'B',after:'Second text'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(m)}})}};
+    const services={read:async()=>data,session:()=> 'session',style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>true,provider:()=> 'fixture',directory:()=>[],questions:()=>[{key:q,question,entries:[{id:'1',version:'v1'}],snapshot:'[]'}],translateMany:async items=>{calls.push(items);if(calls.length===1)return await new Promise(resolve=>{release=resolve;started();});return items.map(item=>({text:'译 '+item.text}));}};
+    const state={get:(_k,fallback)=>fallback,update:async()=>{}};
+    const view=createWorkbench(vscode,{subscriptions:[],workspaceState:state},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    const current=JSON.stringify(['session',q,'full','question']);
+    const request=(option,source)=>({session:'session',questionKey:q,target:'1',targetVersion:'v1',side:'candidate',option,viewStyle:'full',source,view:current,displayKey:JSON.stringify(['session',q,'1','v1','candidate',option,'full',source]),auto:true});
+    const a=request('A','First text'), b=request('B','Second text');
+    await receive({type:'questionTranslationView',instance:'page',...c,session:'session',view:current,visible:[a.displayKey,b.displayKey]});
+    const pending=receive({type:'questionTranslateBatch',instance:'page',...c,requests:[a,b]});await firstStarted;
+    assert.equal(calls.length,1);assert.deepEqual(calls[0].map(i=>i.option),['A','B']);
+    await receive({type:'questionTranslationView',instance:'page',...c,session:'session',view:'other',visible:[]});
+    await receive({type:'questionTranslationView',instance:'page',...c,session:'session',view:current,visible:[b.displayKey]});
+    await receive({type:'questionTranslate',instance:'page',...c,...b});
+    assert.equal(calls.length,2);assert(messages.some(m=>m.type==='questionTranslation' && m.option==='B' && m.text==='译 Second text'));
+    release([{text:'旧一'},{text:'旧二'}]);await pending;
+    assert(!messages.some(m=>m.text==='旧一' || m.text==='旧二'));
 });
 
 test('successful translations are reused across cards and modes with exact note identities', async () => {

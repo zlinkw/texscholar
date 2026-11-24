@@ -70,3 +70,7 @@ S-speed9 以相同合成规模在最新修改下测得点击到完成显示 546m
 总控现场恢复更新：真实事务 f2d0537322d016a432837f39fe5174cc634aceefbf1952cd7aa3452a0bdf57df 已由总控通过合格宿主和既有 writer/版本/脏稿检查执行 recover exit 0；读回 transaction=null，其他状态与原状态去掉 transaction 后相等，正文、论文 Git index 和 HEAD 不变。证据见 D:/latex-writing-checks/question-mode-latency-20261124/controller-recover-once.py 和 recover1.*。原 doc.save false 具体原因仍未知；本执行者未触真实项目或管道。
 
 S 返修1后端：按用户要求将一批待译内容用独立编号合并到所选服务请求，严格校验分段及每段 TeX 标识后才写成功结果；缺失、重复或错位均报错，纯公式保持本地，429 不暗重试或换源。原单项协议保留。S-r1-translate-test2 合成供应商与原协议测试 exit 0；README 删去已撤展示的句数范围承诺。客户端合批和隔离界面验证随下一批完成。
+
+S 返修1客户端：当前可见问题、原文和方案通过同一批次请求，精确身份独立路由；同文同类型/方案成功结果复用。旧视图在途请求不阻挡新视图，迟到结果依身份与源版本丢弃，同一在途项不重复发出；未保存稿、收起、手动重试与现有服务选择仍受原约束。S-r1-workbench-test6（设置专用 LOCAL_LATEX_TEST_ROOT）、test7 和 S-r1-translate-test2 exit 0，含慢旧批次、新视图、精确批注、错误编号、公式串段和429。S-r1-ui4 正常私有 Development 实测合成问题、三个卡片原文与方案合并请求并分别显示，译文划词保存后只读状态核 item/version/A/原始范围及问题身份；host/observer/外层 exit 0，输入桌面 Default、前中后 HWND 197346 不变，私有桌面关闭，截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-d34e45836e1840489315ec1b041b09c2.png 已看。该实验为让多卡同时进入可见区临时缩小私有页面，截图前恢复正常倍率；只用合成文字，实网供应商对编号的保留和翻译质量未测，损坏编号会明确报错。
+
+原失败均保留：S-r1-workbench-test 首次 Node 路径引用错误未启动；test2 因测试使用 setImmediate 假定旧调度而未等请求开始，改为等待实际供应商启动后 test3/test4 通过；test5 未设置隔离测试根导致 hostFixture 报错，补设置后 test6 通过。S-r1-ui 首个夹具将“请”误认作含“中文”而超时；ui3 内容和保存观察通过但外层对空桌面枚举 last-error=0 判错，沿已核实夹具修正后 ui4 全部通过。相关 stdout/stderr/process 与独立夹具保留于 D:/latex-writing-checks/review-efficiency-20261122，无删除。
