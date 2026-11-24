@@ -144,7 +144,7 @@ def saved_recover(root, git_exe):
     return {'job':job, 'commit':head}
 
 
-def saved_sources(root, names, git_exe):
+def saved_sources(root, names, git_exe, overrides=None):
     """Capture saved paper bytes and remove only verified review runtime data."""
     from review_blocks import MARKER
     originals = {}
@@ -190,10 +190,12 @@ def saved_sources(root, names, git_exe):
             raise Conflict('旧格式源码无法安全排除未接收候选：' + owners[0] + '；' + str(error)) from error
     files = {}
     for name in names:
-        raw = originals[name]
+        raw = (overrides or {}).get(name, originals[name])
         if raw is None or not name.lower().endswith('.tex'):
             files[name] = raw
             continue
+        if raw != originals[name] and (name in restored or b'% CODEX-REVIEW-DATA ' in raw):
+            raise Conflict('暂存的旧审核源码与工作文件不同，无法安全排除运行数据：' + name)
         text = restored.get(name, raw.decode('utf-8-sig'))
         if name in owners:
             text = body(text)
@@ -227,14 +229,36 @@ def saved_commit(root, git_exe, spec, storage=None):
     if not isinstance(additions, list) or any(not isinstance(name, str) for name in additions):
         raise Conflict('新增论文文件列表无效。')
     requested_new = set(additions)
-    if requested_new:
-        from document_roles import scan
-        roles = scan(root, storage)
-        if roles['status'] != 'confirmed':
-            raise Conflict('新增论文文件的角色未确认或已变化；未提交。')
-        allowed = {entry['file'] for entry in roles['files']}
-        if not requested_new.issubset(allowed) or not requested_new.issubset(names):
-            raise Conflict('新增文件未在已确认论文角色中登记。')
+    if not requested_new.issubset(names):
+        raise Conflict('新增文件不属于本次备份范围。')
+    staged_before = git('ls-files', '--stage', '-z')
+    staged = {}
+    for row in staged_before.split(b'\0'):
+        if not row:
+            continue
+        metadata, raw_name = row.split(b'\t', 1)
+        mode, oid, stage = metadata.decode().split(' ')
+        name = raw_name.decode('utf-8')
+        if name in names:
+            if stage != '0':
+                raise Conflict('暂存区存在未解决冲突：' + name)
+            staged[name] = (mode, oid)
+    overrides = {}
+    for name in names:
+        rows = git('ls-tree', '-z', parent, '--', name).split(b'\0')
+        entry = next((row for row in rows if row), None)
+        previous = entry.split(b' ', 2)[2].split(b'\t', 1)[0].decode() if entry else None
+        current = None if originals[name] is None else git('hash-object', '--path=' + name, '--stdin', data=originals[name]).decode().strip()
+        index = staged.get(name, (None, None))[1]
+        if current == previous and index != previous:
+            overrides[name] = git('show', ':' + name) if index else None
+    if overrides:
+        captured = originals
+        originals, files = saved_sources(root, names, git_exe, overrides)
+        if originals != captured:
+            raise Conflict('备份期间项目文件发生变化；未创建提交。')
+    if git('ls-files', '--stage', '-z') != staged_before:
+        raise Conflict('暂存区在准备期间变化，未创建备份。')
     attrs = git('check-attr', 'filter', 'working-tree-encoding', '--', *names).decode().splitlines()
     if any(not line.endswith((': unspecified', ': unset')) for line in attrs):
         raise Conflict('备份范围含自定义 Git 内容转换规则；未提交。')
@@ -269,7 +293,7 @@ def saved_commit(root, git_exe, spec, storage=None):
                 accepted = {}
                 for id_, edit in r.state['edits'].items():
                     name = edit['file']
-                    if edit['status'] != 'accepted' or not edit['versions'] or name not in files or files[name] is None:
+                    if edit['status'] != 'accepted' or not edit['versions'] or name not in files or files[name] is None or name in overrides:
                         continue
                     text = r.read(name)
                     if r.original[name] != originals[name]:
@@ -367,7 +391,7 @@ def saved_commit(root, git_exe, spec, storage=None):
             message += '\n\n变更中的章节与标签：\n' + '\n'.join(locations)
         return message + '\n\nTeXScholar-Saved-Checkpoint: ' + token
     message = commit_message(stats, diff)
-    sanitized = bool(requested_new.intersection(selected)) or any(files[name] != originals[name] for name in selected if files[name] is not None)
+    sanitized = bool(requested_new.intersection(selected)) or any(files[name] != originals[name] for name in selected)
     if sanitized:
         gitdir = Path(git('rev-parse', '--absolute-git-dir').decode().strip())
         if gitdir.is_symlink() or gitdir.is_junction() or gitdir.resolve() != gitdir:
@@ -379,7 +403,7 @@ def saved_commit(root, git_exe, spec, storage=None):
         stream = lock.open('xb'); identity = os.fstat(stream.fileno()); committed = False
         try:
             stream.write(original_index); stream.flush(); os.fsync(stream.fileno()); stream.close()
-            if index.read_bytes() != original_index:
+            if index.read_bytes() != original_index or git('ls-files', '--stage', '-z') != staged_before:
                 raise Conflict('暂存区已变化，停止自动备份。')
             private_dir = root / '.codex-review'
             if private_dir.is_symlink() or private_dir.is_junction():
@@ -430,6 +454,8 @@ def saved_commit(root, git_exe, spec, storage=None):
                     os.chdir(prior)
     else:
         unchanged()
+        if git('ls-files', '--stage', '-z') != staged_before:
+            raise Conflict('提交前暂存区已变化；未创建备份。')
         git('commit', '--only', '-m', message, '--', *selected)
     commit = git('rev-parse', 'HEAD').decode().strip()
     if git('rev-parse', 'HEAD^').decode().strip() != parent:

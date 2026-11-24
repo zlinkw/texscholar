@@ -327,7 +327,7 @@ test('saved backup restores a pending legacy checkpoint before backing up later 
     const history = (await f.git(['log','--format=%s',f.baseline+'..HEAD'])).trim().split('\n');
     assert.equal(history.length,2); assert(history[1].includes('已接收成果')); assert(history[0].includes('自动备份'));
     assert((await f.git(['show','HEAD:main.tex'])).includes('The author model'));
-    assert.equal(await f.git(['show',':unrelated.txt']),'staged outside');
+    assert.equal(await f.git(['show','HEAD:unrelated.txt']),'staged outside');
     const after = await f.status();
     assert.deepEqual(after.edits['2'],before.edits['2']); assert.deepEqual(after.edits.a,before.edits.a);
     assert.equal(after.edits['1'].status,before.edits['1'].status);
@@ -445,7 +445,7 @@ test('automatic saved checkpoint preserves delayed notes, manual source and stag
     assert.equal((await f.git(['diff','--cached','--name-only'])).trim(),'');
     const again = await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
     assert.equal(again.skipped,true);
-    await f.backend(['begin','--round','round-2','--files','main.tex','reply.tex']);
+    await assert.rejects(f.backend(['begin','--round','round-2','--files','main.tex','reply.tex']),/未处理或暂留批注/);
 });
 
 test('saved backup proves fixed-block acceptance after a separate safe author edit', async () => {
@@ -567,14 +567,15 @@ test('saved backup skips an unchanged project without fetching or pushing', asyn
     assert(!fs.existsSync(path.join(f.root,'.codex-review','automatic-backup.json')));
 });
 
-test('automatic backup refuses manual ahead commits and preserves unrelated staging without blocking decisions', async () => {
+test('automatic backup includes manual ahead commits and staged project files without blocking decisions', async () => {
     const f = await reviewFixture('auto-ahead');
     await f.backend(['decide','--accept','1']);
     fs.writeFileSync(path.join(f.root,'unrelated.txt'),'unrelated','utf8');
     await f.git(['add','unrelated.txt']); await f.git(['commit','-m','unrelated local commit']);
     const head = (await f.git(['rev-parse','HEAD'])).trim();
-    await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute),/不会连带上传/);
-    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),head);
+    await automaticBackup(f.root,'reply.tex',f.options,()=>{},f.execute);
+    assert.equal((await f.git(['rev-parse','HEAD^'])).trim(),head);
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),(await f.git(['rev-parse','origin/master'])).trim());
     await f.backend(['decide','--accept','a']);
     assert.equal((await f.status()).edits.a.status,'accepted');
     const g = await reviewFixture('auto-staging');
@@ -582,9 +583,77 @@ test('automatic backup refuses manual ahead commits and preserves unrelated stag
     fs.writeFileSync(path.join(g.root,'unrelated.txt'),'manual staging','utf8');
     await g.git(['add','unrelated.txt']);
     await automaticBackup(g.root,'reply.tex',g.options,()=>{},g.execute);
-    assert.equal(await g.git(['show',':unrelated.txt']),'manual staging');
-    assert.equal((await g.git(['diff','--cached','--name-only'])).trim(),'unrelated.txt');
+    assert.equal(await g.git(['show','HEAD:unrelated.txt']),'manual staging');
+    assert.equal((await g.git(['diff','--cached','--name-only'])).trim(),'');
     assert(!fs.existsSync(path.join(g.root,'.git/index.lock')));
+});
+
+test('automatic backup includes project files and excludes ignored and review runtime data', async () => {
+    const f=await fixture('auto-project');
+    fs.writeFileSync(path.join(f.root,'.gitignore'),'ignored.txt\n.codex-review/\n','utf8');
+    await f.git(['add','.gitignore']);await f.git(['commit','-m','author configuration']);
+    const manual=(await f.git(['rev-parse','HEAD'])).trim();
+    fs.writeFileSync(path.join(f.root,'main.tex'),'Saved manual change.\n','utf8');
+    fs.writeFileSync(path.join(f.root,'staged.md'),'Author staged project notes.\n','utf8');await f.git(['add','staged.md']);
+    fs.writeFileSync(path.join(f.root,'new.json'),'{"formal":true}\n','utf8');
+    fs.writeFileSync(path.join(f.root,'ignored.txt'),'ignore me','utf8');
+    fs.writeFileSync(path.join(f.root,'notes.codex-write-fixture'),'temporary','utf8');
+    fs.mkdirSync(path.join(f.root,'.codex-review'));fs.writeFileSync(path.join(f.root,'.codex-review','private.json'),'private','utf8');
+    await f.git(['add','-f','.codex-review/private.json']);
+    const options={git:GIT,gh:'fixture-gh',python:PYTHON};
+    const result=await automaticBackup(f.root,null,options,()=>{},f.execute);
+    assert.equal((await f.git(['rev-parse',result.commit+'^'])).trim(),manual);
+    assert.equal(await f.git(['show','origin/master:staged.md']),'Author staged project notes.\n');
+    assert.equal(await f.git(['show','origin/master:new.json']),'{"formal":true}\n');
+    assert.equal(await f.git(['show','origin/master:main.tex']),'Saved manual change.\n');
+    const published=await f.git(['ls-tree','-r','--name-only','origin/master']);
+    for (const name of ['ignored.txt','notes.codex-write-fixture','.codex-review/private.json']) assert(!published.includes(name));
+    assert.equal(await f.git(['show',':.codex-review/private.json']),'private');
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),(await f.git(['rev-parse','origin/master'])).trim());
+});
+
+test('automatic backup includes staged-only content and preserves the saved worktree', async () => {
+    const f=await fixture('auto-index-only'), file=path.join(f.root,'main.tex');
+    fs.writeFileSync(file,'Staged author version.\n','utf8');await f.git(['add','main.tex']);
+    fs.writeFileSync(file,'Original sentence.\n','utf8');
+    const result=await automaticBackup(f.root,null,{git:GIT,gh:'fixture-gh',python:PYTHON},()=>{},f.execute);
+    assert.equal(await f.git(['show',result.commit+':main.tex']),'Staged author version.\n');
+    assert.equal(fs.readFileSync(file,'utf8'),'Original sentence.\n');
+    assert.equal((await f.git(['diff','--cached','--name-only'])).trim(),'');
+    assert.equal((await f.git(['diff','--name-only'])).trim(),'main.tex');
+});
+
+test('automatic backup pushes an existing author commit even without new changes', async () => {
+    const f=await fixture('auto-history-only');
+    fs.writeFileSync(path.join(f.root,'main.tex'),'Author commit.\n','utf8');await f.git(['add','main.tex']);await f.git(['commit','-m','author work']);
+    const head=(await f.git(['rev-parse','HEAD'])).trim();
+    const result=await automaticBackup(f.root,null,{git:GIT,gh:'fixture-gh',python:PYTHON},()=>{},f.execute);
+    assert.equal(result.commit,head);assert.equal((await f.git(['rev-parse','origin/master'])).trim(),head);
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),head);
+});
+
+test('automatic backup refuses private review data in author history', async () => {
+    const f=await fixture('auto-private-history');
+    fs.mkdirSync(path.join(f.root,'.codex-review'));
+    fs.writeFileSync(path.join(f.root,'.codex-review','private.json'),'private','utf8');
+    await f.git(['add','.codex-review/private.json']);await f.git(['commit','-m','private local history']);
+    const head=(await f.git(['rev-parse','HEAD'])).trim();
+    await assert.rejects(automaticBackup(f.root,null,{git:GIT,gh:'fixture-gh',python:PYTHON},()=>{},f.execute),/私有审核对象/);
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),head);
+    assert.equal((await f.git(['rev-parse','origin/master'])).trim(),f.baseline);
+});
+
+test('automatic backup distinguishes remote advance from divergence', async () => {
+    const f=await fixture('auto-remote-identity'), other=path.join(path.dirname(f.root),'other');
+    await run(GIT,['clone',f.remote,other],path.dirname(f.root));
+    await run(GIT,['config','user.name','Remote'],other);await run(GIT,['config','user.email','remote@example.invalid'],other);
+    fs.writeFileSync(path.join(other,'remote.md'),'remote','utf8');
+    await run(GIT,['add','remote.md'],other);await run(GIT,['commit','-m','remote'],other);await run(GIT,['push','origin','master'],other);
+    await f.git(['fetch','origin','master']);
+    const options={git:GIT,gh:'fixture-gh',python:PYTHON};
+    await assert.rejects(automaticBackup(f.root,null,options,()=>{},f.execute),/远端 master 已推进/);
+    fs.writeFileSync(path.join(f.root,'local.md'),'local','utf8');await f.git(['add','local.md']);await f.git(['commit','-m','local']);
+    await assert.rejects(automaticBackup(f.root,null,options,()=>{},f.execute),/本地与远端 master 已分叉/);
 });
 
 test('automatic checkpoint refuses remote advancement and hook rejection with a visible recoverable status', async () => {
@@ -597,7 +666,7 @@ test('automatic checkpoint refuses remote advancement and hook rejection with a 
     fs.writeFileSync(path.join(other,'remote.txt'),'Remote advance','utf8');
     await run(GIT,['add','remote.txt'],other); await run(GIT,['commit','-m','remote advance'],other); await run(GIT,['push','origin','master'],other);
     const events = [];
-    await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,value=>events.push(value),f.execute),/远端 master 已推进/);
+    await assert.rejects(automaticBackup(f.root,'reply.tex',f.options,value=>events.push(value),f.execute),/远端 master 已推进|本地与远端 master 已分叉/);
     assert.equal(events.at(-1).status,'failed');
     await f.backend(['decide','--accept','a']);
     assert.equal((await f.status()).edits.a.status,'accepted');
