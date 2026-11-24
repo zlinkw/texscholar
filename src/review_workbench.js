@@ -42,12 +42,18 @@ function sameQuestionSnapshot(previous, current) {
     });
 }
 
+const questionExcerptChanges = new WeakMap();
 function questionTranslationSource(data, question, side, label, style) {
     const choices=data.options || [{label:'A',after:data.candidate}], option=choices.find(item=>item.label===label);
     const text=side==='question' ? question?.quote : side==='original' ? data.original : side==='candidate' ? option?.after : undefined;
     if (typeof text!=='string') return;
     if (side==='question' || style==='full') return {text,start:0,end:Array.from(text).length};
-    const changes=choices.map(item=>reviewMath.wordChanges(data.original,item.after));
+    let cached=questionExcerptChanges.get(data);
+    if (!cached || cached.original!==data.original || cached.after.length!==choices.length || choices.some((item,i)=>cached.after[i]!==item.after)) {
+        cached={original:data.original,after:choices.map(item=>item.after),changes:choices.map(item=>reviewMath.wordChanges(data.original,item.after))};
+        questionExcerptChanges.set(data,cached);
+    }
+    const changes=cached.changes;
     return side==='original' ? reviewMath.questionExcerptRange(text,changes.flat(),'old') :
         reviewMath.questionExcerptRange(text,changes[choices.indexOf(option)],'new');
 }

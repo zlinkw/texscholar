@@ -597,12 +597,13 @@ function renderQuestionMode() {
                         if (!activeDraft) bindQuestionSource(text,entry,'candidate',option.label,clipped);
                         node.querySelector('strong').textContent='方案 '+option.label+(option.label==='A' ? ' · 推荐' : '')+(isCurrent && value!==option.after ? '（未保存草稿）' : '');
                     });
+                    return changes;
                 };
                 select.addEventListener('change',()=>{if(check.checked && batchSelection.get(entry.id)?.version===entry.version) {batchSelection.set(entry.id,{id:entry.id,version:entry.version,option:select.value});saveBatchSelection();selectedCount();}updateExcerpt();});
                 card.append(check,select);
-                updateExcerpt();
+                const changes=updateExcerpt();
                 if (!activeDraft) {
-                    const changes=optionNodes.map(({option})=>math.wordChanges(entry.card.original,option.after)), full=$('questionViewStyle').value==='full';
+                    const full=$('questionViewStyle').value==='full';
                     questionTranslationControl(reference,entry,'original',undefined,full ? entry.card.original : changedLines(entry.card.original,changes.flat(),'old'));
                     optionNodes.forEach(({option,node},index)=>questionTranslationControl(node,entry,'candidate',option.label,full ? option.after : changedLines(option.after,changes[index],'new')));
                 }
