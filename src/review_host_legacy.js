@@ -174,9 +174,8 @@ async function applyLegacy(vscode, registry, root, generation, commit, rolePlan,
         await registry.check(root,generation); verify();
         const document = item.document, before = item.currentText ?? item.beforeText;
         if (Buffer.compare(item.current || item.before,next) === 0) return;
-        const editor = vscode.window.visibleTextEditors.find(value => value.document === document) || await vscode.window.showTextDocument(document,{preview:false,preserveFocus:true});
         await registry.check(root,generation); verify();
-        await applyHostEdit(vscode,editor,{version:item.version,text:before},nextText,authority);
+        await applyHostEdit(vscode,document,{version:item.version,text:before},nextText,authority);
         if (!fs.readFileSync(item.file).equals(next)) throw new Error('保存后的审核文件与事务不一致：' + item.relative);
         item.current = next; item.currentText = nextText; item.version = document.version;
     };

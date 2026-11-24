@@ -1,8 +1,7 @@
 'use strict';
 
-// Apply a prevalidated transaction through the live editor, never by blind disk write.
-async function applyHostEdit(vscode, editor, expected, replacement, hasAuthority) {
-    const doc = editor.document;
+// Apply a prevalidated transaction to the open document without changing the active editor.
+async function applyHostEdit(vscode, doc, expected, replacement, hasAuthority) {
     function checkOriginal() {
         if (!hasAuthority()) throw new Error('审核宿主资格已失效；没有覆盖正文。');
         if (doc.isClosed || doc.isDirty || doc.version !== expected.version || doc.getText() !== expected.text)
@@ -10,10 +9,10 @@ async function applyHostEdit(vscode, editor, expected, replacement, hasAuthority
     }
     checkOriginal();
     const range = new vscode.Range(doc.positionAt(0), doc.positionAt(expected.text.length));
-    const applied = await editor.edit(builder => {
-        checkOriginal();
-        builder.replace(range, replacement);
-    }, {undoStopBefore: true, undoStopAfter: true});
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, range, replacement);
+    checkOriginal();
+    const applied = await vscode.workspace.applyEdit(edit);
     if (!applied) throw new Error('编辑器拒绝了过期事务；没有覆盖作者编辑。');
     const version = doc.version;
     if (version <= expected.version) throw new Error('编辑器没有报告正文变更；请核对尚未完成的编辑事务。');

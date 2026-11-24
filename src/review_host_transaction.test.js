@@ -69,9 +69,11 @@ test('save refusal keeps the transaction even when the target bytes reached disk
     let text='Old.\n';
     const doc={uri:{scheme:'file',fsPath:file},version:1,isDirty:false,isClosed:false,eol:1,getText:()=>text,positionAt:n=>n,
         async save(){fs.writeFileSync(file,text,'utf8');return false;}};
-    const editor={document:doc,async edit(callback){callback({replace(_range,value){text=value;}});doc.version++;doc.isDirty=true;return true;}};
     f.vscode.EndOfLine={LF:1,CRLF:2}; f.vscode.Range=class {constructor(start,end){this.start=start;this.end=end;}};
-    f.vscode.workspace.openTextDocument=async()=>doc;f.vscode.window.visibleTextEditors=[editor];
+    f.vscode.WorkspaceEdit=class {replace(_uri,_range,value){this.text=value;}};
+    f.vscode.workspace.openTextDocument=async()=>doc;
+    f.vscode.workspace.applyEdit=async edit=>{text=edit.text;doc.version++;doc.isDirty=true;return true;};
+    f.vscode.window.showTextDocument=()=>{throw new Error('source editor must stay hidden');};
     await assert.rejects(applyTransaction(f.vscode,f.registry,f.root,1,sha(f.state),f.commit),/编辑器保存失败/);
     assert.equal(fs.readFileSync(file,'utf8'),'New.\n');
     assert.equal(doc.isDirty,true);

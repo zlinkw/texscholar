@@ -98,3 +98,8 @@ U1 附件：根据用户要求只输出所选范围的批注正文、状态、�
 ### U1 按需读取（本批）
 - MCP 默认不注入未决项、资料、习惯或协议；精确编号及显式文件读取保留，文件角色和返修协议分别按需读取。同步初始化指引，旧完整附件收据仍受原契约约束。
 - 隔离测试 U-mcp-tests 首次 exit 1：原断言要求隐式全局规则；改为验证显式文件读取后 U-mcp-tests2 exit 0（12 项）。原日志保留于 D:/latex-writing-checks/review-efficiency-20261122/。
+
+### U2 后台接收
+- 通过已打开文档的 WorkspaceEdit 应用受版本约束的编辑并保存；事务、旧状态和迁移路径共用，保留资格、原文、脏缓冲及保存失败检查。
+- U-host-tests1 exit 0；私有 Development U-host-ui-run2 exit 0，未打开源文件时单项及跨文件批量接收后审核标签始终活动，源文件没有出现为标签，两个文件内容已读回；Default 前中后前台一致。截图 ui-2da80ea9a7f44ccfaab62fe136eeeb79.png 已查看。
+- U-host-ui-run 首次 exit 1：夹具未导出 acceptBatch，并非产品结论；保留原日志。U-host-ui-prepare 首次 sitecustomize 导入警告，prepare exit 0；第二次修正 PYTHONPATH 后 exit 0。

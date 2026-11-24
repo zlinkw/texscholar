@@ -90,9 +90,8 @@ async function applyMigration(vscode, registry, root, generation, id, recover = 
     const write = async (item, next, nextText) => {
         await registry.check(root,generation); verify();
         if (item.current.equals(next)) return;
-        const editor = vscode.window.visibleTextEditors.find(value=>value.document === item.document) || await vscode.window.showTextDocument(item.document,{preview:false,preserveFocus:true});
         await registry.check(root,generation); verify();
-        await applyHostEdit(vscode,editor,{version:item.version,text:item.currentText},nextText,authority);
+        await applyHostEdit(vscode,item.document,{version:item.version,text:item.currentText},nextText,authority);
         if (!fs.readFileSync(item.file).equals(next)) throw new Error('迁移文件保存后不一致：' + item.relative);
         item.current = next; item.currentText = nextText; item.version = item.document.version;
     };

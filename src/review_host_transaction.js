@@ -101,10 +101,8 @@ async function applyTransaction(vscode, registry, root, generation, expectedStat
         const before = item.currentText, after = item.afterText;
         if (document.isDirty || document.getText() !== before) throw new Error('编辑器正文已变化：' + item.relative);
         if (item.current.equals(item.after)) continue;
-        const editor = vscode.window.visibleTextEditors.find(editor => editor.document === document) ||
-            await vscode.window.showTextDocument(document, {preview:false, preserveFocus:true});
         await registry.check(root, generation);
-        await applyHostEdit(vscode, editor, {version:document.version,text:before}, after, authority);
+        await applyHostEdit(vscode, document, {version:item.version,text:before}, after, authority);
         if (!fs.readFileSync(item.file).equals(item.after)) throw new Error('保存后的正文与事务不一致：' + item.relative);
     }
     await registry.check(root, generation);
