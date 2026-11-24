@@ -86,7 +86,7 @@ class NativeReview(unittest.TestCase):
         from mcp_server import feedback_packet
         self.assertTrue(feedback_packet(r)['items'][0]['requests'][0]['held'])
 
-    def test_open_previous_feedback_on_decided_item_remains_in_handoff(self):
+    def test_old_decided_feedback_is_not_in_handoff(self):
         from mcp_server import feedback_packet
         id_ = self.proposal(); version = self.review().state['edits'][id_]['versions'][-1]
         self.apply('feedback', {'id':id_, 'version':version, 'side':'original',
@@ -96,18 +96,50 @@ class NativeReview(unittest.TestCase):
         r.state['edits'][id_]['status'] = 'accepted'
         r.persist({}, digest(r.raw))
         r = self.review()
-        for packet in (r.feedback_context(), feedback_packet(r)):
-            items = packet['items']
-            self.assertEqual(len(items), 1)
-            self.assertEqual(items[0]['id'], id_)
-            self.assertEqual(items[0]['version'], version)
-            self.assertEqual(items[0]['requests'][0]['id'], previous['id'])
-            self.assertEqual(items[0]['requests'][0]['status'], 'open')
-        r.state['edits'][id_]['previous_feedback']['requests'][0]['status'] = 'closed-by-author-acceptance'
-        r.persist({}, digest(r.raw))
-        r = self.review()
         self.assertEqual(r.feedback_context()['items'], [])
         self.assertEqual(feedback_packet(r)['items'], [])
+
+    def test_decision_discards_completed_notes_but_keeps_held(self):
+        for action in ('reject','accept'):
+            id_ = self.proposal() if action == 'accept' else self.apply('propose', {'file':'main.tex','kind':'manuscript','before':'The model is strong and fast.','after':'The model is better.'})['id']
+            version = self.review().state['edits'][id_]['versions'][-1]
+            self.apply('feedback', {'id':id_,'version':version,'side':'original','start':0,'end':0,'quote':'','text':'完成的批注'})
+            self.apply('propose', {'after':'The model remains strong.','discard_annotations':True}, id_)
+            r=self.review(); edit=r.state['edits'][id_]
+            edit['previous_feedback']['requests'].append({**edit['previous_feedback']['requests'][0], 'id':'held-'+id_, 'text':'暂留', 'held':True})
+            r.persist({},digest(r.raw)); r=self.review()
+            updated,_=r.decide([id_] if action=='accept' else [],[id_] if action=='reject' else [])
+            r.persist(updated,digest(r.raw)); edit=self.review().state['edits'][id_]
+            notes=edit.get('requests',[])+(edit.get('previous_feedback') or {}).get('requests',[])
+            self.assertEqual([n['text'] for n in notes],['暂留'])
+
+    def test_prune_completed_uses_cas_and_preserves_pending_and_held(self):
+        import copy
+        from types import SimpleNamespace
+        from review_checkpoint import dispatch
+        id_ = self.proposal(); version = self.review().state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id':id_, 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'旧完成批注'})
+        state = copy.deepcopy(self.review().state)
+        state['edits']['2'] = copy.deepcopy(state['edits'][id_])
+        state['next'][0] = 3
+        state['edits'][id_]['status'] = 'accepted'
+        state['edits'][id_]['previous_feedback'] = {'requests':[dict(state['edits'][id_]['requests'][0], id='held', held=True)]}
+        self.install_sidecar(dict(state, schema=3))
+        def review(): return Review(self.root, '.codex-review/state.json', 'missing-git')
+        before = review(); raw = before.raw; versions = copy.deepcopy(state['edits'][id_]['versions'])
+        args = SimpleNamespace(operation='prune-completed', apply=False, expect=None, project=self.root, state='.codex-review/state.json', git='missing-git')
+        preview = dispatch(before, args)
+        self.assertEqual(len(preview['removed_notes']), 1)
+        self.assertEqual(review().raw, raw)
+        args.apply = True; args.expect = 'stale'
+        with self.assertRaises(Conflict): dispatch(review(), args)
+        self.assertEqual(review().raw, raw)
+        args.expect = digest(raw); dispatch(review(), args)
+        result = review().state
+        self.assertEqual(result['edits'][id_]['requests'], [])
+        self.assertTrue(result['edits'][id_]['previous_feedback']['requests'][0]['held'])
+        self.assertEqual(result['edits'][id_]['versions'], versions)
+        self.assertEqual(result['edits']['2'], state['edits']['2'])
 
     def install_sidecar(self, state):
         owner = self.root / 'reply.tex'
@@ -243,6 +275,9 @@ class NativeReview(unittest.TestCase):
         self.assertEqual(review().raw, unchanged_state)
         r = review()
         version = r.state['edits'][result['id']]['versions'][-1]
+        updated, _ = r.feedback({'id':result['id'], 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'事务前批注'})
+        r.persist(updated, digest(r.raw))
+        r = review(); state_before = r.raw
         updated, _ = r.decide([result['id']], [], {result['id']: version})
         write = FakeHostSession.write
         def interrupt(path, raw):
@@ -254,6 +289,7 @@ class NativeReview(unittest.TestCase):
                 r.persist(updated, digest(r.raw))
         interrupted = review()
         self.assertTrue(interrupted.interrupted)
+        self.assertEqual(interrupted.object_bytes(interrupted.state['transaction']['commit'], 'state-before'), state_before)
         (self.root / 'main.tex').write_text('Author edited after interruption.\n', encoding='utf-8')
         with self.assertRaisesRegex(Conflict, 'author/concurrent edits'):
             interrupted.recover(digest(interrupted.raw))
@@ -387,6 +423,7 @@ class NativeReview(unittest.TestCase):
         edit['questions'] = [{'id':'Q1','file':'reply.tex','quote':'Thank you.'}]
         state['edits']['2'] = copy.deepcopy(edit)
         state['edits']['2']['requests'][0]['status'] = 'open'
+        state['edits']['2']['requests'][0]['held'] = True
         state['edits']['3'] = copy.deepcopy(edit)
         state['edits']['3']['freshness'] = 'needs-recheck'
         state['edits']['4'] = copy.deepcopy(edit)  # Not in this verified checkpoint.

@@ -14,7 +14,7 @@ from pathlib import Path
 from contextlib import nullcontext
 from datetime import datetime, timezone
 
-from source_review import Review, Conflict, PENDING, body, digest, letters, protected_feedback
+from source_review import Review, Conflict, PENDING, body, digest, letters, protected_feedback, discard_completed_feedback
 
 
 def source_text(text, sidecar=False):
@@ -97,6 +97,15 @@ def record(r, spec):
     r.state['pending_backup'] = {'commit': commit, 'accepted': data['accepted'], 'manual_files': data['manual_files'], 'closed': data['closed'],
                                  'files': spec['files'], 'purpose': spec['purpose']}
     return {}, {'recorded': commit}
+
+
+def prune_completed(r):
+    """Preview or remove completed note records; held notes and all objects stay."""
+    r.assert_ready()
+    removed = []
+    for id_, edit in r.state['edits'].items():
+        removed.extend({'item':id_, **entry} for entry in discard_completed_feedback(edit))
+    return {}, {'removed_notes':removed, 'files_deleted':False}
 
 
 def compact(r):
@@ -321,7 +330,7 @@ def main():
     parser.add_argument('--git', default='git')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--expect')
-    parser.add_argument('operation', choices=['plan', 'record', 'compact', 'cleanup'])
+    parser.add_argument('operation', choices=['plan', 'record', 'compact', 'cleanup', 'prune-completed'])
     args = parser.parse_args()
     r = Review(args.project, args.state, args.git)
     with r.writer_lock() if args.apply else nullcontext():
@@ -341,7 +350,7 @@ def dispatch(r, args):
             result = cleanup(r, args.apply)
             result.update({'sha256': digest(r.raw), 'applied': args.apply})
             return result
-        updated, result = record(r, json.loads(sys.stdin.read())) if args.operation == 'record' else compact(r)
+        updated, result = record(r, json.loads(sys.stdin.read())) if args.operation == 'record' else prune_completed(r) if args.operation == 'prune-completed' else compact(r)
         if args.apply:
             r.persist(updated, args.expect)
             r = Review(args.project, args.state, args.git)

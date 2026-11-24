@@ -6,7 +6,7 @@ import json
 import os
 import re
 import sys
-from source_review import Review, Conflict, FieldConflict, OverlapConflict, PENDING, body, digest, locate
+from source_review import Review, Conflict, FieldConflict, OverlapConflict, PENDING, body, digest, locate, feedback_notes
 from document_roles import scan as scan_roles, relative_file
 from ai_context import paragraph_context, source_scope, comment_context, SectionSelectionConflict
 
@@ -224,10 +224,9 @@ def feedback_packet(review, ids=None):
         notes = edit.get('requests', [])
         if any(not n.get('id') or not n.get('version') for n in [*notes, *(edit.get('previous_feedback') or {}).get('requests', [])]):
             raise Conflict('旧批注身份不完整；请先核对，无法安全交接。')
-        identities = {(n['id'], n['version']) for n in notes}
-        notes = [*notes, *(n for n in (edit.get('previous_feedback') or {}).get('requests', []) if (n['id'], n['version']) not in identities)]
+        notes = feedback_notes(edit)
         for note in notes:
-            if not (note.get('held', False) or note['status'] == 'open'):
+            if not (note.get('held', False) or note['status'] in ('open', 'addressed-pending-review')):
                 continue
             version = note['version']
             if version not in edit['versions']:

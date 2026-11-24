@@ -28,10 +28,42 @@ def protected_feedback(edit):
     notes = edit.get('requests', [])
     identities = {(n.get('id'), n.get('version')) for n in notes if n.get('id') and n.get('version')}
     previous = (edit.get('previous_feedback') or {}).get('requests', [])
+    if edit.get('status') in ('accepted', 'rejected'):
+        return any(n.get('held', False) for n in [*notes, *previous])
     closed = {'resolved', 'closed-by-author-acceptance', 'closed-by-author-rejection'}
     return any(n.get('status') not in closed or n.get('held', False) for n in notes) or any(
         n.get('held', False) or (n.get('id'), n.get('version')) not in identities and n.get('status') not in closed for n in previous)
 PENDING = {"pending", "rework"}
+
+
+def feedback_notes(edit):
+    """Return unresolved notes, preferring a held mirror of the same identity."""
+    notes = [*edit.get('requests', []), *(edit.get('previous_feedback') or {}).get('requests', [])]
+    selected = {}
+    for note in notes:
+        if not note.get('held', False) and (edit.get('status') not in PENDING or note.get('status') not in ('open', 'addressed-pending-review')):
+            continue
+        key = (note.get('id'), note.get('version'))
+        if key not in selected or note.get('held', False) and not selected[key].get('held', False):
+            selected[key] = note
+    return list(selected.values())
+
+
+def discard_completed_feedback(edit):
+    """Discard decided notes while preserving all explicitly held notes."""
+    if edit.get('status') not in ('accepted', 'rejected'):
+        return []
+    removed = []
+    for source, container in (('requests', edit), ('previous_feedback', edit.get('previous_feedback') or {})):
+        key = 'requests'
+        if key not in container:
+            continue
+        notes = container[key]
+        removed.extend({'source':source, 'id':n.get('id'), 'version':n.get('version')} for n in notes if not n.get('held', False))
+        container[key] = [n for n in notes if n.get('held', False)]
+        if source == 'previous_feedback' and not container[key]:
+            edit.pop('previous_feedback', None)
+    return removed
 
 
 class Conflict(ValueError):
@@ -237,6 +269,7 @@ def locate(text, needle, left="", right=""):
 class Review:
     def __init__(self, repo, state, git="git", storage=None, initialize=False):
         started = time.perf_counter()
+        self._decision_pruned = False
         self.repo = Path(repo).resolve(strict=True)
         self.git_exe = git
         self.env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
@@ -1538,12 +1571,15 @@ class Review:
         return locate(text, item['before'])
 
     def decide(self, accept, reject, expected_versions=None, option=None):
+        self._decision_pruned = False
         previous = self.state
         previous_cache = self._read_cache
         self._read_cache = {}
         self.state = copy.deepcopy(previous)
         try:
-            return self._decide(accept, reject, expected_versions, option)
+            result = self._decide(accept, reject, expected_versions, option)
+            self._decision_pruned = any(len(self.state['edits'][id_].get('requests', [])) + len((self.state['edits'][id_].get('previous_feedback') or {}).get('requests', [])) < len(previous['edits'][id_].get('requests', [])) + len((previous['edits'][id_].get('previous_feedback') or {}).get('requests', [])) for id_ in accept + reject)
+            return result
         except Exception:
             # Restore the in-memory ledger too; no partial decisions on failure.
             self.state = previous
@@ -1612,9 +1648,7 @@ class Review:
                         operations.setdefault(rel, []).append((a, b, replacement, id_))
                     spans[id_] = (a, b)
                 edit['status'] = 'accepted' if id_ in accept else 'rejected'
-                for request in edit.get('requests', []):
-                    if request['status'] in ('open', 'addressed-pending-review') and not request.get('held', False):
-                        request['status'] = 'closed-by-author-acceptance' if id_ in accept else 'closed-by-author-rejection'
+                discard_completed_feedback(edit)
                 decisions[id_] = edit
             except Conflict as error:
                 conflicts.append({'id': id_, 'error': str(error)})
@@ -1975,15 +2009,17 @@ class Review:
             matches = [value for value in collection if value.get('id') == note['id'] and value.get('version') == note['version']]
             if len(matches) != 1 or matches[0] != note:
                 raise Conflict('批注已变化或不唯一，请重新选择。')
-            mirrors = [value for value in previous if value.get('id') == note['id'] and value.get('version') == note['version']] if item['source'] == 'requests' else []
+            other = previous if item['source'] == 'requests' else edit.get('requests', [])
+            mirrors = [value for value in other if value.get('id') == note['id'] and value.get('version') == note['version']]
             if len(mirrors) > 1:
                 raise Conflict('上一版批注身份不唯一，请先核对。')
             selected.append((edit, collection, matches[0], mirrors))
         for edit, collection, note, mirrors in selected:
-            if action == 'delete':
+            if action == 'delete' or action == 'release' and edit.get('status') in ('accepted', 'rejected'):
                 collection.remove(note)
                 for mirror in mirrors:
-                    edit['previous_feedback']['requests'].remove(mirror)
+                    other = edit['previous_feedback']['requests'] if collection is edit.get('requests') else edit.get('requests', [])
+                    other.remove(mirror)
             else:
                 for value in [note, *mirrors]:
                     if action == 'hold':
@@ -2029,6 +2065,8 @@ class Review:
                 intent_raw = None
                 if updated:
                     intent_files = {}
+                    if self._decision_pruned:
+                        intent_files['state-before'] = self.raw
                     for i, (rel, raw) in enumerate(targets.items()):
                         intent_files[f"{i}-old"] = self.original[rel]
                         intent_files[f"{i}-new"] = raw
@@ -2083,6 +2121,8 @@ class Review:
         try:
             with HostSession(self.repo) as host:
                 intent_files = {}
+                if self._decision_pruned:
+                    intent_files['state-before'] = self.raw
                 for i, (rel, raw) in enumerate(targets.items()):
                     intent_files[f'{i}-old'] = self.original[rel]
                     intent_files[f'{i}-new'] = raw
@@ -2244,10 +2284,9 @@ class Review:
             notes = edit.get('requests', [])
             if any(not n.get('id') or not n.get('version') for n in [*notes, *(edit.get('previous_feedback') or {}).get('requests', [])]):
                 raise Conflict('旧批注身份不完整；请先核对，无法安全交接。')
-            identities = {(n['id'], n['version']) for n in notes}
-            notes = [*notes, *(n for n in (edit.get('previous_feedback') or {}).get('requests', []) if (n['id'], n['version']) not in identities)]
+            notes = feedback_notes(edit)
             for note in notes:
-                if not (note.get('held', False) or note['status'] == 'open'):
+                if not (note.get('held', False) or note['status'] in ('open', 'addressed-pending-review')):
                     continue
                 version = note['version']
                 if version not in edit['versions']:
