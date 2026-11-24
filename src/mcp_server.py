@@ -71,7 +71,7 @@ TOOLS = [
     ('get_instructions', 'Read requested rule modules; pass known_rules from an earlier receipt to omit unchanged modules. Core is always required. Specific SKILL changes require author approval.', schema(RULES), True),
     ('read_context', 'FIRST: specify ids for revisions, scopes for exact source/cursor/section, or files for full files. No ids means no implicit pending items unless files are specified. Read author requirements and instructions through their dedicated tools. Pass known_feedback only when the full prose and notes are already in context.', schema(READ, ['project']), True),
     ('read_feedback', 'Read missing feedback generations, grouped once per ID/version; every note retains its exact option/selection. Optional ids scope.', schema({**BASE, 'ids': STRINGS}, ['project', 'state']), True),
-    ('read_paper_background', 'Read only this registered paper and exact review owner background; not an authorization or scientific verification.', schema(BASE, ['project','state']), True),
+    ('read_paper_background', 'Read this paper background, optionally selecting kinds or exact sources. Filtered results are partial: reread without filters before writing. Not an authorization or scientific verification.', schema({**BASE, 'kinds':{'type':'array','items':{'type':'string','enum':['background','method','data','constraints','other']}}, 'sources':STRINGS}, ['project','state']), True),
     ('write_paper_background', 'Replace this paper background only with the last read revision; record author/source/unconfirmed and never copy a paper, secrets or review state.', schema({**BASE, 'revision':{'type':'integer','minimum':0}, 'entries':{'type':'array','items':BACKGROUND_ENTRY}}, ['project','state','revision','entries']), False),
     ('read_file_roles', 'Read exact registered project file roles and structure before author-confirmed changes.', schema(BASE, ['project']), True),
     ('write_file_roles', 'Save only the complete author-confirmed file map, using the exact prior scan, owner file digest and revision; never infer author approval.', schema({**BASE, 'spec':{'type':'object'}}, ['project','spec']), False),
@@ -481,7 +481,16 @@ class Server:
             Review(root, state, git, initialize=state == '.codex-review/state.json' and not (root / state).exists())
             from paper_background import read, write
             if name == 'read_paper_background':
-                return {**read(self.registrations.parent, root, state), 'plugin_version': VERSION}
+                result = read(self.registrations.parent, root, state)
+                kinds, sources = args.get('kinds'), args.get('sources')
+                if kinds is not None or sources is not None:
+                    if kinds is not None and (not isinstance(kinds, list) or any(kind not in ('background','method','data','constraints','other') for kind in kinds)) or sources is not None and (not isinstance(sources, list) or any(not isinstance(source, str) for source in sources)):
+                        raise Conflict('论文资料筛选无效。')
+                    result['entries'] = [entry for entry in result['entries'] if (kinds is None or entry['kind'] in kinds) and (sources is None or entry['source'] in sources)]
+                    result['partial'] = True
+                    result['revision'] = None
+                    result['write_notice'] = '筛选结果不完整；写入前必须无筛选读取并保留其他条目。'
+                return {**result, 'plugin_version': VERSION}
             return {**write(self.registrations.parent, root, state, args.get('revision'), args.get('entries')), 'plugin_version': VERSION}
         if name in ('migrate_state', 'recover_migration'):
             from review_migration import preview as migration_preview, apply as migration_apply, recovery_preview, recover as migration_recover

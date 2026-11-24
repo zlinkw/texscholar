@@ -175,6 +175,9 @@ test('task choices retain exact selection, project identity and distinct instruc
     assert(!/read_context|expected_plugin_version|"scopes"/.test(preview));
     const packet = await taskRequest(polish.goal, polish.roots, false, undefined, polish.readRequest, polish.taskKind);
     assert(packet.includes('read_context') && packet.includes('expected_plugin_version') && packet.includes('"quote":"原文"'));
+    const slim = await taskRequest('明确目标', ['/paper'], false, undefined, polish.readRequest, 'polish', {personal_prompts:{entries:['私人哨兵']},entries:[{text:'历史迁移哨兵'}]}, {files:[{file:'无关哨兵.tex'}]});
+    assert(slim.includes('明确目标') && slim.includes('"quote":"原文"') && slim.includes('read_personal_prompts'));
+    assert(!slim.includes('私人哨兵') && !slim.includes('历史迁移哨兵') && !slim.includes('无关哨兵.tex'));
     picks = ['discuss','later'];
     const discuss = await chooseTask(context, vscode, readRoles);
     assert.notEqual(discuss.goal, polish.goal);
@@ -283,6 +286,8 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
     try {
         await require('./mcp_setup').activate(context, vscode, {scanClients: async () => ({available: true, clients: [{pid: process.pid, client: desktopClient ? 'desktop' : 'vscode'}]}),
             readRoles:async () => ({status:roleStatus,authority:'paper',files:[{file:'paper.tex',roles:['manuscript'],root:'paper.tex'}]})}).ready;
+        const seed = "from paper_background import write,write_personal; import sys; write(sys.argv[1],sys.argv[2],'reply.tex',0,[{'kind':'other','text':'迁移历史哨兵','evidence':'source','source':'legacy:1'}]); write_personal(sys.argv[1],None,0,[{'category':'writing','text':'个人习惯哨兵','enabled':True}])";
+        require('node:child_process').execFileSync(process.env.LOCAL_LATEX_PYTHON || 'python', ['-B','-X','utf8','-c',seed,storage,paper], {cwd:__dirname});
         assert(!notices.some(text => text.includes('MCP 运行版本待核验')), 'startup without a report is a quiet pending state');
         const start = handlers.get('localLatex.startPaperTask');
         await start({goal:''});
@@ -293,19 +298,20 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         assert.equal(attachments.length, 1, 'task and rules are a single attachment');
         const initial = await fs.readFile(attachments[0][1].fsPath, 'utf8');
         assert(initial.includes(goal)); assert(initial.includes('read_context')); assert(!initial.includes('\n40. '), 'first writing task is not a machine migration');
+        assert(!initial.includes('迁移历史哨兵') && !initial.includes('个人习惯哨兵'));
         assert(initial.includes('插件版本：' + require('../package.json').version));
         assert(initial.includes('expected_plugin_version'));
         assert(!initial.includes('# TeXScholar 当前任务协作协议：'), 'MCP provides the actual applicable protocol once');
-        assert(initial.includes('known_rules')); assert(initial.includes('ids'));
+        assert(initial.includes('read_file_roles') && initial.includes('read_paper_background'));
         assert(notices.at(-1).includes('首次连接需重启 Codex'));
         const scope = {project:paper,scopes:[{file:'paper.tex',quote:'Original paper',left:'',right:' stays unchanged.'}]};
         await start({goal:'只查看选区',readRequest:scope,keepCurrentChat:true});
         let quick = await fs.readFile(calls.filter(c => c[0] === 'chatgpt.addFileToThread').at(-1)[1].fsPath,'utf8');
-        assert(quick.includes('"roles":["manuscript"]')); assert(quick.includes('不自动创建候选或修改正文'));
+        assert(quick.includes('read_file_roles')); assert(quick.includes('不自动创建候选或修改正文'));
         roleStatus = 'changed'; await start({goal:'只查看选区',readRequest:scope,keepCurrentChat:true});
         quick = await fs.readFile(calls.filter(c => c[0] === 'chatgpt.addFileToThread').at(-1)[1].fsPath,'utf8');
         assert(notices.some(text => text.includes('文件角色尚未确认或文件结构已变化')));
-        assert(quick.includes('请通过 read_context 核对。')); roleStatus = 'confirmed';
+        assert(quick.includes('read_file_roles')); roleStatus = 'confirmed';
         const messages = vscode.window.showInformationMessage;
         let steps = ['discuss','later','无需补充，继续','加入当前聊天'];
         vscode.window.showQuickPick = async options => {const item=steps.shift(); return options.find(option => option.id === item || option.label === item);};
@@ -376,8 +382,8 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         state.set('aiSetupConfigured', true); calls.length = 0; notices.length = 0;
         goal = '修改回复信'; await start({goal});
         const everyday = await fs.readFile(calls.find(c => c[0] === 'chatgpt.addFileToThread')[1].fsPath, 'utf8');
-        assert(everyday.includes(goal)); assert(everyday.includes('A/B/C')); assert(!everyday.includes('\n40. '));
-        assert(everyday.includes('rules_receipt'));
+        assert(everyday.includes(goal)); assert(everyday.includes('作者决定是否接收')); assert(!everyday.includes('\n40. '));
+        assert(everyday.includes('get_instructions'));
         assert(!everyday.includes('工具升级后读取同目录 source_review.py 的 --help'));
         assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), configured, 'repeat setup is idempotent');
         assert(!notices.at(-1).includes('首次连接'));
@@ -390,7 +396,7 @@ test('one AI assistant prepares one packet, connects safely, respects cancellati
         assert(selected.includes(JSON.stringify({...readRequest, expected_plugin_version: require('../package.json').version})));
         assert(!selected.includes('\\documentclass{article}'));
         available = []; calls.length = 0; copyChoice = '复制完整任务说明'; await start({goal});
-        assert.equal(copied.length, 1); assert(copied[0].includes(goal)); assert(copied[0].includes('A/B/C'));
+        assert.equal(copied.length, 1); assert(copied[0].includes(goal)); assert(copied[0].includes('作者决定是否接收'));
         assert.equal(calls.length, 0, 'no unavailable command or automatic sending');
         available = ['chatgpt.addFileToThread']; python = path.join(root, 'missing-python');
         await start({goal});

@@ -132,3 +132,21 @@ U1 附件：根据用户要求只输出所选范围的批注正文、状态、�
 版本与总控计划同批提交并普通 push/fetch；唯一构建 U-delivery-build exit 0，源码 d117c52ab97b5e7f3c4f9c4b0ce9d1f2973c10df。dist/v0.9.66/texscholar-0.9.66.vsix SHA256 2db62b1caa82e7a235f7d0000e0bfd30bb6c26838d4a95f5180c20375c9d5bef；texscholar-0.9.66-source.zip 98f23877e9f35c2713008163e36aa6465eca3952009698bebd2b2f6eb6fed02a；SHA256SUMS.txt bf3fd6849835316faf5d37193576334a3f535735b7e50750c276bd19fad956a2。附注 tag v0.9.66 对象 9731e11aeb9c187207d151df51aaf3881ca1f9ec 指向该源码，附注记录 SOURCE-COMMIT 和双包摘要，普通推送 exit 0。
 
 U-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.66 非 draft、非 prerelease，API 三附件摘要与本地一致，U-delivery-verify exit 0。实际 C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.66/texscholar-0.9.66.vsix 于仓库执行 exit 0，无 force；CLI、manifest 为 local-research.latex-writing-tools 0.9.66，登记 source=vsix、pinned=true。未重载用户窗口或 MCP，安装不证明活动宿主已加载；真实备份是否重试未核。未触真实论文或删除清理。完整命令及日志位于 D:/latex-writing-checks/review-efficiency-20261122/U-delivery-*。
+
+### V1 精确批注交接
+
+保存返回实际 request 身份与快照，保存并交接只发送该笔；失败重试不重复保存，核批次、版本和原快照。顶部及所选项入口先明确选择批注，支持跨项多选和显式全选，旧版、暂留和其他状态可选；未选批注保留。V-workbench-test7 exit 0，94 项；V-handoff4-run 正常私有 Development、专属 pipe，实际先保存同项三条旧意见，再保存并交接新意见，附件不含三条旧意见；选择跨项两条后附件只含所选，host/observer/外层均 0。截图 ui-fde2b66c777d4c07a7a64a31adfde73f.png 已看，Default 前中后前台不变；Codex 添加命令为隔离桩。V-handoff2-run exit 1，观察器遍历重建后的旧 DOM 导致第二项未选；逐次重取节点后 run3/4 exit 0。首次 V-workbench-red 未创建测试目录，其后 test2 夹具与旧契约不符、test3 重试桩缺 session，均保留原日志。
+
+### V1b/V1c 任务提示与资料范围
+
+助手日常任务保留明确目标、项目/版本、所选范围、连接与按需读取入口，不预读或注入整份论文资料、个人习惯或批注；显式机器配置任务仍保留其既有配置说明。V-writing-test 首次按旧行为期待自动规则收据而失败，修正测试为当前按需协议后 V-writing-test2 exit 0（含真实输入区准备入口和目标/选区），所有首败保留。
+
+空个人资料和空论文要求本来允许保存；read_paper_background 新增 kinds / sources 精确筛选，筛选结果标为 partial 且不返回可用于写入的 revision，写前必须无筛选读取。V-mcp-tests3 独立宿主/专属 pipe 12 项 exit 0；隔离测试验证历史来源重分类后当前要求为空、旧文本/来源和候选意图摘要不变、作者以后明确添加的约束可读。历史注释应标明非当前要求，待审意图不自动升为约束。
+
+总控只读事实：真实 profile 的 personal 为空，papers.entries 含 constraints 112、other 40，22 个候选 rule_source 均指向 other、constraints 无绑定；未由本执行者读写真实资料。供总控核准后协调的最小方向为在同一记录的精确 CAS 版本上，将已核对的历史 constraints 改为 other 并在 scope 明示历史原注释及原范围，保持 text/source/evidence，逐字保留其他条目及候选 proof；实际真实变更和新旧记录对照由总控独占，不在本阶段执行。当前旧记录未改，不能称真实论文要求已清空。
+
+补验：V-handoff5-run exit 0，在同一隔离实例实际编辑旧批注并交接，附件只含改后的该条；截图 ui-60923ff98adf42978515fa943b8fc615.png 已看。V-workbench-test8 94 项 exit 0；选择失效时在批注选择对话框显示错误。V-writing-test4 exit 0，隔离本地资料库预置迁移资料和个人习惯哨兵，实际任务附件包含明确目标与选区、未注入哨兵；所有记录不触真实项目。
+
+V-handoff6-run exit 1：隔离界面尝试先操作暂留时未观察到暂留完成，等待到期；不认定产品原因，原记录保留。新 V-handoff7-run 在隔离夹具预置暂留批注，实际跨项选择并交接后附件准确标注暂留，且新建和编辑各只发送对应单笔；host/observer/外层 exit 0，截图 ui-949fa9ba011348e29700acc60ab9ba12.png 已看。该轮不宣称暂留按钮操作已经验证。
+
+V-handoff8-run 暂留及该条精确附件已实际成功，但观察器在上一操作结束前触发编辑后无限等待附件；为正常结束该隔离进程写入测试用占位附件，故最终 exit 1，不能算该轮通过。V-handoff9-run 等待实际忙态结束后覆盖暂留、选择、编辑和附件，host/observer/外层 exit 0，截图 ui-a89b85523103460aac81b239ca83de79.png 已看；V6 首败与 V8 人工占位均保留。

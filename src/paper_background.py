@@ -102,7 +102,7 @@ def read(storage, root, owner):
                 raise ValueError('该项目已有论文资料，但审核归属未明确关联；请先核对并显式关联。')
     entries = json.loads(row[1]) if row else []
     result = {'project': project, 'state': owner, 'revision': row[0] if row else 0, 'entries': entries,
-              'scope': '本论文资料中作者明确约定按其适用范围执行；背景与待确认事实仅供参考，均不单独构成操作授权。'}
+              'scope': '本论文当前作者约定按其适用范围执行；标明历史原注释的条目仅为来源，不自动成为当前要求。背景与待确认事实仅供参考，均不单独构成操作授权。'}
     state_path = Path(root) / owner
     if owner == '.codex-review/state.json' and any(path.is_symlink() or path.is_junction() for path in (state_path.parent, state_path)):
         raise ValueError('审核状态不能通过链接读取。')

@@ -1202,7 +1202,7 @@ function createWorkbench(vscode, context, services) {
             post({type: 'result', message: ''});
         } catch (error) {
             const interrupted = message.type === 'acceptBatch' && error.message.includes('审核宿主事务失败');
-            if (panel === operationPanel) post({type: interrupted ? 'unavailable' : message.type === 'manageFeedback' ? 'feedbackManaged' : 'result', transaction:interrupted, error: true, message: error.message});
+            if (panel === operationPanel) post({type: interrupted ? 'unavailable' : ['manageFeedback','handoffSelected'].includes(message.type) ? 'feedbackManaged' : 'result', transaction:interrupted, error: true, message: error.message});
             else vscode.window.showErrorMessage(error.message);
         }
         finally {

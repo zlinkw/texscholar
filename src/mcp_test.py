@@ -146,6 +146,29 @@ class MCP(unittest.TestCase):
         with self.assertRaises(ValueError):
             server.call('read_paper_background', {**base,'state':'../outside.tex'})
 
+    def test_paper_background_filtered_reads_keep_history_and_allow_new_requirements(self):
+        server = self.server(); base = {'project':str(self.root), 'state':'reply.tex'}
+        from paper_background import candidate_entry_digest
+        old = {'kind':'constraints','text':'旧注释原文','evidence':'source','source':'legacy:1','scope':'main.tex'}
+        history = {**old,'kind':'other','scope':'历史迁移原注释，非当前作者要求；原范围：'+old['scope']}
+        proof = {'kind':'other','text':'待审方案意图','evidence':'source','source':'candidate:1'}
+        server.call('write_paper_background', {**base,'revision':0,'entries':[old,proof]})
+        before = server.call('read_paper_background',base)
+        server.call('write_paper_background', {**base,'revision':before['revision'],'entries':[history,proof]})
+        self.assertEqual(candidate_entry_digest(proof), candidate_entry_digest(server.call('read_paper_background',base)['entries'][1]))
+        current = server.call('read_paper_background', {**base,'kinds':['constraints']})
+        self.assertEqual(current['entries'], []); self.assertTrue(current['partial'])
+        self.assertIsNone(current['revision'])
+        with self.assertRaises(ValueError):
+            server.call('write_paper_background',{**base,'revision':current['revision'],'entries':[]})
+        self.assertIn('无筛选读取', current['write_notice'])
+        self.assertEqual(server.call('read_paper_background',{**base,'sources':['legacy:1']})['entries'], [history])
+        full = server.call('read_paper_background',base)
+        requirement = {'kind':'constraints','text':'作者明确的新要求','evidence':'author','source':'作者'}
+        server.call('write_paper_background',{**base,'revision':full['revision'],'entries':[*full['entries'],requirement]})
+        self.assertEqual(server.call('read_paper_background',{**base,'kinds':['constraints']})['entries'], [requirement])
+        self.assertEqual(server.call('read_paper_background',base)['entries'], [history,proof,requirement])
+
     def test_paper_background_distinguishes_same_named_registered_roots(self):
         server = self.server()
         roots = [self.root / 'a' / 'paper', self.root / 'b' / 'paper']
