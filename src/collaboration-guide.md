@@ -4,8 +4,8 @@
 
 ## 日常修改的最短完整流程
 
-1. 首次 read_context 核对插件版本和 file_roles。已有编号传 ids，新位置传 scopes 的精确 quote（插入点为空并给 left/right）或完整 section 命令；需要全文才传 files。默认返回全部未决项及相邻段落，不自动发送整篇源码。sources 是上下文，不是扩大改动的授权；global 作者规则、local 局部注释、reference 模板要求分开处理，模板不能覆盖作者规则。
-2. 按任务选 modules；只在本会话确实仍有对应规则时传 known_rules。返修附件有 known_feedback 时原样传入：工具会重读当前源文件和状态，未变的原文、候选、批注可标 feedback_reused 而不重复返回，其他上下文照常提供。附件缺失、上下文丢失或版本失效时不得声称已经持有；新版返回优先，不要求恢复被废弃的旧批注。缺少必要依据时按需补读，不用工具成功冒充科学核验。
+1. 首次 read_context 核对插件版本，使用 read_file_roles 读取文件角色。已有编号传 ids，新位置传 scopes 的精确 quote（插入点为空并给 left/right）或完整 section 命令；需要全文才传 files。默认不返回全部未决项；需要时明确指定编号或文件。sources 是上下文，不是扩大改动的授权；按需读取作者约定和资料，模板不能覆盖作者规则。
+2. 按任务用 get_instructions 选 modules，返修协议使用 feedback；只在本会话确实仍有对应规则时传 known_rules。精简返修附件不含完整原文和候选，不能据此传 known_feedback；确实持有完整原文、全部候选与批注的旧附件可沿用该收据。缺少必要依据时按需补读，不用工具成功冒充科学核验。
 3. 直接组织 A/B/C 并保存。单项用 propose_options/rework_options，多项用 submit_options；apply 默认 true，无需预览后再写一遍。下一次写入使用成功回执的 sha256/version，不逐项重读、重算摘要或编译。成功后简报实际编号和目的即可。维护 CLI propose-options 不属于日常 MCP 的额外步骤。
 4. 外置状态中的 rework_options 默认保留既有批注和候选历史；按作者明确要求才使用 discard_annotations 或 resolve_requests。旧内嵌状态的默认行为不同，需保留当前批注时明确传 discard_annotations=false；旧格式迁移前不能假称所有批注都能由新版界面管理。审核目录可多选后用“所选批注 → Codex”只交接选中项，加入输入区后仍由作者检查和发送。元数据关联绝不清除批注；返修不等于接收或解决科学问题。失败保留原状态，旧版本可按需读取。
    可选 `fulfillment` 逐条说明本版如何尝试处理批注：填写真实 request ID、request_version、request_text，以及方案、完整 after 内 Unicode 字符范围和精确 quote、explanation、status（attempted／partial／author／evidence）。未说明的要求仍开放；这些说明不是作者接收或科学验证。
@@ -38,7 +38,7 @@
 
 ## 文件角色细节
 
-每次论文任务先读 read_context 返回的 file_roles。插件按实际 TeX 内容、documentclass、input/include/subfile/import 和 !TeX root 提供建议，不要求特定文件名。只有 status=confirmed 才能据此写候选；unconfirmed 或 changed 时请作者在 VS Code 执行“TeXScholar：识别／确认论文文件角色”。不要自行伪造确认、猜测用途或绕过 MCP 检查。首次新项目可在作者授权下先创建必要模板骨架，但不能将草稿直接冒充已接收正文。
+每次论文任务用 read_file_roles 核对文件角色。插件按实际 TeX 内容、documentclass、input/include/subfile/import 和 !TeX root 提供建议，不要求特定文件名。只有 status=confirmed 才能据此写候选；unconfirmed 或 changed 时请作者在 VS Code 执行“TeXScholar：识别／确认论文文件角色”。不要自行伪造确认、猜测用途或绕过 MCP 检查。首次新项目可在作者授权下先创建必要模板骨架，但不能将草稿直接冒充已接收正文。
 
 文件角色由插件本地论文资料保存，包含登记拥有文件和 files，structure 保存结构快照；file/root 均为项目相对路径，root=null 表示未指定编译入口。manuscript 是论文主文档，chapter 是正文子文件，response 是回复信，review 是原始审稿意见，template 是仅供参考的模板，other 是其他 TeX；一个文件可同时为 response 和 review。AI 仅在作者明确要求后以 read_file_roles 读取当前版本和结构，再用 write_file_roles 保存作者确认的完整角色；未经确认不猜角色、不搬迁 owner。旧源码角色块在明确迁移前仍按原契约读取，不会自动清除；与新登记冲突时停止核对。角色登记不初始化审核、不改变编号或审核决定。
 

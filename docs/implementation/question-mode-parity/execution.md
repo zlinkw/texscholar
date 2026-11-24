@@ -94,3 +94,7 @@ dist/v0.9.65/texscholar-0.9.65.vsix SHA256 38d307664fd84f0850c74a7b6e6b291ee5c26
 T-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.65 非 draft、非 prerelease，API 三附件摘要与本地一致，T-delivery-verify exit 0。实际 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.65/texscholar-0.9.65.vsix` 于仓库目录执行 exit 0，无 force；CLI 与实际 manifest 为 local-research.latex-writing-tools 0.9.65，登记 source=vsix、pinned=true。未重载用户窗口，安装不代表活动宿主已加载；未探测默认管道/MCP、未操作真实论文或删除清理。原首败和 T2 总控补充错误传播检查保留。
 
 U1 附件：根据用户要求只输出所选范围的批注正文、状态、版本和必要选区身份，移除全文、候选、背景、习惯、协议和不真实的 known_feedback 收据；给出精确按需读取入口且明确作者约定仍须遵守。U-attachment-tests 在独立合成根运行 inline_review 测试 exit 0，覆盖本项/所选/全部范围及版本校验；MCP 按需链和其他用户新增目标仍待后续功能批验证，未宣称整阶段完成。
+
+### U1 按需读取（本批）
+- MCP 默认不注入未决项、资料、习惯或协议；精确编号及显式文件读取保留，文件角色和返修协议分别按需读取。同步初始化指引，旧完整附件收据仍受原契约约束。
+- 隔离测试 U-mcp-tests 首次 exit 1：原断言要求隐式全局规则；改为验证显式文件读取后 U-mcp-tests2 exit 0（12 项）。原日志保留于 D:/latex-writing-checks/review-efficiency-20261122/。

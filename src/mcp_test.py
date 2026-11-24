@@ -122,7 +122,8 @@ class MCP(unittest.TestCase):
         current = server.call('write_personal_prompts', {**base,'profile_id':saved['profile_id'],'revision':1,'entries':[first,second]})
         self.assertEqual(current['revision'], 2)
         packet = server.call('read_context', {**base,'ids':[]})
-        self.assertEqual(packet['personal_prompts']['entries'], [first,second])
+        self.assertNotIn('personal_prompts', packet)
+        self.assertEqual(server.call('read_personal_prompts', base)['entries'], [first,second])
         other = Path(tempfile.mkdtemp(prefix='other-profile-',dir=fixtures.ROOT)) / 'registrations'
         other.mkdir()
         (other/'workspace.json').write_text(json.dumps({'roots':[str(self.root)]}),encoding='utf-8')
@@ -138,7 +139,7 @@ class MCP(unittest.TestCase):
         self.assertEqual(saved['revision'], 1)
         with self.assertRaisesRegex(ValueError, '背景已变化'):
             server.call('write_paper_background', {**base,'revision':0,'entries':[]})
-        self.assertEqual(server.call('read_context', {**base,'ids':[]})['paper_background']['entries'], [entry])
+        self.assertNotIn('paper_background', server.call('read_context', {**base,'ids':[]}))
         with self.assertRaisesRegex(ValueError, 'source'):
             server.call('write_paper_background', {**base,'revision':1,'entries':[{**entry,'evidence':'source','source':''}]})
         self.assertEqual(server.call('read_paper_background', base)['entries'], [entry])
@@ -361,7 +362,8 @@ class MCP(unittest.TestCase):
         args = {'project': str(self.root), 'state': 'reply.tex', 'ids': [id_], 'known_feedback': receipts}
         before = self.review().raw
         response = server.call('read_context', args)
-        self.assertIn('只有作者明确确认具体方案后', response['feedback_skill_protocol'])
+        self.assertNotIn('feedback_skill_protocol', response)
+        self.assertIn('只有作者明确确认具体方案后', server.call('get_instructions', {'modules':['feedback']})['protocol'])
         data = response['context']
         self.assertTrue(data['items'][id_]['feedback_reused'])
         self.assertTrue(data['items'][id_]['source_match'])
@@ -565,9 +567,9 @@ class MCP(unittest.TestCase):
         self.apply('propose_options', {'file': 'main.tex', 'kind': 'manuscript', 'before': 'The model is strong and fast.', 'options': options})
         server = self.server()
         data = server.call('read_context', {'project': str(self.root)})
-        self.assertEqual(data['file_roles']['status'], 'confirmed')
-        self.assertNotIn('structure', data['file_roles'])
-        self.assertNotIn('suggested', data['file_roles'])
+        self.assertNotIn('file_roles', data)
+        self.assertEqual(data['context']['items'], {})
+        self.assertEqual(server.call('read_file_roles', {'project':str(self.root)})['status'], 'confirmed')
         self.assertNotIn('Far away context.', str(data['context']['sources']))
         full = server.call('read_context', {'project': str(self.root), 'files': ['main.tex']})
         self.assertIn('Far away context.', str(full['context']['sources']))
@@ -949,7 +951,8 @@ class MCP(unittest.TestCase):
         self.assertNotIn('accept', [tool[0] for tool in TOOLS])
         context = server.call('read_context', {'project': str(self.root)})
         self.assertEqual(context['owner'], 'reply.tex')
-        self.assertIn('propose-options', context['protocol'])
+        self.assertNotIn('protocol', context)
+        self.assertIn('propose-options', server.call('get_instructions', {})['protocol'])
         source = (self.root / 'main.tex').read_bytes()
         args = {'project': str(self.root), 'state': 'reply.tex', 'expected_sha256': context['context']['sha256'], 'spec': {
             'intent': {'goal': '限定模型描述', 'preserve': '保留已知事实'},
@@ -1034,9 +1037,9 @@ class MCP(unittest.TestCase):
 
     def test_roles_are_shared_with_ai_and_ambiguous_or_wrong_kind_writes_stop(self):
         server = self.server()
-        context = server.call('read_context', {'project': str(self.root)})
-        self.assertEqual(context['file_roles']['status'], 'confirmed')
-        self.assertEqual(context['file_roles']['owner'], 'main.tex')
+        context = server.call('read_file_roles', {'project': str(self.root)})
+        self.assertEqual(context['status'], 'confirmed')
+        self.assertEqual(context['owner'], 'main.tex')
         spec = {'file': 'main.tex', 'kind': 'response', 'before': 'The model is strong and fast.', 'options': [
             {'label': label, 'after': 'The model is ' + word + '.', 'reason': label} for label, word in zip('ABC', ['reliable', 'compact', 'efficient'])]}
         args = {'project': str(self.root), 'state': 'reply.tex', 'expected_sha256': digest(self.review().raw), 'spec': spec}
@@ -1044,7 +1047,7 @@ class MCP(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '文件角色不符'):
             server.call('propose_options', args)
         (self.root / 'new.tex').write_text('New chapter.', encoding='utf-8')
-        self.assertEqual(server.call('read_context', {'project': str(self.root)})['file_roles']['status'], 'changed')
+        self.assertEqual(server.call('read_file_roles', {'project': str(self.root)})['status'], 'changed')
         spec['kind'] = 'manuscript'
         with self.assertRaisesRegex(ValueError, '未确认或结构已变化'):
             server.call('propose_options', args)
@@ -1082,7 +1085,7 @@ class MCP(unittest.TestCase):
             self.assertEqual(context['questions'][item['question_refs'][0]]['quote'], 'Thank you.')
             self.assertNotIn('versions', item)
             self.assertNotIn('cards', context)
-            self.assertIn('保留实验数值', '\n'.join(b['text'] for b in context['author_comments']['global']['main.tex']))
+            self.assertNotIn('main.tex', context['author_comments']['global'])
             self.assertIn('解释边界', '\n'.join(b['text'] for b in context['author_comments']['local']['main.tex']))
             for file, spans in context['sources'].items():
                 text = self.review().read(file)
@@ -1091,6 +1094,7 @@ class MCP(unittest.TestCase):
             self.assertNotIn('CODEX-REVIEW-DATA', json.dumps(context))
             full = server.call('read_context', {**base, 'files': ['main.tex']})['context']
             self.assertEqual(full['sources']['main.tex'][0]['text'], self.review().read('main.tex'))
+            self.assertIn('保留实验数值', '\n'.join(b['text'] for b in full['author_comments']['global']['main.tex']))
         self.assertEqual(before, {f: (self.root / f).read_bytes() for f in before})
         with self.assertRaisesRegex(ValueError, 'Unknown review ID'):
             server.call('read_context', {**base, 'ids': ['missing']})
@@ -1179,7 +1183,15 @@ class MCP(unittest.TestCase):
         server = self.server()
         base = {'project': str(self.root), 'state': 'reply.tex'}
         packet = server.call('read_feedback', {**base, 'ids': [id_]})
-        self.assertIn('只有作者明确确认具体方案后', packet['feedback_skill_protocol'])
+        self.assertNotIn('feedback_skill_protocol', packet)
+        self.assertNotIn('personal_prompts', packet)
+        self.assertNotIn('paper_background', packet)
+        narrow = server.call('read_context', {**base, 'ids':[id_]})
+        self.assertNotIn('protocol', narrow)
+        self.assertNotIn('personal_prompts', narrow)
+        self.assertNotIn('paper_background', narrow)
+        self.assertIn(id_, narrow['context']['items'])
+        self.assertEqual(server.call('read_context', base)['context']['items'], {})
         groups = packet['items']
         self.assertEqual(len(groups), 2)
         self.assertEqual(groups[0]['options'], options)
