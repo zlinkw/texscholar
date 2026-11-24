@@ -23,7 +23,7 @@ async function applyHostEdit(vscode, editor, expected, replacement, hasAuthority
             throw new Error('编辑期间正文发生变化；请核对尚未完成的编辑事务。');
     }
     checkApplied();
-    if (!await doc.save()) throw new Error('编辑器保存失败；请核对尚未完成的编辑事务。');
+    if (!await doc.save()) throw new Error('编辑器保存失败；事务可能尚未完成，正文可能已变化。请先核对编辑器和事务状态，勿重复接收，再使用现有恢复流程。');
     checkApplied();
     if (doc.isDirty) throw new Error('保存后正文仍有未保存修改；请核对尚未完成的编辑事务。');
 }

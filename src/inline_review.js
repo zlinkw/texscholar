@@ -746,7 +746,11 @@ function createInlineReview(vscode, context, execute = run) {
         vscode.window.showInformationMessage('已接收并保存 ' + result.accepted.join(', ') + '；后台备份已排队。');
         scheduleBackup(c);
         if (result.cards_error) vscode.window.showErrorMessage('接收已保存，但刷新卡片失败：' + result.cards_error);
-        await refresh(c, false, false, result.cards_packet);
+        try {await refresh(c, false, false, result.cards_packet);}
+        catch (error) {
+            vscode.window.showErrorMessage('接收已保存，但刷新审核页失败；请重新读取状态，勿重复接收：' + error.message);
+            return {...result, refresh_error:error.message};
+        }
         const navigation = items.map(i => pdfMetadata.get(i.repo + '|' + i.id)).find(Boolean);
         if (navigation && config().get('reviewPDF.autoUpdateAfterAccept', true)) scheduleAcceptedPDF(c, navigation);
         return result;

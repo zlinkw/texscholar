@@ -1198,6 +1198,37 @@ test('batch selections survive page reconstruction and remove only accepted iden
     await receive({type:'ready',instance:'five'}); assert.deepEqual(messages.findLast(m=>m.type==='content').batchItems,[]);
 });
 
+test('batch acceptance advances to the next question only when the current question is exhausted', async () => {
+    for (const retain of [true,false]) {
+        let receive, view; const values={}, messages=[], session='s';
+        const workspaceState={get:(k,fallback)=>values[k] ?? fallback,update:async(k,v)=>{values[k]=structuredClone(v);}};
+        const questions=[{id:'q1',file:'q',quote:'one'},{id:'q2',file:'q',quote:'two'}], keys=questions.map(q=>JSON.stringify([q.id,q.file,q.quote]));
+        const make=id=>({id,version:'v1',original:'Old',source_match:true,edit:{file:'m',kind:'manuscript',status:'pending',versions:['v1'],requests:[],questions:[]},options:[{label:'A',after:'New'}]});
+        const records=new Map(['1','2','3'].map(id=>[id,{c:{repo:'/batch',owner:'state',id,version:'v1'},data:make(id)}]));
+        const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+        const services={session:()=>session,read:async c=>structuredClone(records.get(c.id).data),readNext:async c=>structuredClone(records.get(c.id).data),style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,
+            directory:()=>[...records.values()].map(({c,data})=>({id:c.id,version:c.version,...data.edit})),
+            questions:()=>questions.map((question,i)=>({key:keys[i],question,entries:(i===0?['1','2']:['3']).filter(id=>records.has(id)).map(id=>({id,version:'v1'})),snapshot:'[]'})),
+            acceptBatch:async()=>{records.delete('1');if(!retain)records.delete('2');view.sync(records,{repo:'/batch',owner:'state'});return {accepted:['1']};}};
+        view=createWorkbench(vscode,{subscriptions:[],workspaceState},services);view.setRecords(records);await view.show(records.get('1').c);await receive({type:'ready',instance:'page'});
+        await receive({type:'acceptBatch',instance:'page',id:'1',version:'v1',session,questionKey:keys[0],questionOnly:true,items:[{id:'1',version:'v1',option:'A'}]});
+        assert.equal(view.active.id,retain?'2':'3');
+        if(!retain)assert.equal(values.reviewQuestionPosition[JSON.stringify(['/batch','state'])].key,keys[1]);
+        assert(messages.some(m=>m.type==='batchAccepted'));
+    }
+});
+
+test('saved batch with a failed refresh clears the selection and warns against repeating', async () => {
+    let receive; const messages=[], c={repo:'/batch',owner:'state',id:'1',version:'v1'};
+    const data={id:'1',version:'v1',original:'Old',source_match:true,edit:{file:'m',kind:'manuscript',versions:['v1'],requests:[]},options:[{label:'A',after:'New'}]};
+    const vscode={Uri:{file:fsPath=>({fsPath})},ViewColumn:{One:1},window:{createWebviewPanel:()=>({visible:true,reveal(){},onDidDispose(){},onDidChangeViewState(){},webview:{cspSource:'vscode-webview:',asWebviewUri:u=>({toString:()=>u.fsPath}),onDidReceiveMessage:f=>{receive=f;},postMessage:m=>messages.push(structuredClone(m))}})}};
+    const services={session:()=> 's',read:async()=>data,style:()=>require('./review_style').defaults,selection:()=> 'A',pdfStatus:()=>'',autoTranslate:()=>false,directory:()=>[{id:'1',version:'v1',...data.edit}],acceptBatch:async()=>({accepted:['1'],refresh_error:'fixture error'})};
+    const view=createWorkbench(vscode,{subscriptions:[]},services);view.setRecords(new Map([['1',{c,data}]]));await view.show(c);await receive({type:'ready',instance:'page'});
+    await receive({type:'acceptBatch',instance:'page',id:'1',version:'v1',session:'s',items:[{id:'1',version:'v1',option:'A'}]});
+    assert(messages.some(m=>m.type==='batchAccepted'));
+    assert.match(messages.findLast(m=>m.type==='unavailable').message,/接收已保存.*勿重复接收/);
+});
+
 test('translation selection resolves the exact candidate cache key and rejects stale provider', async () => {
     let receive, provider='controlled'; const messages=[], notes=[];
     const c={repo:'/translated',owner:'state',id:'1',version:'v1'}, data={id:'1',version:'v1',original:'Same',source_match:true,edit:{file:'x',kind:'manuscript',versions:['v1'],requests:[],questions:[{id:'q',file:'x',quote:'Question'}]},options:[{label:'A',after:'Same'},{label:'B',after:'Same'}]};

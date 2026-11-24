@@ -43,3 +43,11 @@ test('an author edit while saving is not reported as a committed transaction', a
     await assert.rejects(applyHostEdit(f.vscode, f.editor, original, 'Revised.\n', f.authority), /正文发生变化/);
     assert.equal(f.doc.getText(), 'Author after edit.\n');
 });
+
+test('a failed editor save is not reported as a completed transaction', async () => {
+    const f=fixture();
+    f.doc.save=async()=>false;
+    await assert.rejects(applyHostEdit(f.vscode,f.editor,original,'Revised.\n',f.authority),/编辑器保存失败/);
+    assert.equal(f.doc.getText(),'Revised.\n');
+    assert.equal(f.doc.isDirty,true);
+});

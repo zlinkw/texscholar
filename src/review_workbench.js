@@ -1102,14 +1102,30 @@ function createWorkbench(vscode, context, services) {
                 const questionIds = message.questionKey === '__unbound__' ? new Set(directory().filter(item => !questionTable(c).some(row => row.entries.some(entry => entry.id === item.id))).map(item=>item.id)) : new Set(question?.entries.map(entry=>entry.id) || []);
                 if (message.questionOnly && (!message.questionKey || items.some(item=>!questionIds.has(item.id)))) throw new Error('问题范围已变化，请重新选择；未接收任何项。');
                 const request = showRequest;
-                await services.acceptBatch(items.map(i => ({...c, ...i, repo: c.repo, owner: c.owner})), session);
+                const accepted = await services.acceptBatch(items.map(i => ({...c, ...i, repo: c.repo, owner: c.owner})), session);
                 if (batchScope === selectionScope(c, session)) batchItems = batchItems.filter(selected => !items.some(item => item.id === selected.id && item.version === selected.version && item.option === selected.option));
                 if (panel === operationPanel) post({type:'batchAccepted', items, session, repo:c.repo, owner:c.owner});
+                if (accepted?.refresh_error) return post({type:'unavailable', message:'接收已保存，但刷新审核页失败；请重新读取状态，勿重复接收：' + accepted.refresh_error});
                 if (request !== showRequest) return;
-                const eligible = filterItems(directory(), {...navigationFilter, queue:'active'});
-                const next = message.questionKey ? eligible.find(item=>questionIds.has(item.id)) : eligible[0];
+                try {
+                const remaining = directory();
+                const eligible = filterItems(remaining, {...navigationFilter, queue:'active'}).filter(item=>item.source_match!==false && lastRecords.has(item.id));
+                let next = message.questionKey ? eligible.find(item=>questionIds.has(item.id)) : eligible[0];
+                if (!next && message.questionKey && message.questionKey!=='__unbound__') {
+                    const rows=questionTable(c), index=rows.findIndex(row=>row.key===message.questionKey);
+                    const following=rows.slice(index+1).find(row=>row.entries.some(entry=>eligible.some(item=>item.id===entry.id)));
+                    if (following) {
+                        next=eligible.find(item=>following.entries.some(entry=>entry.id===item.id));
+                        if (context.workspaceState) {
+                            const positions={...context.workspaceState.get('reviewQuestionPosition', {})};
+                            positions[JSON.stringify([c.repo,c.owner])]={session,key:following.key};
+                            await context.workspaceState.update('reviewQuestionPosition',positions);
+                        }
+                    }
+                }
                 if (next) await show(lastRecords.get(next.id).c, undefined, true);
-                else {const remaining = directory(); post({type:'unavailable', message:`当前筛选范围没有下一活跃项；暂缓 ${remaining.filter(i => i.postponed).length} 项，定位冲突 ${remaining.filter(i => i.source_match === false).length} 项。其他批注与科学问题状态独立保留。`});}
+                else post({type:'unavailable', message:`接收已保存；当前筛选范围没有下一可审核项。暂缓 ${remaining.filter(i => i.postponed).length} 项，定位冲突 ${remaining.filter(i => i.source_match === false).length} 项；可在目录调整筛选或恢复暂缓项。其他批注与科学问题状态独立保留。`});
+                } catch (error) {return post({type:'unavailable', message:'接收已保存，但无法进入下一项；请重新读取状态，勿重复接收：' + error.message});}
             } else if (message.type === 'accept' || message.type === 'reject') {
                 if (dirty || noteDirty) throw new Error('请先保存候选和返修要求，再接收或拒绝。');
                 if (message.type === 'accept' && !options(loaded).some(o => o.label === message.option)) throw new Error('请选择具体接收方案。');

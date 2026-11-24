@@ -64,6 +64,20 @@ test('recovery checks all source bytes before trying to complete any file', asyn
     assert.deepEqual(fs.readFileSync(path.join(f.root,'.codex-review','state.json')),f.state);
 });
 
+test('save refusal keeps the transaction even when the target bytes reached disk', async () => {
+    const f=fixture(['paper.tex']), file=path.join(f.root,'paper.tex');
+    let text='Old.\n';
+    const doc={uri:{scheme:'file',fsPath:file},version:1,isDirty:false,isClosed:false,eol:1,getText:()=>text,positionAt:n=>n,
+        async save(){fs.writeFileSync(file,text,'utf8');return false;}};
+    const editor={document:doc,async edit(callback){callback({replace(_range,value){text=value;}});doc.version++;doc.isDirty=true;return true;}};
+    f.vscode.EndOfLine={LF:1,CRLF:2}; f.vscode.Range=class {constructor(start,end){this.start=start;this.end=end;}};
+    f.vscode.workspace.openTextDocument=async()=>doc;f.vscode.window.visibleTextEditors=[editor];
+    await assert.rejects(applyTransaction(f.vscode,f.registry,f.root,1,sha(f.state),f.commit),/编辑器保存失败/);
+    assert.equal(fs.readFileSync(file,'utf8'),'New.\n');
+    assert.equal(doc.isDirty,true);
+    assert.deepEqual(fs.readFileSync(path.join(f.root,'.codex-review','state.json')),f.state);
+});
+
 test('a changed linked question stops the transaction before opening or writing source', async () => {
     const f = fixture(['paper.tex']);
     const object = {files:{'0-old':Buffer.from('Old.\n').toString('base64'),'0-new':Buffer.from('New.\n').toString('base64'),'check-0':Buffer.from('Question.\n').toString('base64')}};

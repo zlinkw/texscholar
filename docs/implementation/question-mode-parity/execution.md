@@ -54,3 +54,7 @@ S 首批：真实 CPU 采样指出 questionRows 中同一审核源位置被反�
 用户新增要求：问题及段落模式不展示候选下 AI 取舍、详细理由、事实变化核对与修改范围等解释文字；保留原文对照、方案身份、作者批注和操作状态，不改变底层元数据或审核语义。此项随 S 实现和验证。
 
 界面精简：两个模式均不再渲染上述解释，保留原文、候选、方案标识、批注和必要状态；README 相应更新。S-simplify-workbench 46 项及 syntax exit 0；S-simplify-ui 在正常隔离 Development 注入合成取舍/事实数据，核两模式不显示解释且操作入口存在，host/observer/外层 exit 0；截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-5ec3ccdf86754911bb2a088bcef80011.png 已查看。所有证据与隔离保护保存在 S-simplify-* 和 s-simplify 目录。
+
+批量合并方向：实际 acceptBatch 已一次调用 decide-batch 和返回卡片，后端一次 persist；未改为逐项接收。当前先复用同一快照的位置工作，逐项版本、方案、CAS、宿主和恢复保护不变。
+
+接收导航与事务反馈：当前问题仍有可审核项时保留，否则进入后续有可审核项的问题；无可达项时明确已保存及筛选、暂缓/冲突入口。批接已保存但刷新或后续导航失败时明确勿重复接收。保存返回 false 时保留错误并提示先核对编辑器与事务，不认定磁盘未变。S-transaction-tests2 对 workbench/host edit/transaction exit 0；隔离测试模拟目标字节已写入而编辑器保存返回 false，确认事务保留且报错；还核当前问题剩余/下一问题、已保存但刷新失败。该模拟不证明真实现场具体拒绝原因或其事务已恢复；现场仍由总控在合格宿主上按现有协议单独核对。
