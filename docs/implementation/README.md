@@ -1,6 +1,6 @@
 # TeXScholar 实施索引
 
-当前计划：[评论列表定位失败](question-mode-parity/plan.md#t阶段评论列表定位失败)。用户报告0.9.64评论目录Cannot resolve tree item；沿原两角色流程复现刷新/节点生命周期问题并修复，禁止把此TreeView错误当成正文锚丢失。真实论文和批注受保护，不自动重载或重启。
+当前计划：[评论列表定位失败](question-mode-parity/plan.md#t阶段评论列表定位失败)。T返修0功能通过：真实隔离VSCode复现接收移除旧项与reveal交叠的Cannot resolve tree item，修复后准确进入下一项；92项定向及总控真实错误传播/后续队列恢复组合通过。进入0.9.65正式交付，真实论文和批注受保护，不自动重载或重启。
 
 最新完成计划：[问题模式延迟与接收收尾](question-mode-parity/plan.md#s阶段问题模式延迟事务收尾与接收后导航)。S返修1完成：[0.9.64正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.64)并同包安装，总控已核远端附注tag/构建目标、Release三附件摘要及本机manifest/登记。同源定位/片段复用、6项隔离批接546ms、可见内容编号合并翻译、接收后导航与失败防重复已交付，AI解释展示已移除。真稿原事务经真实宿主恢复，正文/其他状态/Git保持；Bing仅合成3段实际服务兼容通过，其他服务及网络速度不作承诺。未自动重载/重启、包后冒烟或删除；需重载目标VSCode窗口启用新版。
 

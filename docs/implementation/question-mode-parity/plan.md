@@ -103,8 +103,12 @@ S全阶段完成，返修1。0.9.64已正式发布并同包安装，唯一构建
 
 静态入口：inline_review.js updateList每次重建TreeItem/parent对象后fire全树，再异步selectReviewItem；现有串行队列合并目标但未固定节点生命周期。需分别用真实调用反馈区分刷新导致旧对象失效、进行中reveal与树重建交叠、当前项已移除/换session、父节点尚未注册等原因。禁止仅吞reveal错误、延时猜等待、无限重试或关闭目录跟随；优先复用稳定身份和现有刷新边界。真实存在的错误与未知保留，不新增无关框架/配置/依赖或性能测试。
 
-- [ ] T1 原Terra在现有inline host夹具及正常隔离Development复现原错误，定位负责边界，最小修复；已有队列/选择/评论子节点与父节点、同卡刷新、快速切项、项移除及session变化按受影响调用链验证，真实不存在的项不得选错对象。保留审核页草稿、选区/版本、作者批注及既有决定语义。完整日志与首败保留，UI使用独立profile/专属pipe和CreateDesktopW私有未切桌面，不在Default，不抢焦；无真稿、默认pipe/MCP、用户窗口、删除或重载动作。原定位/翻译/批接功能按未变输入复用，不重跑全部功能组。
-- [ ] T2 整包冻结交回后，总控审真实diff/复现及必要受影响链，只补未覆盖且能影响交付的组合；完整返修交原Terra。总控不实现自签、不重复同清单。
+- [x] T1 原Terra在现有inline host夹具及正常隔离Development复现原错误，定位负责边界，最小修复；已有队列/选择/评论子节点与父节点、同卡刷新、快速切项、项移除及session变化按受影响调用链验证，真实不存在的项不得选错对象。保留审核页草稿、选区/版本、作者批注及既有决定语义。完整日志与首败保留，UI使用独立profile/专属pipe和CreateDesktopW私有未切桌面，不在Default，不抢焦；无真稿、默认pipe/MCP、用户窗口、删除或重载动作。原定位/翻译/批接功能按未变输入复用，不重跑全部功能组。
+- [x] T2 整包冻结交回后，总控审真实diff/复现及必要受影响链，只补未覆盖且能影响交付的组合；完整返修交原Terra。总控不实现自签、不重复同清单。
 - [ ] T3 最终通过后另派原Terra必要版本/发行检查、唯一构建、正式Release/附注tag及同VSIX安装；预核下一版0.9.65实际无冲突才用。总控核必要元数据，execution尾与plan/index集中收尾。仍不自动重载/重启，不包后冒烟或删除。
 
 本增量与索引先由总控写入但不独立提交，交原Terra随首个验证通过功能批纳入。授权产品/测试/UI/隔离配置/Git租约给原Terra，实施期间总控不并行写计划或测试；无在途才交回。普通精确stage/commit/push origin master/fetch，远端前移或权限拒绝停相关动作，不改历史/remote。真实论文及所有批注/候选/稿件/模板/范围外stage保持，旧原事务恢复事实不重放。
+
+T最终功能审核通过，返修0，基线5121cc450e7e8acc2139d0d5e3b2774a6ef82ea7。总控审完整diff及本机VSCode实际按id解析实现，现场新日志16:33 ep/eq与接收移除的身份/业务顺序一致；旧版正常私有Development T-accept-red门控reveal入口并实际接收移除合成项，真实VSCode拒绝同类Cannot resolve tree item，修复版T-accept-ui同条件选中下一项2、事务为空。门控在调用入口，不冒称现场逐毫秒内部时序已证。总控实看ui-38b71429ea65438393205f667c3e4a41.png，目录选中与审核页2一致，批注节点保留；两轮host/observer/外层0、Default前中后各自不变且GUI私有。复用92项有效定向测试，不重跑同组。
+
+总控独占补controller-tree-final.cjs：在真实workbench/inline调用链注入一次真正reveal失败，同时两次刷新并切到项2、追加作者批注；原错误明确reject，队列继续选中最新项2及其最新批注，未调用decide/decide-batch，exit0。证据在D:/latex-writing-checks/question-mode-latency-20261124/controller-tree-final*。首次读取两个UI process文件漏-run后缀只读失败，随后按实际文件名核实，未改日志；Terra全部首败/未复现对照保留。无剩余阻塞，允许T3按原范围必要检查、预核0.9.65无冲突后唯一构建及同包正式发布安装。计划/索引支持更新随版本批纳入，交付execution尾留总控集中结案；不自动重载/重启、包后冒烟或删除。
