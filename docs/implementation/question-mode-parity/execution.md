@@ -66,3 +66,7 @@ S 首批：真实 CPU 采样指出 questionRows 中同一审核源位置被反�
 S-speed9 以相同合成规模在最新修改下测得点击到完成显示 546ms；六项均 accepted、事务为空，host/observer/外层 exit 0，Default 输入桌面和前中后 HWND 132560 不变，GUI 在私有桌面且桌面关闭。截图 ui-7fa71f8142064cf981129ed6e7b8dc43.png 已查看。该结果不代表真实论文事务已恢复或网络翻译耗时。
 
 保存失败补充保护：隔离宿主注入实际保存后返回 false，验证正文可能已写而事务仍保留；界面显示恢复提示，禁止当前及其他卡再次接收，保留选择供核对。S-savefail3-test 49 项及 S-savefail3-ui、S-savefail3-verify exit 0，前中后 HWND 132560 不变，截图 ui-467d7bcc5f554b39b55a727caafa4d96.png 已查看。S-savefail 首次外层因空桌面枚举夹具判定 exit 1；S-savefail2-test 首次实现过宽禁用其他卡而有一项失败，收窄事务标志后通过；两者原日志保留。此人工注入无法确定真实保存失败原因。另一次只读验证脚本路径猜错和一次 PowerShell 引号错误均 exit 1，随后只读状态成功，无文件被删除。
+
+总控现场恢复更新：真实事务 f2d0537322d016a432837f39fe5174cc634aceefbf1952cd7aa3452a0bdf57df 已由总控通过合格宿主和既有 writer/版本/脏稿检查执行 recover exit 0；读回 transaction=null，其他状态与原状态去掉 transaction 后相等，正文、论文 Git index 和 HEAD 不变。证据见 D:/latex-writing-checks/question-mode-latency-20261124/controller-recover-once.py 和 recover1.*。原 doc.save false 具体原因仍未知；本执行者未触真实项目或管道。
+
+S 返修1后端：按用户要求将一批待译内容用独立编号合并到所选服务请求，严格校验分段及每段 TeX 标识后才写成功结果；缺失、重复或错位均报错，纯公式保持本地，429 不暗重试或换源。原单项协议保留。S-r1-translate-test2 合成供应商与原协议测试 exit 0；README 删去已撤展示的句数范围承诺。客户端合批和隔离界面验证随下一批完成。

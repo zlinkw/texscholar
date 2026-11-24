@@ -7,6 +7,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 from review_pdf import _command, _environment_end
 
@@ -254,12 +255,14 @@ def failure(error):
     return str(error)
 
 
-def translate_many(provider_name, items, proxy=None, provider=None):
+def translate_many(provider_name, items, proxy=None, provider=None, batch=False):
     if not isinstance(items, list) or any(not isinstance(item, dict) or not isinstance(item.get('key'), str) or not isinstance(item.get('text'), str) for item in items):
         raise ValueError('翻译输入须为带 key/text 的数组。')
     if len({item['key'] for item in items}) != len(items):
         raise ValueError('翻译位置标识不能重复。')
     engine = provider or Provider(provider_name, proxy)
+    if batch:
+        return translate_batch(provider_name, items, engine)
     results, errors, warnings, skipped, translated = {}, {}, {}, {}, {}
     for index, item in enumerate(items):
         try:
@@ -287,11 +290,56 @@ def translate_many(provider_name, items, proxy=None, provider=None):
     return {'provider': provider_name, 'results': results, 'errors': errors, 'warnings': warnings, 'skipped': skipped}
 
 
+def translate_batch(provider_name, items, engine):
+    results, errors, warnings, skipped, pending = {}, {}, {}, {}, []
+    try:
+        for item in items:
+            text = item['text']
+            option = item.get('option') if item.get('kind') == 'candidate' else None
+            if option is not None and option not in ('A', 'B', 'C'):
+                raise ValueError('候选方案标识无效。')
+            prepared, kept, pattern = protect_tex(text, item.get('kind') == 'title', option)
+            if not re.search(r'[A-Za-z]', pattern.sub('', prepared)):
+                results[item['key']] = text
+                if display_math_only(text, option):
+                    skipped[item['key']] = '纯行间公式无需翻译。'
+            else:
+                pending.append((item, prepared, kept, pattern))
+        if pending:
+            token = 'TEXSCHOLARBATCH' + uuid.uuid4().hex.upper() + 'X'
+            payload = '\n'.join(f'{token}{i}XBEGIN\n' + pattern.sub(lambda m: f'{token}{i}XTEX{m[1]}XEND', prepared.strip()) +
+                                f'\n{token}{i}XEND' for i, (_, prepared, _, pattern) in enumerate(pending))
+            translated = engine.translate(payload)
+            marker = re.compile(re.escape(token) + r'(\d+)X(BEGIN|END)')
+            matches = list(marker.finditer(translated))
+            expected = [(str(i), side) for i in range(len(pending)) for side in ('BEGIN', 'END')]
+            if [(m[1], m[2]) for m in matches] != expected:
+                raise ValueError('翻译服务返回的分段编号不完整或错位；未采用本批译文，请重试。')
+            restored = {}
+            for i, (item, prepared, kept, pattern) in enumerate(pending):
+                value = translated[matches[2*i].end():matches[2*i+1].start()].strip()
+                if not value:
+                    raise ValueError('翻译服务返回空分段；未采用本批译文，请重试。')
+                tex_marker = re.compile(re.escape(token) + r'(\d+)XTEX(\d+)XEND')
+                tex_matches = list(tex_marker.finditer(value))
+                if any(int(m[1]) != i for m in tex_matches) or sorted(int(m[2]) for m in tex_matches) != list(range(len(kept))):
+                    raise ValueError('翻译服务返回的公式或引用标识不完整或错位；未采用本批译文，请重试。')
+                value = tex_marker.sub(lambda m: kept[int(m[2])], value)
+                restored[item['key']] = re.match(r'^\s*', prepared)[0] + value + re.search(r'\s*$', prepared)[0]
+            results.update(restored)
+    except (ValueError, OSError) as error:
+        message = failure(error)
+        if isinstance(error, urllib.error.HTTPError):
+            error.close()
+        errors.update({item['key']: message for item in items if item['key'] not in results})
+    return {'provider': provider_name, 'results': results, 'errors': errors, 'warnings': warnings, 'skipped': skipped}
+
+
 if __name__ == '__main__':
     argparse.ArgumentParser(description=__doc__).parse_args()
     try:
         request = json.load(sys.stdin)
-        print(json.dumps(translate_many(request['provider'], request['items'], request.get('proxy')), ensure_ascii=False))
+        print(json.dumps(translate_many(request['provider'], request['items'], request.get('proxy'), batch=request.get('batch', False)), ensure_ascii=False))
     except (ValueError, OSError, KeyError) as error:
         print(failure(error), file=sys.stderr)
         sys.exit(2)

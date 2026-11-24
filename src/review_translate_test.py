@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import re
 import unittest
 import urllib.error
 import urllib.parse
@@ -11,6 +12,33 @@ from review_translate import Provider, chunks, protect_tex, restore_tex, transla
 
 
 class Translation(unittest.TestCase):
+    def test_numbered_batch_is_one_request_and_rejects_damaged_markers(self):
+        items = [{'key':'one', 'text':r'First $x$.'}, {'key':'two', 'kind':'candidate', 'option':'A', 'text':r'Option A: Second \cite{k}.'}]
+        class Engine:
+            def __init__(self, damage=None): self.calls = []; self.damage = damage
+            def translate(self, text):
+                self.calls.append(text)
+                if self.damage == 'missing': return text.replace('0XBEGIN', '0XLOST')
+                if self.damage == 'duplicate': return text + text
+                if self.damage == 'formula': return re.sub(r'0XTEX0XEND', '1XTEX0XEND', text)
+                return text.replace('First', '第一').replace('Second', '第二')
+        engine = Engine()
+        result = translate_many('bing', items, provider=engine, batch=True)
+        self.assertEqual(len(engine.calls), 1)
+        self.assertEqual(result['errors'], {})
+        self.assertEqual(result['results'], {'one':r'第一 $x$.', 'two':r'Option A: 第二 \cite{k}.'})
+        for damage in ('missing', 'duplicate', 'formula'):
+            result = translate_many('bing', items, provider=Engine(damage), batch=True)
+            self.assertEqual(result['results'], {})
+            self.assertEqual(set(result['errors']), {'one','two'})
+        class Limited:
+            def translate(self, text):
+                raise urllib.error.HTTPError('https://example.invalid/', 429, 'limited', None, None)
+        result = translate_many('bing', items + [{'key':'math','text':r'$$x=1$$'}], provider=Limited(), batch=True)
+        self.assertEqual(result['results']['math'], r'$$x=1$$')
+        self.assertEqual(set(result['errors']), {'one','two'})
+        self.assertIn('429', result['errors']['one'])
+
     def test_math_lists_and_structured_candidate_prefix_use_exact_request_boundary(self):
         calls = []
         class Engine:
