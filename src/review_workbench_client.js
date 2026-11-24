@@ -573,17 +573,6 @@ function renderQuestionMode() {
                         button.disabled=cardButtonDisabled(button);
                     }
                     node.append(heading,actions,text);
-                    const tradeoff=document.createElement('p');tradeoff.textContent=option.summary || option.reason || '';node.appendChild(tradeoff);
-                    if (option.summary && option.reason && option.summary!==option.reason) {
-                        const details=document.createElement('details'),summary=document.createElement('summary'),reason=document.createElement('p');
-                        summary.textContent='详细取舍';reason.textContent=option.reason;details.append(summary,reason);node.appendChild(details);
-                    }
-                    if (!activeDraft && (option.fact_changes || []).length) {
-                        const details=document.createElement('details'),summary=document.createElement('summary'),facts=document.createElement('pre');
-                        summary.textContent='数字、引用、公式或保留术语有 '+option.fact_changes.length+' 处变化，需核对依据';
-                        facts.textContent=factChangesText(option,entry.card.fact_evidence || []);details.append(summary,facts);node.appendChild(details);
-                    }
-                    if (!activeDraft && option.scope) {const range=document.createElement('small');range.textContent=scopeSummary(option.scope);node.appendChild(range);}
                     if(option.migration){const details=document.createElement('details'),summary=document.createElement('summary'),plan=document.createElement('pre');
                         summary.textContent='此方案的旧版局部要求（未接收前仅作候选意图）';
                         plan.textContent=option.migration.fragments.filter(f=>f.kind==='plan').map(f=>f.text).join('\n');details.append(summary,plan);node.appendChild(details);}
@@ -651,41 +640,18 @@ function markDirectoryCursor() {
         if (active) node.setAttribute('aria-current', 'true'); else node.removeAttribute('aria-current');
     }
 }
-function scopeSummary(count) {
-    return !count ? '' : count.error ? '修改范围暂无法统计：' + count.error
-        : `相对原文的变动涉及：原文 ${count.old_sentences} 句 → 候选 ${count.new_sentences} 句`
-            + (count.old_environments || count.new_environments ? `；独立环境 ${count.old_environments} → ${count.new_environments}` : '');
-}
-function factChangesText(option, evidenceRows) {
-    return (option.fact_changes || []).map((f,index)=>{
-        const describe=values=>values.map(([value,start,end])=>`${value} [${start},${end})`).join('、') || '无';
-        const evidence=evidenceRows.filter(e=>e.option===option.label && e.change_index===index && e.kind===f.kind);
-        const sources=evidence.map(e=>e.location_checked ? `\n依据定位已核对：${e.file} [${e.start},${e.end})\n${e.quote}\n科学结论未验证` : `\n依据已变化或不可读取：${e.file}；请重新核对`);
-        return `${({number:'数字',citation:'引用键',math:'公式',term:'保留术语'})[f.kind]}：${describe(f.old)} → ${describe(f.new)}；${evidence.some(e=>e.location_checked) ? '科学结论未验证' : 'unsupported（未核对依据）'}${sources.join('')}`;
-    }).join('\n');
-}
 function renderOption(o) {
     let article = $('option-' + o.label);
     if (!article) {article = document.createElement('article'); article.id = 'option-' + o.label; $('options').appendChild(article);}
     article.dataset.reviewId = current.id; article.dataset.reviewVersion = current.version;
     article.className = [preview === o.label ? 'selected' : '', focused === o.label ? 'focused' : focused ? 'folded' : ''].join(' ');
     if (!article.children.length) article.innerHTML = '<div class="optionHeading"><h4>' + o.label + (o.label === 'A' ? ' · 推荐' : '') + '</h4>'
-        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="translateCard" data-option="' + o.label + '" class="secondary">翻译／收起</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small><p class="tradeoff"></p><p class="scopeSummary"></p><details class="factChanges"><summary></summary><pre></pre></details><details class="reason"><summary>详细取舍</summary><span></span></details>'
+        + '<div class="optionActions"><button data-action="preview" data-option="' + o.label + '" class="secondary" title="预览本方案的审核 PDF">预览</button><button data-action="focus" data-option="' + o.label + '" class="secondary">' + (focused === o.label ? '返回比较' : '展开') + '</button><button data-action="translateCard" data-option="' + o.label + '" class="secondary">翻译／收起</button><button data-action="accept" data-write data-option="' + o.label + '">接收 ' + o.label + '</button><details class="more"><summary title="更多方案操作" aria-label="更多方案操作">⋯</summary><div class="menu"><button data-action="editToggle" data-option="' + o.label + '">编辑候选</button><button data-action="optionNote" data-option="' + o.label + '">针对 ' + o.label + ' 写返修要求</button></div></details></div></div><small class="draftLabel"></small>'
         + '<details class="migrationIntent"><summary>查看此方案的旧版局部要求</summary><pre></pre></details><div class="detail"><div class="review-text" id="text-' + o.label + '" data-side="candidate" data-option="' + o.label + '"></div><div class="zh" id="zh-' + o.label + '" ' + (chinese ? '' : 'hidden') + '></div>'
         + '<div id="editor-' + o.label + '" hidden><textarea class="edit" id="edit-' + o.label + '" data-option="' + o.label + '" spellcheck="false"></textarea><button data-action="save" title="保存此候选（Ctrl/Cmd+Enter）" data-write data-option="' + o.label + '">保存 ' + o.label + '（不接收）</button><button data-action="saveAccept" data-write data-option="' + o.label + '">保存并接收 ' + o.label + '</button><small>“保存”只更新待审版本；“保存并接收”替换正文并进入下一项。</small></div></div>';
-    article.querySelector('.tradeoff').textContent = o.summary || o.reason;
-    article.querySelector('.reason span').textContent = o.reason;
-    article.querySelector('.reason').hidden = !o.summary || o.summary === o.reason;
     const migration=article.querySelector('.migrationIntent');
     migration.hidden=!o.migration;
     migration.querySelector('pre').textContent=o.migration ? '此方案未接收前仅为候选意图。\n' + o.migration.fragments.filter(f=>f.kind==='plan').map(f=>f.text).join('\n') : '';
-    const count = o.scope;
-    article.querySelector('.scopeSummary').textContent = scopeSummary(count);
-    article.querySelector('.scopeSummary').title = '按 TeX 结构统计涉及变化的句子，不是质量评分或修改上限；不含纯首尾空白变化。';
-    const facts = o.fact_changes || [], factBox = article.querySelector('.factChanges');
-    factBox.hidden = !facts.length;
-    factBox.querySelector('summary').textContent = `数字、引用、公式或保留术语有 ${facts.length} 处变化，需核对依据`;
-    factBox.querySelector('pre').textContent = factChangesText(o,data.fact_evidence || []);
     if (translatedText.has(o.label) && translatedText.get(o.label).source !== o.after) {
         translatedText.delete(o.label); $('zh-' + o.label).textContent = ''; rendered.delete($('zh-' + o.label));
     }
@@ -710,18 +676,14 @@ function renderReadings() {
     const originalChanges = hasDraft(selectedOption) ? textChanges($('text-' + selectedOption.label), data.original, displayed(selectedOption)) : selectedOption.changes;
     renderText($('original'), data.original, paired ? [] : originalChanges, 'original');
     const manual = options.some(o => o.manually_edited || hasDraft(o));
-    $('rankingNotice').hidden = !manual;
-    $('rankingNotice').textContent = manual ? '已手动调整：原 AI 排序和取舍仅供参考，不代表对当前内容重新评估。' : '';
     $('comparisonNotice').hidden = !paired;
     $('comparisonNotice').textContent = paired ? `${left.label} → ${right.label}：仅突出两个方案之间的差异，不改变 PDF 或接收结果；接收按钮始终对应自己的方案。` : '';
     for (const o of options) {
         const article = $('option-' + o.label), draft = hasDraft(o);
         article.hidden = paired && !pair.includes(o.label);
         article.querySelector('h4').textContent = o.label + (paired ? o === left ? ' · 基准' : o === right ? ' · 比较' : '' : o.label === 'A' && !manual ? ' · 推荐' : '');
-        article.querySelector('.draftLabel').textContent = draft ? '未保存预览；句数统计与译文保存后更新。'
-            : o.manually_edited ? '作者已手动调整；下方为原 AI 取舍。' : '';
-        article.querySelector('.scopeSummary').hidden = draft;
-        article.querySelector('.factChanges').hidden = draft || !(o.fact_changes || []).length;
+        article.querySelector('.draftLabel').textContent = draft ? '未保存预览；译文保存后更新。'
+            : o.manually_edited ? '作者已手动调整。' : '';
         $('zh-' + o.label).hidden = !chinese || draft;
         if (article.hidden) continue;
         const changes = paired ? pairChanges : draft ? textChanges($('text-' + o.label), data.original, displayed(o)) : o.changes;

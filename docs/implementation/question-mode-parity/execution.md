@@ -52,3 +52,5 @@ M-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/
 S 首批：真实 CPU 采样指出 questionRows 中同一审核源位置被反复全文扫描，具体证据见计划。合成 246 条记录、68 活跃项、147020 Unicode 字符、两个问题的 S-location-baseline 两次独立表计算分别 617.75/578.83ms。现按当前审核源快照复用每项及旧锚点对应的位置结果，源刷新或保存更新时清空；不同问题旧锚点仍独立比较。S-location-reuse 同规模第一次 327.01ms、同快照第二次 2.67ms；这只是位置表测量，不是批接端到端 5 秒验证。S-location-tests 位置与问题身份定向测试 exit 0，覆盖 Unicode、不同旧锚点和新源重算。原事务/真实论文仍未触。
 
 用户新增要求：问题及段落模式不展示候选下 AI 取舍、详细理由、事实变化核对与修改范围等解释文字；保留原文对照、方案身份、作者批注和操作状态，不改变底层元数据或审核语义。此项随 S 实现和验证。
+
+界面精简：两个模式均不再渲染上述解释，保留原文、候选、方案标识、批注和必要状态；README 相应更新。S-simplify-workbench 46 项及 syntax exit 0；S-simplify-ui 在正常隔离 Development 注入合成取舍/事实数据，核两模式不显示解释且操作入口存在，host/observer/外层 exit 0；截图 C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-5ec3ccdf86754911bb2a088bcef80011.png 已查看。所有证据与隔离保护保存在 S-simplify-* 和 s-simplify 目录。
