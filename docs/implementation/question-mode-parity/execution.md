@@ -160,3 +160,13 @@ dist/v0.9.67/texscholar-0.9.67.vsix SHA256 9310cb903c71262fd8fc40474daa3ef59fcd4
 V-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.67 非 draft、非 prerelease，API 三附件摘要与本地一致，V-delivery-verify exit 0。实际 C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.67/texscholar-0.9.67.vsix 在仓库执行 exit 0，无 force；CLI 和 manifest 为 local-research.latex-writing-tools 0.9.67，登记 source=vsix、pinned=true。未重载用户窗口或 MCP，安装不代表活动宿主已加载；未外发真实论文或实测网络 AI。完整命令和日志见 D:/latex-writing-checks/review-efficiency-20261122/V-delivery-*。
 
 真实 profile 资料由总控在此之前依用户许可独占重分类：revision 3→4，当前 constraints 和 personal 均为空；原文/来源、其余条目与22项候选 proof 及论文 state 不变。证据由总控保管，本执行者未读写真实资料。
+
+### W 已完成批注生命周期
+
+W-lifecycle-red 对接收后的旧版批注仍进入交接及决定后旧批注仍存储两例均 exit 1；W-lifecycle-test8 隔离 FakeHost、专属 pipe 的六项 exit 0，覆盖接收/拒绝、暂留及同身份镜像、旧数据预览和 CAS、未决项、检查点保护及事务中断。新增决定在同一事务状态中移除该项非暂留批注，暂留项保留；有正文事务时将原状态放在既有事务恢复对象中，直至安全检查点回收。旧数据使用 `review_checkpoint.py prune-completed` 预览，显式 apply 需原 writer lock、精确 state SHA 和无未决事务，不删除任何文件，不压缩未备份候选；实际论文未执行。接收并不代表科学问题已验证。
+
+已完成项不进入目录、管理选择、CLI/MCP 或返修附件；待处理及暂留仍可按确切身份读取，取消暂留时若该项已完成则同时移除对应镜像。W-mcp-test2 三项、W-inline-test3 六项及 W-client-test1 exit 0；源码首批 e9cb593611db0080594731e5cccded40fe02e320 普通 push/fetch 一致。W-lifecycle-test3 因隔离夹具 counter 未更新 exit 1，test4 因夹具缺少命令参数 exit 1，修正夹具后通过，首败保留。
+
+W-ui-run1 因未先准备隔离项目导致宿主无法打开文件而 exit 1；W-ui-run3 使用全新私有 Development 及独立 pipe，实际新增两条、暂留一条、接收、管理及交接，读回仅暂留批注且 transaction 空；宿主/观察器/外层 exit 0。Default 输入桌面和前中后前台 HWND 855702 不变，私有桌面已关闭；截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-faa735de9853409b80deab73e88ee31c.png` 已实看。该隔离项目无 Git 备份目标，不能据此声称实际备份成功。完整 argv、环境、原始输出及首败在 `D:/latex-writing-checks/review-efficiency-20261122/W-*` 和对应新隔离根。
+
+物理对象未删除：现有 `compact` 继续以已核验的备份检查点和共享依赖为边界；真实旧记录清理及对象精确预览须由总控在合格宿主、状态和备份条件核对后协调。未触真实论文、资料、窗口、默认 pipe 或 MCP；未安装、构建或发行，未运行含删除的 cleanup 测试。

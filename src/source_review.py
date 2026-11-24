@@ -2281,10 +2281,9 @@ class Review:
         for id_, edit in self.state['edits'].items():
             if selected is not None and id_ not in selected:
                 continue
-            notes = edit.get('requests', [])
-            if any(not n.get('id') or not n.get('version') for n in [*notes, *(edit.get('previous_feedback') or {}).get('requests', [])]):
-                raise Conflict('旧批注身份不完整；请先核对，无法安全交接。')
             notes = feedback_notes(edit)
+            if any(not n.get('id') or not n.get('version') for n in notes):
+                raise Conflict('旧批注身份不完整；请先核对，无法安全交接。')
             for note in notes:
                 if not (note.get('held', False) or note['status'] in ('open', 'addressed-pending-review')):
                     continue

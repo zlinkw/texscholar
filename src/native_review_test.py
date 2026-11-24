@@ -81,10 +81,20 @@ class NativeReview(unittest.TestCase):
         with self.assertRaisesRegex(Conflict, '未处理或暂留批注'):
             r.begin('next', ['main.tex','reply.tex'])
         r.state['edits'][id_]['status'] = 'accepted'
+        r.state['edits'][id_]['requests'].append({key:value for key,value in r.state['edits'][id_]['previous_feedback']['requests'][0].items() if key != 'held'})
+        r.state['edits'][id_]['previous_feedback']['requests'].append({'text':'已完成的旧格式批注', 'status':'open'})
         r.persist({}, digest(r.raw))
         r = Review(self.root, '.codex-review/state.json', 'missing-git')
         from mcp_server import feedback_packet
         self.assertTrue(feedback_packet(r)['items'][0]['requests'][0]['held'])
+        self.assertEqual(len(feedback_packet(r)['items'][0]['requests']), 1)
+        edit = r.state['edits'][id_]
+        item = {'id':id_, 'file':edit['file'], 'version':edit['versions'][-1], 'note':edit['previous_feedback']['requests'][0].copy(), 'source':'previous_feedback'}
+        updated, _ = r.manage_feedback({'session':r.state['session'], 'items':[item], 'action':'release'})
+        r.persist(updated, digest(r.raw))
+        remaining = (Review(self.root, '.codex-review/state.json', 'missing-git').state['edits'][id_].get('previous_feedback') or {}).get('requests', [])
+        self.assertFalse(any(note.get('id') == item['note']['id'] for note in remaining))
+        self.assertEqual(Review(self.root, '.codex-review/state.json', 'missing-git').state['edits'][id_]['requests'], [])
 
     def test_old_decided_feedback_is_not_in_handoff(self):
         from mcp_server import feedback_packet

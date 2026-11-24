@@ -479,6 +479,7 @@ for (const decision of ['accept', 'reject']) for (const autoPDF of [true, false]
     await assert.rejects(f.ui.addRequests({...c, version: 'outdated'}, [{...exact,version:'old'}], 'batch'), /已变化/);
     assert.equal(f.calls.filter(c => c[0] === 'chatgpt.addFileToThread').length, sent);
     f.allCards['2'].edit.status='accepted';
+    await assert.rejects(f.ui.addRequests(c, [second], 'batch'), /已变化/);
     assert(!f.backendCalls.slice(0, before).some(c => c.args.some(a => String(a).endsWith('review_pdf.py'))));
     await f.ui.preview(c); await f.ui.preview(c);
     assert.equal(f.calls.filter(c => c[0] === 'workbench.action.moveEditorToNewWindow').length, 1);
@@ -851,6 +852,17 @@ test('problem table uses exact verified identity and reflects version, associati
     const before=first.snapshot; state.edits['1'].requests[0].text='changed'; assert.notEqual(questionRows(state).find(r=>r.key===first.key).snapshot,before);
     state.edits['1'].versions.push('v3'); assert.notEqual(questionRows(state).find(r=>r.key===first.key).snapshot,before);
     state.edits.a.questions=[]; assert.equal(questionRows(state).find(r=>r.key===first.key).entries.length,1);
+});
+
+test('problem table excludes completed history while retaining held and unresolved previous notes', () => {
+    const {questionRows}=require('./inline_review');
+    const q={id:'Q',file:'review.txt',quote:'Question'}, old={id:'old',version:'v1',status:'open',text:'old'};
+    const held={id:'held',version:'v1',status:'resolved',held:true,text:'held'};
+    const edit={kind:'manuscript',file:'m.tex',status:'accepted',versions:['v2'],questions:[q],requests:[old],previous_feedback:{requests:[held]}};
+    const state={edits:{'1':edit},cards:{}};
+    assert.deepEqual(questionRows(state)[0].entries[0].requests,[held]);
+    edit.status='rework'; edit.previous_feedback.requests.push({...old});
+    assert.deepEqual(questionRows(state)[0].entries[0].requests,[old,held]);
 });
 
 test('question locations reuse a source snapshot without mixing prior anchors', () => {

@@ -446,7 +446,7 @@ function questionEntries() {
         return directoryItems.filter(item => !linked.has(item.id)).map(item => ({...item,openRequests:item.requests}));
     }
     return (questionRows.find(row => row.key === selectedQuestion)?.entries || []).filter(entry => entry.card).map(entry =>
-        ({...entry,openRequests:entry.requests.filter(note => note.status === 'open').length}));
+        ({...entry,openRequests:entry.requests.filter(note => note.held || ['open','addressed-pending-review'].includes(note.status)).length}));
 }
 function questionEntryDraft(entry) {
     return entry.id===current?.id && entry.version===current.version && (sourceDraftStale || candidateDraftStale || options.some(hasDraft) || !!data?.block && $('blockSource').value!==data.block.text.replace(/\r\n/g,'\n'));
@@ -776,10 +776,14 @@ function fulfillmentText(n) {
     const mappings = (data.fulfillment || []).filter(m => m.request === n.id && m.request_version === n.version && m.request_text === n.text);
     return mappings.length ? mappings.map(m => '<p>返修说明（已保存本版） · 方案 ' + esc(m.option) + ' · ' + esc(({attempted:'已尝试',partial:'部分',author:'待作者',evidence:'待证据'})[m.status]) + '：' + esc(m.explanation) + ' <button class="secondary" data-action="locateFulfillment" data-mapping="' + data.fulfillment.indexOf(m) + '">查看对应文字：' + esc(m.quote) + '</button></p>').join('') : '<p>本版未说明此要求的处理情况。</p>';
 }
+function visibleFeedback(note) {
+    return note.held || !['resolved', 'closed-by-author-acceptance', 'closed-by-author-rejection'].includes(note.status);
+}
 function renderPreviousNotes() {
     const container = $('previousNotes');
-    const active = new Set((data.edit.requests || []).map(n => n.id));
-    const notes = (data.edit.previous_feedback?.requests || []).filter(n => !active.has(n.id));
+    const heldPrevious = new Set((data.edit.previous_feedback?.requests || []).filter(n => n.held).map(n => JSON.stringify([n.id,n.version])));
+    const active = new Set((data.edit.requests || []).filter(n => visibleFeedback(n) || heldPrevious.has(JSON.stringify([n.id,n.version]))).map(n => JSON.stringify([n.id, n.version])));
+    const notes = (data.edit.previous_feedback?.requests || []).filter(n => visibleFeedback(n) && !active.has(JSON.stringify([n.id, n.version])));
     $('previousFeedback').hidden = !notes.length;
     const signature = JSON.stringify([notes, notes.map(n => data.edit.versions.indexOf(n.version)), data.fulfillment, data.source_match]);
     if (container.dataset.signature === signature) return;
@@ -789,6 +793,9 @@ function renderPreviousNotes() {
 }
 function renderNotes(requests) {
     renderPreviousNotes();
+    const heldPrevious = new Set((data.edit.previous_feedback?.requests || []).filter(n => n.held).map(n => JSON.stringify([n.id,n.version])));
+    requests = requests.filter(n => visibleFeedback(n) || heldPrevious.has(JSON.stringify([n.id,n.version])))
+        .map(n => heldPrevious.has(JSON.stringify([n.id,n.version])) ? {...n, held:true} : n);
     const container = $('notes');
     for (const node of [...container.children]) if (!requests.some(n => n.id === node.dataset.noteId)) {
         if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));

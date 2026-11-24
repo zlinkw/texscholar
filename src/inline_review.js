@@ -10,6 +10,18 @@ const OPEN = new Set(['pending', 'rework']);
 const EXCLUDE = '**/{.git,.codex-review,.latex-build,clean_dir,node_modules}/**';
 const TRANSLATORS = {google: 'Google', googleapi: 'Google（googleapis）', bing: 'Bing', deepl: 'DeepL 网页版', transmart: '腾讯 TranSmart'};
 
+function unresolvedFeedback(edit) {
+    const candidates = [...(edit.requests || []).map(note => ({note, source:'requests'})), ...(edit.previous_feedback?.requests || []).map(note => ({note, source:'previous_feedback'}))];
+    const chosen = new Map();
+    for (const row of candidates) {
+        const note = row.note;
+        if (!note.held && (!OPEN.has(edit.status) || !['open','addressed-pending-review'].includes(note.status))) continue;
+        const key = note.id && note.version ? JSON.stringify([note.id,note.version]) : Symbol();
+        if (!chosen.has(key) || note.held && !chosen.get(key).note.held) chosen.set(key,row);
+    }
+    return [...chosen.values()];
+}
+
 function reviewLocation(state, edit, card, previous) {
     const text = state.sources?.[edit.file];
     if (!text || !card?.source_match || !card.source) return;
@@ -40,7 +52,7 @@ function questionRows(state, checked = {}, locations = new Map()) {
             const location = locations.get(locationKey);
             grouped.get(key).entries.push({id, kind:edit.kind, file:edit.file, status:edit.status, version:edit.versions.at(-1),
                 conflict:source ? source.source_match === false : undefined, freshness:edit.freshness, location,
-                requests:edit.requests || [], questions:edit.questions || []});
+                requests:unresolvedFeedback(edit).map(row => row.note), questions:edit.questions || []});
         }
     }
     return [...grouped.values()].map(row => {
@@ -352,7 +364,7 @@ function createInlineReview(vscode, context, execute = run) {
                 if (questionMode) group.command = {command:'localLatex.reviewQuestionDirectory', title:'打开问题', arguments:[{repo:c.repo,owner:c.owner,session:batch,questionKey:entry.key}]};
                 group.children = []; files.set(entry.key, group);
             }
-            const notes = (data.edit.requests || []).filter(n => n.status === 'open');
+            const notes = unresolvedFeedback(data.edit).map(row => row.note);
             const itemId = JSON.stringify(questionMode ? [c.repo,c.owner,batch,'question',entry.key,c.id] : [c.repo, c.owner, batch, c.id]), label = `${c.id} · ${locationTitle(data.edit) || file}`;
             const collapse = notes.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None;
             const old = previousItems.get(itemId);
@@ -364,7 +376,7 @@ function createInlineReview(vscode, context, execute = run) {
             item.command = questionMode ? {command:'localLatex.reviewQuestionDirectory',title:'定位问题卡片',arguments:[{...c,session:batch,questionKey:entry.key}]} : {command: 'localLatex.reviewWorkbench', title: '打开论文审核页', arguments: [c]};
             item.parent = files.get(entry.key);
             item.children = notes.map((note, index) => {
-                const childId = JSON.stringify([itemId, 'note', note.id]), label = note.text.replace(/\s+/g, ' ');
+                const childId = JSON.stringify([itemId, 'note', note.id, note.version]), label = note.text.replace(/\s+/g, ' ');
                 const old = previousNotes.get(childId);
                 const child = old?.parent === item ? old : new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
                 child.id = childId; child.label = label;
@@ -856,9 +868,7 @@ function createInlineReview(vscode, context, execute = run) {
     }
     function feedbackRows(state) {
         return Object.entries(state.edits).flatMap(([id, edit]) => {
-            const notes = edit.requests || [], identities = new Set(notes.filter(n => n.id && n.version).map(n => JSON.stringify([n.id, n.version])));
-            const previous = (edit.previous_feedback?.requests || []).filter(n => !n.id || !n.version || !identities.has(JSON.stringify([n.id, n.version])));
-            return [...notes.map(note => ({note, source:'requests'})), ...previous.map(note => ({note, source:'previous_feedback'}))]
+            return unresolvedFeedback(edit)
                 .map(row => ({...row, id, version:edit.versions.at(-1) ?? null, file:edit.file, kind:edit.kind}));
         });
     }
@@ -895,7 +905,7 @@ function createInlineReview(vscode, context, execute = run) {
         openQuestionEntry: async (c, id, version) => openRelatedItem({...c,id,version}),
         trace: value => diagnostics?.appendLine(JSON.stringify(value)),
         directory: () => Object.entries(latestReviewState?.edits || {}).map(([id, edit]) => ({id, file: edit.file, kind: edit.kind, status: edit.status,
-            version: edit.versions.at(-1), source_match: edit.source_match, options: records.get(id)?.data?.options?.map(o => o.label), manual_options: records.get(id)?.data?.options?.filter(o => o.manually_edited).map(o => o.label), option: selectedOption({...activeScope, id, version: edit.versions.at(-1)}), location: locationTitle(edit), summary: displayText(records.get(id)?.data?.options?.[0]?.after || '').replace(/\s+/g, ' ').slice(0, 140), questions: (edit.questions || []).map(q => q.id), requests: (edit.requests || []).filter(n => n.status === 'open').length})),
+            version: edit.versions.at(-1), source_match: edit.source_match, options: records.get(id)?.data?.options?.map(o => o.label), manual_options: records.get(id)?.data?.options?.filter(o => o.manually_edited).map(o => o.label), option: selectedOption({...activeScope, id, version: edit.versions.at(-1)}), location: locationTitle(edit), summary: displayText(records.get(id)?.data?.options?.[0]?.after || '').replace(/\s+/g, ' ').slice(0, 140), questions: (edit.questions || []).map(q => q.id), requests: unresolvedFeedback(edit).length})),
         pdfStatus: c => {
             const entry = workbenchPDFStatus.get(choiceKey(c));
             return entry && entry.version === c.version && entry.option === selectedOption(c) ? entry.text : 'PDF 尚未核对／待更新';
