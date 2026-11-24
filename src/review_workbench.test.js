@@ -2,6 +2,21 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html, filterItems, staleBatchSelections} = require('./review_workbench');
 
+test('question option selection ignores controls and selected text while supporting keyboard', () => {
+    const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
+    let selection={isCollapsed:true}, chosen=0, prevented=0;const handlers={};
+    const node={addEventListener:(type,fn)=>{handlers[type]=fn;}};
+    const bind=vm.runInNewContext('('+source.slice(source.indexOf('function bindQuestionOption('),source.indexOf('\nfunction renderQuestionMode(',source.indexOf('function bindQuestionOption(')))+')',{getSelection:()=>selection});
+    bind(node,()=>chosen++);
+    handlers.click({target:{closest:()=>null}});assert.equal(chosen,1);
+    handlers.click({target:{closest:()=>({})}});assert.equal(chosen,1);
+    selection={isCollapsed:false};handlers.click({target:{closest:()=>null}});assert.equal(chosen,1);
+    handlers.keydown({target:node,key:'Enter',preventDefault:()=>prevented++});
+    handlers.keydown({target:node,key:' ',preventDefault:()=>prevented++});
+    handlers.keydown({target:{},key:'Enter',preventDefault:()=>prevented++});
+    assert.equal(chosen,3);assert.equal(prevented,2);
+});
+
 test('question entries use open note counts from their respective data contracts', () => {
     const fs=require('node:fs'),vm=require('node:vm');
     const source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');

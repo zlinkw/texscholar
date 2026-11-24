@@ -378,6 +378,15 @@ function filterDirectory() {
 }
 function selectedCount() {
     const stale = staleBatchSelections(batchSelection, directoryItems);
+    for (const card of $('questionModeCards').querySelectorAll('article[data-question-target]')) {
+        const chosen=batchSelection.get(card.dataset.questionTarget), check=card.querySelector('input[data-question-item]');
+        if (check) {check.checked=!!chosen; check.disabled=!chosen && check.dataset.unavailable==='true'; if (chosen?.version===card.dataset.questionVersion) check.nextElementSibling.value=chosen.option;}
+        for (const node of card.querySelectorAll('.questionOption[data-batch-option]')) {
+            const selected=!!chosen && chosen.version===card.dataset.questionVersion && chosen.option===node.dataset.batchOption;
+            node.classList.toggle('selected',selected);
+            node.setAttribute('aria-label',card.dataset.questionTarget+' 方案 '+node.dataset.batchOption+'，'+(selected ? '已选择' : '未选择')+'；按回车或空格批量选择');
+        }
+    }
     $('selectedCount').textContent = '已选 ' + batchSelection.size + ' 项' + (stale.length ? '；' + stale.length + ' 项需重核，整批不能接收' : '') + (batchSelection.size ? '；接收顺序（同点插入依此排列）：' + [...batchSelection.values()].map(i => i.id + '(' + i.option + ')').join(' → ') : '');
     $('staleSelections').replaceChildren();
     for (const selected of batchSelection.values()) {
@@ -512,6 +521,13 @@ function observeParagraphTranslations() {
     });
     for (const [key,node] of targets) if (node) {node.dataset.autoTranslation=key;paragraphObserver.observe(node);}
 }
+function bindQuestionOption(node, choose) {
+    node.addEventListener('click',event=>{
+        if (event.target.closest('button,input,select,textarea,a,summary,details,label,[contenteditable]') || !getSelection().isCollapsed) return;
+        choose();
+    });
+    node.addEventListener('keydown',event=>{if (event.target===node && (event.key==='Enter' || event.key===' ')) {event.preventDefault();choose();}});
+}
 function renderQuestionMode() {
     const composer=$('noteComposer');
     if ($('questionModeCards').contains(composer) || $('questionModeQuote').contains(composer)) $('questionComposerDock').appendChild(composer);
@@ -553,6 +569,7 @@ function renderQuestionMode() {
             card.appendChild(title);
             if (entry.card) {
                 const check=document.createElement('input'), select=document.createElement('select'); check.type='checkbox'; check.setAttribute('aria-label','选择 '+entry.id);
+                check.dataset.unavailable=String(!!(entry.conflict || entry.source_match===false || entry.card.postponed));
                 check.checked=batchSelection.has(entry.id); check.dataset.questionItem=entry.id;
                 for (const o of entry.card.options) {const option=document.createElement('option');option.value=o.label;option.textContent=o.label;select.appendChild(option);}
                 select.value=batchSelection.get(entry.id)?.option || entry.card.options[0]?.label;
@@ -564,7 +581,17 @@ function renderQuestionMode() {
                 const comparison=document.createElement('div'); comparison.className='questionOptions';
                 const optionNodes=entry.card.options.map(option=>{
                     const node=document.createElement('div'), heading=document.createElement('strong'), text=document.createElement('pre');
-                    node.className='questionOption'; heading.textContent='方案 '+option.label+(option.label==='A' ? ' · 推荐' : ''); text.className='review-text';
+                    node.className='questionOption'; node.tabIndex=0; node.setAttribute('role','group'); node.dataset.batchOption=option.label;
+                    heading.textContent='方案 '+option.label+(option.label==='A' ? ' · 推荐' : ''); text.className='review-text';
+                    const choose=()=>{
+                        const live=directoryItems.find(item=>item.id===entry.id), chosen=batchSelection.get(entry.id);
+                        if (!live || live.version!==entry.version || chosen && chosen.version!==entry.version) {status('审核项版本已变化，请重新核对所选项。',true);return;}
+                        if (waiting || coordinating || unavailable || conflict || entry.conflict || entry.source_match===false || entry.card.postponed || questionEntryDraft(entry)) {status('当前项暂不可批选，请先处理草稿、暂缓或定位冲突。',true);return;}
+                        select.value=option.label;
+                        if (!check.checked) {check.checked=true;check.dispatchEvent(new Event('change'));}
+                        else select.dispatchEvent(new Event('change'));
+                    };
+                    bindQuestionOption(node,choose);
                     const actions=document.createElement('div'); actions.className='optionActions';
                     for (const [intent,label] of [['preview','预览'],['editToggle','编辑'],['optionNote','批注'],['accept','接收']]) {
                         const button=document.createElement('button'); button.dataset.action='questionCard'; button.dataset.intent=intent;
@@ -595,7 +622,6 @@ function renderQuestionMode() {
                         const clipped=sourceEdited || full ? value : changedLines(value,changes[index],'new') || value;
                         const baseline=sourceEdited || full ? entry.card.original : changedLines(entry.card.original,changes[index],'old') || entry.card.original;
                         const visibleChanges=sourceEdited ? [] : full ? changes[index] : math.wordChanges(baseline,clipped);
-                        node.classList.toggle('selected',select.value===option.label);
                         models.set(text,math.render(text,clipped,visibleChanges,'candidate',sourceMode ? 'source' : 'preview',globalThis.katex));
                         if (!activeDraft) bindQuestionSource(text,entry,'candidate',option.label,clipped);
                         node.querySelector('strong').textContent='方案 '+option.label+(option.label==='A' ? ' · 推荐' : '')+(isCurrent && value!==option.after ? '（未保存草稿）' : '');
