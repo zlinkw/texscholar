@@ -150,3 +150,13 @@ U-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/
 V-handoff6-run exit 1：隔离界面尝试先操作暂留时未观察到暂留完成，等待到期；不认定产品原因，原记录保留。新 V-handoff7-run 在隔离夹具预置暂留批注，实际跨项选择并交接后附件准确标注暂留，且新建和编辑各只发送对应单笔；host/observer/外层 exit 0，截图 ui-949fa9ba011348e29700acc60ab9ba12.png 已看。该轮不宣称暂留按钮操作已经验证。
 
 V-handoff8-run 暂留及该条精确附件已实际成功，但观察器在上一操作结束前触发编辑后无限等待附件；为正常结束该隔离进程写入测试用占位附件，故最终 exit 1，不能算该轮通过。V-handoff9-run 等待实际忙态结束后覆盖暂留、选择、编辑和附件，host/observer/外层 exit 0，截图 ui-a89b85523103460aac81b239ca83de79.png 已看；V6 首败与 V8 人工占位均保留。
+
+### V3 正式交付
+
+预核 v0.9.67 本地及远端 tag 不存在、Release API 404、输出目录不存在；专用新隔离根和 host/pipe 的 MCP 及发行工具检查、版本一致性均 exit 0，本轮无新增依赖，运行清单覆盖受影响文件。版本与总控计划同批提交并普通 push/fetch，唯一构建 V-delivery-build exit 0，输入 5979037e47a702b97f0e56d0c60471db129f6f04。
+
+dist/v0.9.67/texscholar-0.9.67.vsix SHA256 9310cb903c71262fd8fc40474daa3ef59fcd417d3fa3bf29b2b757fc4497d75b；texscholar-0.9.67-source.zip 998de3abcc53522d80315c590eabf3fc598fc0bd22bf9037ffef662ecf3d6f34；SHA256SUMS.txt 2db3493289b0c5b1f2cdbc8b4f85a51a401b12575b4edcf63878f9d062418e66。远端附注 tag v0.9.67 对象 d172400d26050deff94fffdb589f61f0b692da79 指向构建输入，附注含 SOURCE-COMMIT 和双包摘要，普通推送 exit 0。
+
+V-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.67 非 draft、非 prerelease，API 三附件摘要与本地一致，V-delivery-verify exit 0。实际 C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.67/texscholar-0.9.67.vsix 在仓库执行 exit 0，无 force；CLI 和 manifest 为 local-research.latex-writing-tools 0.9.67，登记 source=vsix、pinned=true。未重载用户窗口或 MCP，安装不代表活动宿主已加载；未外发真实论文或实测网络 AI。完整命令和日志见 D:/latex-writing-checks/review-efficiency-20261122/V-delivery-*。
+
+真实 profile 资料由总控在此之前依用户许可独占重分类：revision 3→4，当前 constraints 和 personal 均为空；原文/来源、其余条目与22项候选 proof 及论文 state 不变。证据由总控保管，本执行者未读写真实资料。

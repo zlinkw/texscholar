@@ -157,7 +157,7 @@ U全阶段完成，返修0。0.9.66正式发布并安装同一VSIX，唯一构�
 - [x] V1b 精简 AI 论文助手实际任务提示词，仅保留明确任务、项目身份、版本和必要按需工具入口；不自动注入批注、论文资料、个人习惯或完整协议。历史迁移资料保留原来源及范围，不将待审意图升为已批准要求。
 - [x] V1c 作者习惯和论文要求允许为空，未明确设置时不从历史注释、迁移资料或模板自动填充；后续作者明确写入仍可用。保留旧资料和候选 proof 绑定，真实既有资料若需重置由总控核具体范围并协调，执行者不写真稿或 profile。
 - [x] V2 局部定向测试和正常私有Development核同item至少三条旧/暂留批注加本次新增或编辑，实际附件只含明确request且状态逐项准确；重试不重新保存、不扩大，作者多选跨项精确输出，底层其余notes/state/对象不变且可按需查回。总控冻结后审真实diff/消费者及只补未覆盖必要组合，不重复同组。
-- [ ] V3 最终通过后另派必要版本/发行检查、实际预核下一版0.9.67无冲突、唯一构建及同包正式发布安装；总控核元数据集中结案。不自动reload/restart或包后冒烟。
+- [x] V3 最终通过后另派必要版本/发行检查、实际预核下一版0.9.67无冲突、唯一构建及同包正式发布安装；总控核元数据集中结案。不自动reload/restart或包后冒烟。
 
 当前总控仅写本plan/index支持增量，不独立提交，交原Terra与首个成功功能批纳入；产品/测试/UI/隔离配置/Git全部租约给原Terra，原总控不并行写/测，整包完成且无在途再交回。仍普通Windows原仓，pwsh7/UTF8/Python-B-Xutf8，精确成功批普通commit/push/fetch核一致；远端前移/权限冲突停相关动作，不reset/rebase/merge/force/改remote。只用合成隔离项目、专属pipe/profile、CreateDesktopW私有未切桌面，不在Default且前台输入保持，截图实看保留。真实论文/P/批注/三稿/暂存/用户窗口/默认pipe及MCP不操作，不外发真稿，无文件/对象/截图删除或cleanup。旧失败及未知完整保留，无新增性能测试。
 
@@ -166,3 +166,7 @@ V1至V2最终通过，返修0，冻结源码ed1ad8be8c993667c5019406333b13204813
 按用户本轮明确空要求授权，总控独占完成真实profile最小重分类：paper_id=1、revision3→4，112条历史constraints改为other并标明历史原注释、非当前要求，原scope随条目保留；152条原文/source/evidence全部保留，其余40条逐字段不变，22个候选proof来源摘要不变。个人习惯本来为空且保持，当前constraints实际为0。使用原writer_lock_at及paper_background.write完整读取/CAS，无FakeHost或源写入；前后state原字节、aliases、roles、personal一致。controller-v-profile.py先只读预览，再明确--apply exit0，baseline/selection/planned/result及实际argv/cwd/stdout/stderr/exit保留在D:/latex-writing-checks/question-mode-latency-20261124/v-real-profile与controller-v-profile-apply.*，原文仅本地保护不上传。此授权仅改变既有历史资料分类，不从中自动提炼习惯或规则；后续作者明确写入仍可用。
 
 V3现可由原Terra预核0.9.67实际无冲突，完成必要版本/MCP/发行检查、唯一scripts/build.py构建、附注tag及正式Release三附件摘要核对，同一VSIX CLI安装并核manifest/登记。支持plan/index随版本批纳入，execution发行尾留总控与结案集中提交。复用有效功能证据，不重复UI、真实profile操作或包后冒烟；不自动重载/重启，不触真实论文/用户窗口/默认pipe，不删除。总控仅在交包后核发布安装元数据。
+
+V全阶段完成，返修0。0.9.67正式发布并同包安装，唯一构建输入5979037e47a702b97f0e56d0c60471db129f6f04；必要版本/隔离MCP/发行工具检查均0。总控实核远端附注tag对象d172400d26050deff94fffdb589f61f0b692da79、目标与SOURCE-COMMIT/双包摘要；controller-v-release-meta.py读Release API核非draft/prerelease、三附件digest与本地包一致，实际manifest及登记为0.9.67、source=vsix/pinned=true，exit0。完整摘要及实际构建/安装命令见execution；API原始输出/退出与结果在D:/latex-writing-checks/question-mode-latency-20261124/controller-v-release*。
+
+返修交接仅附本次新增/编辑或明确选择的具体批注，其他批注由AI主动查询；日常助手提示不自动附资料与批注，角色/规则/个人习惯/论文资料可按需读取。真实当前习惯与论文要求均为空，历史原文和候选绑定保持，后续提炼由作者指定会话执行。实网AI与真实桌面附件接收端未测；未自动重载/重启、包后冒烟或删除。用户重载目标VSCode窗口并重启现有MCP连接后启用新版。全部租约已交回、无在途，执行尾与计划索引集中结案。
