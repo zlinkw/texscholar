@@ -59,3 +59,22 @@ M全阶段完成，返修1。0.9.63正式Release https://github.com/zlinkw/texsc
 总控以远端ls-remote核tag对象和目标，controller-final-meta.py实读Release API确认非draft/非prerelease、三附件digest与本地同包一致：VSIX 7153c48e18a40fc71ed2fc843f37e08138b69758d239cbdef580c104d3a83645，source.zip 1da3fab8244c1ed14cc4346f6f6e08df37b6dfd7fe8222ae972b9153c41014f5，SHA256SUMS c7f4b0e28b649c66a30b6b5f7ea7cceccbe74800870b3a65ca5af6ed349c4d0c；本机manifest和extensions登记publisher/name/version精确0.9.63、source=vsix/pinned=true。元数据脚本exit0，原API stdout/stderr/process在D:/latex-writing-checks/question-mode-parity-20261124/controller-final-release.*，未重构建或包后冒烟。
 
 本轮新增优化为跨卡原文/方案/问题划词与精确片段范围、保存并切换的批注目标、跨模式草稿可见、推荐取舍/事实依据/范围、段落深审明确入口、暂缓/冲突/未保存稿接收限制及窄窗纵向ABC。现有差异导航、方案对照、历史和恢复经明确打开本项保留。有效覆盖按前述组合复用，所有首败/未测及旧保护事件保留；未测实网翻译质量或所有快捷键。真实论文/P/旧批注/用户窗口未触，未自动reload/restart；安装不代表活动宿主加载，用户重载对应VSCode窗口后启用。桌面MCP旧拒绝仅历史事实，本轮现状未知且未操作。唯一Terra冻结交回全部租约，无在途。
+
+## S阶段：问题模式延迟、事务收尾与接收后导航
+
+2026-11-24用户报告问题模式翻译与批量接收特别慢，6项接收等待约3分钟；随后提出可能是未自动切到下个问题。用户明确选择单人、每次约6项、批接5秒内作为性能验证范围和目标；不扩大压测/并发/数据量或擅定翻译服务SLA。当前源码/正式安装0.9.63，起点master==origin/master==9584fac00fa0114c6358de1eb26adbb93b0439d5、clean。继续原总控与唯一Terra，S返修0。
+
+总控已按diagnose读取现有日志及自动CPU采样，无新性能测试或现场操作。真实13:42宿主日志记录68项，cards正常约0.24至1.05秒、刷新约0.28至1.32秒；一次webview_request到宿主延迟58647ms，不能归为后端事务时间。三份VSCode自动无响应采样重复指向inline_review.js的reviewLocation/lines：每次questionRows为各关联项拆分整份正文、前后行、标记和章节；问题翻译及批接前都反复调用questionTable。翻译另有questionTranslationRun串行及片段重算，须按真实调用链定位，不凭猜测并发或缩短网络超时。备份失败提示为未归属本地提交/远端推进保护，scheduleBackup不等待其完成；不得因截图提示删除该保护、推送论文或假称它造成同步等待。
+
+用户随后截图明确报错：审核宿主事务失败；请核对是否存在待恢复意图：编辑器保存失败；请核对尚未完成的编辑事务。对应review_host_edit.js的doc.save()返回false，不能因磁盘已是目标版本而跳过保存/脏稿/真实宿主校验。第二截图C:/Users/ZLK/AppData/Local/Temp/codex-clipboard-4098bfc6-b060-4230-a1cb-7c4786bbbc7d.png。
+
+现场重要事实：只读稳定读取唯一真稿sidecar发现transaction尚在，commit=f2d0537322d016a432837f39fe5174cc634aceefbf1952cd7aa3452a0bdf57df；files仅Response to Reviewers.tex，checks仅main.tex，owner=false。六项du/eh/es/et/eu/ev均暂标accepted/A；逐字对比不可变事务对象确认Response已经与0-new完整相等、与old不同，main与check-0相等，读取前后state字节一致。事务未清不能当完整成功；不重放接收、不直接清事务/改状态、不覆盖正文。该读取不证明活TextDocument/Webview草稿或迟到写安全。现场仅总控后续按真实合格宿主的既有显式恢复协议协调；Terra无真实写入/默认pipe/恢复权限。所有真稿、模板、旧批注、候选、三稿及范围外暂存继续保护。
+
+原始现场日志/三份cpuprofile及汇总在D:/latex-writing-checks/question-mode-latency-20261124。live-state-snapshot.json及live-intent-snapshot.json含真实内容，只供本地受保护对照，不上传或纳入源码/发行。live-transaction-check.json保存精确结果。用户截图C:/Users/ZLK/AppData/Local/Temp/codex-clipboard-519d2ba8-d52e-4968-a330-86863613898a.png。总控一次进程快照仅见翻译子进程、未见source_review，不能由此猜事务失败原因或杀任何进程。
+
+- [ ] S1 Terra在既有边界消除重复全源扫描/片段重算和阻塞，保留问题身份、位置跨越/检查过期、Unicode/TeX、全文/片段、全部批注/草稿及版本/CAS。优先按同一不可变源/版本复用现有结果；真实输入变化必须失效，不增加无关通用缓存或新配置。按三种可证伪原因区分：宿主同步扫描、网络串行/重复请求、事务宿主写入与收尾；现有CPU证据优先。修复当前调用链，补可见等待阶段/实际错误，不能用超时提前返回成功或后台暗接收。
+- [ ] S2 核清接收的源写入成功而事务未收尾的路径并以隔离真实宿主复现必要边界；补有用的完成/恢复反馈，禁止放宽宿主、脏稿、并发或writer保护。接收成功后若当前问题已无可审核项，准确进入下一有可审核项的问题；若仍有未选项则保留当前问题。没有下一问题、暂缓/冲突/筛选或历史项时给准确结果及可达入口，不把接收当科学问题解决或自动勾问题核对。跨问题共享项不重复处理，全部已选与当前问题已选的范围保持。
+- [ ] S3 按用户确认只验证单人6项批接，正常Development专属pipe/profile、私有未切桌面；合成文本使用接近现场的68个活动项、已有246总记录/长正文及问题关系作为真实规模上界依据，读写隔离项目，禁止使用真实项目操作或上传真稿。已有用户确认覆盖6项/5秒，可测端到端点击至持久化/界面完成；翻译用确定性慢/失败供应商分离网络时间与队列/界面等待，不增加服务SLA或实网真稿翻译。已有功能组按受影响闭包恢复，保留接收原子性、未完成恢复、跨问题/版本/草稿/批注和消息迟到检查；不改既有测试覆盖/超时。Terra做局部，冻结整包后总控审真实diff，仅补未重叠最终组合。
+- [ ] S4 修复及必要验证通过后沿已授权原流程唯一构建、正式发布/同包安装最新版；必要现场事务恢复由总控先核真实现场，不能把隔离通过当真稿已恢复。自动重载/重启用户窗口/MCP仍无授权，不以清事务或重启绕过；不能安全完成时交具体最小阻塞。无删除cleanup、论文Git/PDF/编译/新批次。普通提交/推送/fetch，不改历史/远端；支持计划与执行记录随对应功能批集中提交，不另拆每条元数据检查的commit/push。
+
+当前总控只写此计划增量及索引，不独立提交；交Terra后同首个验证通过功能批精确纳入，所有源/测试/UI/隔离配置/Git租约给原Terra，plan/index实现期间不并行写。无在途才冻结交回。小验收与最终组合复用有效结果，不重建历史证明链作为目标。必要真实安全阻断及时交包，其余局部过程只记execution。

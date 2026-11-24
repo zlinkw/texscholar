@@ -27,7 +27,7 @@ function reviewLocation(state, edit, card, previous) {
         left:leftLines.at(-1), right:rightLines[0], crossed};
 }
 
-function questionRows(state, checked = {}) {
+function questionRows(state, checked = {}, locations = new Map()) {
     const grouped = new Map();
     for (const [id, edit] of Object.entries(state.edits)) {
         const source = state.cards[id];
@@ -35,7 +35,9 @@ function questionRows(state, checked = {}) {
             const key = JSON.stringify([question.id, question.file, question.quote]);
             if (!grouped.has(key)) grouped.set(key, {key, question, entries:[]});
             const prior = checked[key] && JSON.parse(checked[key]).find(row => row.id === id)?.location;
-            const location = reviewLocation(state, edit, source, prior);
+            const locationKey = JSON.stringify([id, prior?.left, prior?.right]);
+            if (!locations.has(locationKey)) locations.set(locationKey, reviewLocation(state, edit, source, prior));
+            const location = locations.get(locationKey);
             grouped.get(key).entries.push({id, kind:edit.kind, file:edit.file, status:edit.status, version:edit.versions.at(-1),
                 conflict:source ? source.source_match === false : undefined, freshness:edit.freshness, location,
                 requests:edit.requests || [], questions:edit.questions || []});
@@ -177,7 +179,7 @@ function createInlineReview(vscode, context, execute = run) {
     let pdfRequestWrites = Promise.resolve();
     const acceptedPDFPreparations = new Set();
     const previewChoices = new Map(), workbenchPDFStatus = new Map(), pdfIntents = new Map();
-    let latestReviewState, latestReviewScope;
+    let latestReviewState, latestReviewScope, questionLocations = new Map();
     const titleTranslations = new Map();
     let titleRun;
     const locationTitle = edit => edit.location_zh || titleTranslations.get(edit.location) || edit.location;
@@ -549,7 +551,7 @@ function createInlineReview(vscode, context, execute = run) {
             delete data.diff_reused;
         }
         watchEvidence(c, state);
-        latestReviewState = state; latestReviewScope = {repo:c.repo, owner:c.owner};
+        latestReviewState = state; latestReviewScope = {repo:c.repo, owner:c.owner}; questionLocations = new Map();
         workbench.observeSession(c, state.session);
         require('./backup').restoreAutomaticStatus(c.repo, state.auto_backup);
         workbench.backupStatus?.(require('./backup').automaticStatus(c.repo));
@@ -796,7 +798,7 @@ function createInlineReview(vscode, context, execute = run) {
         if (previous.c.version !== saved.card.version) for (const peer of records.values()) workbenchPDFStatus.delete(choiceKey(peer.c));
         const record = {...previous, c: {...c, version: saved.card.version}, data: {...saved.card, source: saved.card.source || previous.data.source}};
         records.set(c.id, record);
-        if (latestReviewState) latestReviewState.edits[c.id] = saved.card.edit;
+        if (latestReviewState) {latestReviewState.edits[c.id] = saved.card.edit; questionLocations = new Map();}
         updateList();
         // Feedback changes only the embedded state. Rebase cached owner offsets
         // across that header's size change, without rereading/repainting its peers.
@@ -856,7 +858,7 @@ function createInlineReview(vscode, context, execute = run) {
             if (latestReviewScope?.repo !== c.repo || latestReviewScope.owner !== c.owner || !latestReviewState) return [];
             return feedbackRows(latestReviewState);
         },
-        questions: (c, checked) => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? questionRows(latestReviewState, checked) : [],
+        questions: (c, checked) => latestReviewScope?.repo === c.repo && latestReviewScope.owner === c.owner ? questionRows(latestReviewState, checked, questionLocations) : [],
         openQuestionEntry: async (c, id, version) => openRelatedItem({...c,id,version}),
         trace: value => diagnostics?.appendLine(JSON.stringify(value)),
         directory: () => Object.entries(latestReviewState?.edits || {}).map(([id, edit]) => ({id, file: edit.file, kind: edit.kind, status: edit.status,

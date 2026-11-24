@@ -763,3 +763,21 @@ test('problem table uses exact verified identity and reflects version, associati
     state.edits['1'].versions.push('v3'); assert.notEqual(questionRows(state).find(r=>r.key===first.key).snapshot,before);
     state.edits.a.questions=[]; assert.equal(questionRows(state).find(r=>r.key===first.key).entries.length,1);
 });
+
+test('question locations reuse a source snapshot without mixing prior anchors', () => {
+    const {questionRows}=require('./inline_review');
+    const text='😀\n\\section{One}\nleft\nTARGET\nright\n', start=Array.from(text.slice(0,text.indexOf('TARGET'))).length;
+    const q={id:'q',file:'q.txt',quote:'one'}, q2={...q,quote:'two'};
+    const state={sources:{'m.tex':text},edits:{'1':{file:'m.tex',kind:'manuscript',status:'pending',versions:['v1'],questions:[q,q2],requests:[]}},
+        cards:{'1':{source_match:true,source:{start,end:start+6}}}};
+    const cache=new Map(), rows=questionRows(state,{},cache);
+    assert.equal(cache.size,1); assert.equal(rows[0].entries[0].location.left,'left');
+    assert.deepEqual(questionRows(state,{},cache),rows);
+    const checks={[rows[0].key]:JSON.stringify([{id:'1',location:{left:'right'}}])};
+    const crossed=questionRows(state,checks,cache);
+    assert.equal(crossed[0].entries[0].location.crossed,true);
+    assert.equal(crossed[1].entries[0].location.crossed,false);
+    assert.equal(cache.size,2);
+    const next={...state,sources:{'m.tex':text.replace('left','west')}};
+    assert.equal(questionRows(next,{},new Map())[0].entries[0].location.left,'west');
+});

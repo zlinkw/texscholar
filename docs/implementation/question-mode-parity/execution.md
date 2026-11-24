@@ -48,3 +48,7 @@ M-delivery-mcp 和 M-delivery-publisher-test 隔离检查 exit 0；版本核对�
 0.9.63 唯一构建 M-delivery-build exit 0，构建输入 77cf48704e85f1e750443498ce596e1bc9b7f25b；dist/v0.9.63/texscholar-0.9.63.vsix SHA256 7153c48e18a40fc71ed2fc843f37e08138b69758d239cbdef580c104d3a83645，texscholar-0.9.63-source.zip 为 1da3fab8244c1ed14cc4346f6f6e08df37b6dfd7fe8222ae972b9153c41014f5，SHA256SUMS.txt 为 c7f4b0e28b649c66a30b6b5f7ea7cceccbe74800870b3a65ca5af6ed349c4d0c。附注 tag v0.9.63 对象 792c122b3d668d9da4b9bfb105239da72f04be92，目标为构建输入，附注列 SOURCE-COMMIT 和双包摘要；普通推送 exit 0，远端对象和目标一致。手动以未引用的 PowerShell `v0.9.63^{}` 查询时命令解析失败；随后以 git cat-file 与远端 ls-remote 分别核对成功，未变更 tag。
 
 M-delivery-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.63 非 draft、非 prerelease，API 三附件摘要与本地一致，M-delivery-verify exit 0。真实命令 `code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.63/texscholar-0.9.63.vsix` exit 0；CLI 及实际 manifest 显示 local-research.latex-writing-tools 0.9.63，登记 source=vsix、pinned=true。同包身份由摘要核对；未重载活动宿主，安装登记不表示当前窗口已生效。桌面 MCP 曾有 0.9.60 版本拒绝的旧观察，本轮未探测其当前状态或重启；实网翻译质量未测。未触真实论文、默认 pipe、用户窗口，无删除或 cleanup。
+
+S 首批：真实 CPU 采样指出 questionRows 中同一审核源位置被反复全文扫描，具体证据见计划。合成 246 条记录、68 活跃项、147020 Unicode 字符、两个问题的 S-location-baseline 两次独立表计算分别 617.75/578.83ms。现按当前审核源快照复用每项及旧锚点对应的位置结果，源刷新或保存更新时清空；不同问题旧锚点仍独立比较。S-location-reuse 同规模第一次 327.01ms、同快照第二次 2.67ms；这只是位置表测量，不是批接端到端 5 秒验证。S-location-tests 位置与问题身份定向测试 exit 0，覆盖 Unicode、不同旧锚点和新源重算。原事务/真实论文仍未触。
+
+用户新增要求：问题及段落模式不展示候选下 AI 取舍、详细理由、事实变化核对与修改范围等解释文字；保留原文对照、方案身份、作者批注和操作状态，不改变底层元数据或审核语义。此项随 S 实现和验证。
