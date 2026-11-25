@@ -8,6 +8,8 @@
 
 已查明：ai_context只自动包含pending/rework的反向依赖，已接收回复可漏出；stale仅在返修和拒绝链触发，save_block_source、sync_block和正文接收未完整覆盖；freshness未在审核卡/目录明确呈现。内存夹具执行实际selected_ids/ai_context，已接收依赖不返回、改为pending则返回；首轮夹具缺assert_ready桩exit1，补齐后exit0，不冒称真实现场复现。真实只读当时有15条已接收回复needs-recheck，不表示15条都错。旧P中的装配说明只有历史来源/旧范围，没有当前可执行摘录关系；question blocks的response_dependencies是修改项ID，不能代替持久正文块引用。begin会重置edits但保留blocks；导出当前先移除MARKER，动态引用必须在此前展开。早期只读检索若干猜测路径不存在及一次PowerShell引号错误均无写入，后按实际review_archive.py/review_pdf.py/source_review.py定位。
 
+现任总控local/01a212c7-d736-7503-ab7a-9717a426fefb负责交付元数据与结案。旧总控01a20811在7次压缩后峰值301878自然触发接替，已停写且无在途；新总控真实resolved/observed均gpt-6.1-sol/high、match/continue，priority仅记录，明确交权并核旧turn结束后已归档旧聊天。唯一Terra不变，Y5已冻结交回全部租约；没有新代理或重复实现/测试/构建/安装。
+
 ### 行为与存储契约
 
 工作稿中的回复摘录采用明确的正文文件/块身份及顺序引用，正文内容仍只在原文件维护；不搬正文进碎片库、不把生成缓存或旧候选当第二权威。运行所需最小TeX支持文件/引用信息属于正常论文源码，可随源Git和导出处理，不依赖.codex-review对象、SQLite、AI会话或插件进程。普通latexmk/编辑器编译必须可工作，不要求shell-escape或自动安装全局依赖；优先已有标准TeX/宏包能力，具体负责实现以真实独立编译验证决定，不先造副本缓存冒充单一来源。
@@ -22,11 +24,13 @@
 - [x] Y2 受控写入与按需AI：接入现有host/writer/CAS保护，提供AI可用的查询/建立/更新引用及旧复制摘录精确预览转换入口，不新增逐块审批；解释候选与引用槽分离。read_context按实际正文/问题/范围返回受影响引用的简短身份和状态，含已接收回复，细节按需读；批注附件仍只含明确所选request。保留人工编辑、旧批注、候选版本、三类草稿及范围外stage，不把资料读取等同授权。Terra做实际MCP/写入协议及失败保护的小验收。
 - [x] Y3 审核显示与预览：段落/问题两模式显示解析后的真实摘录及来源，解释编辑不覆盖引用槽；单项/批量接收、方案切换、后台源编辑及刷新读取同一源版本。正文接收不要求额外批准纯摘录展开，解释仍是独立作者决定。只对概括性陈述等仍需人工/AI理解的关系显示需核对，不把动态逐字摘录继续当待办。Terra在私有未切桌面、独立profile/pipe的正常Development验证真实交互，核Default前台不变；具体截图/失败按silent-ui-screenshot保留。
 - [x] Y4 导出及生命周期完整链：投稿副本先从同一源版本展开所有动态引用，再移除插件定位符/不再需要的引用支持；导出普通源码可独立编译，工作稿不变。Git/备份/PDF/恢复/新批次与历史精简的受影响消费者接通，引用无需保留已完成批注或候选对象。Terra验这些负责边界和当前必要回归，禁止运行cleanup apply或删除文件的完整组。完成后一次冻结交包；总控审全部真实diff并仅补未重叠组合：同一隔离论文两个回复引用正文，在候选精简/新批次后换进程脱离profile及插件，实际编译与展开导出仍同源、解释不变，核正式与预览版本边界及必要失败语义，复用Terra局部/UI有效结果。
-- [ ] Y5 审核通过后正式同包交付：原Terra预核下一版本无冲突，必要版本/MCP/发行与运行资源闭包检查，scripts/build.py恰一次构建，真实构建commit的附注tag及双包摘要、正式Release三个API digest、同一VSIX CLI安装登记。总控仅核交付元数据，执行尾与plan/index集中结案；不新增包后冒烟、额外全仓审计或重跑功能全组，不重载或重启任何用户窗口/MCP。
+- [x] Y5 审核通过后正式同包交付：原Terra预核下一版本无冲突，必要版本/MCP/发行与运行资源闭包检查，scripts/build.py恰一次构建，真实构建commit的附注tag及双包摘要、正式Release三个API digest、同一VSIX CLI安装登记。总控仅核交付元数据，执行尾与plan/index集中结案；不新增包后冒烟、额外全仓审计或重跑功能全组，不重载或重启任何用户窗口/MCP。
 
 总控先写本计划/索引支持增量，随后整体移交产品/测试/UI/隔离配置/Git租约给原Terra并停止并行写测；每批成功纳入支持docs，不为小检查另起提交循环。Terra完成Y1–Y4后冻结交回全租约，总控最终通过才另派Y5；共享候选检查一个执行者，范围变化/真实首败/未知保留，必要返修原Terra处理，不新增代理。真实论文D:/Overleaf/TMI-DA-Marked-up Copy、真实P/个人习惯、state/批注/候选/草稿/stage、用户窗口和默认pipe/MCP均无本轮写入租约，授权是插件实现和隔离验证，不顺带迁移真稿；若必须核旧资料，只限必要只读。无全局SKILL/配置改写、外发真稿、文件/目录/截图/对象删除或cleanup执行。pwsh7、显式UTF8、Python -B -X utf8；只用local bare验证Git，普通精确stage/commit/push/fetch，远端前移停止，不reset/rebase/merge/force或改remote。
 
 Y1–Y4总控最终审核通过，冻结1ccfe352621bea0fdac69c3560cd4021d05773b8，返修0。总控审22文件真实diff、TeX直接读取/唯一边界与解释引用槽保护、host资源创建与源/state检查、按需上下文、预览快照、导出先展开后移标记及备份资源链；实看段落/问题两截图。复用Y-final-check1 Python8/JS95、Y4-final1两项及Y1/Y2有效局部覆盖，不重复同组。Y3-ui6外层空桌面枚举exit1保留，不签完整通过；Y3-ui5真实私有桌面全链exit0有效，后台改源/批接的完整UI组合未实操，不冒充全覆盖。总控独占controller-y-combination1.py exit0：隔离FakeHost仅用于准备，真实本地bare提交推送后compact去候选引用、新批次清edits；两个回复同源选择B，独立复制只有main/reply/sty、无profile/审核缓存，另起真实latexmk进程编译并读PDF，两摘录一致且解释不变；手动保存正文后两处同步，导出展开后再次独立编译一致，缺源真实编译非零并显示块ID。17条真实子进程argv/cwd/env说明/stdout/stderr/exit和result在D:/latex-writing-checks/review-efficiency-20261122/controller-y-combination1；源码未改、没有文件删除。总控最初按平铺日志名检索失败，随后确认Y证据是同名目录下run.json/stdout/stderr，不丢原事实。Y5按已授权正式发布安装继续，不重载或重启用户环境。
+
+Y阶段完成，返修0。[0.9.70正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.70)并同包安装，唯一构建输入f4e16532bdf751fffd49529227f0b6044138d331。总控独立核本地/远端附注tag对象c557c335e978a5e8ab1644cf89634975472e6c96及目标、SOURCE-COMMIT/双包摘要；controller-y-release-meta.py实读Release API，三附件digest与本地产物一致，实际manifest及source=vsix/pinned登记为0.9.70，exit0。原始API/进程/结果在D:/latex-writing-checks/review-efficiency-20261122/controller-y-release*，构建/安装完整原日志在Y-delivery-*；安装exit0伴Node DEP0169警告，未隐去。未自动重载/重启，活动宿主加载状态未知；真实旧复制摘录未迁移，需明确来源映射后受保护转换。执行尾、计划和索引集中收尾，无在途；未重构建/重装/包后冒烟、删除或操作真实论文。
 
 ## X阶段：固定块预览后自动继续
 

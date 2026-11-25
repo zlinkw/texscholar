@@ -1,6 +1,12 @@
 # 问题审核能力对照执行记录
 
+现任总控local/01a212c7-d736-7503-ab7a-9717a426fefb已按caveman实核Sol/high match/continue并接权，旧总控01a20811结束后已归档；唯一Terra和Y返修0不变。Y5已交回全部租约，无在途。
+
+总控Y5交付元数据最终核对通过：本地/远端附注tag对象及构建目标、注释双包摘要一致；controller-y-release-meta.py实际读Release API，三附件digest与本地产物一致，manifest和source=vsix/pinned登记为0.9.70，exit0。原始API、argv/cwd/exit及结果在D:/latex-writing-checks/review-efficiency-20261122/controller-y-release*。安装原日志exit0伴Node DEP0169警告，未重装；Y1–Y4和总控独占组合复用有效证据，不重复功能组或包后冒烟。plan/index/execution集中结案；未自动重载/重启，活动宿主加载状态未知，真实旧复制摘录未自动转换，须明确来源映射后处理。
+
 现任 local/01a21288-5815-7312-b496-006ade07bede，Terra 6.1/high 实核 match/continue，tier priority；Y 返修 0。Y 起点 ededb5e0c0be2b20ba4c8dc0dd7e51757754ad44 与 origin/master 相同，计划和索引已有总控支持改动。真实论文、P、默认管道、MCP及用户窗口受保护；Y1–Y4 完成并审核前不构建或发行。
+
+Y5 同包交付：预核 v0.9.70 本地/远端 tag 不存在、Release API 404、目标 dist 不存在；隔离专属 FakeHost/pipe 的 package/MCP 版本一致检查、MCP 两项及发行工具 13 项 exit 0，运行清单、源测试及 sty 内容类型已核。构建输入提交 `f4e16532bdf751fffd49529227f0b6044138d331` 普通 push/fetch 后 `scripts/build.py` 恰一次 exit 0。VSIX SHA256 `7d5ff0f6fcc5b33a1d193b47badd999fb763d565e265f16153a4757fa6d35a6b`，source.zip SHA256 `b7a30cbc956a41e92995a252f5e982a13274c0c687942fbfec3849ff06cb999c`，SHA256SUMS.txt SHA256 `d127557927378edd97e577872adbb90d27adf1ddea41a9f4e20d03c3ad01dfce`；产物在 `D:/GitRepo/texscholar/dist/v0.9.70`。远端附注 tag 对象 `c557c335e978a5e8ab1644cf89634975472e6c96` 指向该构建提交并记录双包摘要；[正式 Release](https://github.com/zlinkw/texscholar/releases/tag/v0.9.70) 非 draft/prerelease，API 三附件摘要与本地一致。使用 `code.cmd --install-extension` 安装同一 VSIX exit 0，CLI 版本、实际 manifest 和登记 `source=vsix, pinned=true` 均为 0.9.70；安装仅更新登记，不表示活动宿主已加载。命令、相关环境与输出见 `D:/latex-writing-checks/review-efficiency-20261122/Y-delivery-*`；未包后冒烟、删除、操作真实论文/用户窗口或重载/重启。发行元数据和本执行尾留总控集中收尾。
 
 Y1 隔离探索：`D:/latex-writing-checks/review-efficiency-20261122/Y-tex-probe1` 至 `Y-tex-probe8` 使用 TinyTeX pdflatex 和合成文本，均 exit 0，但 probe1–4 未产生页面，不能算功能通过；probe5 产生 PDF，提取发现行尾注释后的下一行丢失。probe6–8 调整重扫描换行后提取到下一行，空格显示及其他 TeX 结构与副作用仍未验证。日志保留原始 stdout/stderr、实际命令和退出码；PDF 提取另用工作区依赖 Python 的 pypdf。此为探索，不是 Y1 验收，尚无产品源码修改。
 
