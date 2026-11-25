@@ -190,3 +190,9 @@ W-r1-backup7 在新隔离 bare 仓库实际验证：断网不精简；远端确�
 远端附注 tag v0.9.68 对象 e0ed041f750ccd2561de1f61da3822479015f5f4 指向实际构建输入，附注精确含 SOURCE-COMMIT/VSIX-SHA256/SOURCE-SHA256。W4-publish exit 0，正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.68 为非 draft、非 prerelease；W4-verify 核三个 API digest 与本地相同，exit 0。实际在仓库运行 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.68/texscholar-0.9.68.vsix` 无 force，exit 0；CLI、manifest 和登记均为 local-research.latex-writing-tools 0.9.68，source=vsix、pinned=true。完整 argv、cwd、环境和日志在 `D:/latex-writing-checks/review-efficiency-20261122/W4-*`。
 
 总控已独占处理真实23条完成批注并核状态；其首次后置比较因 state SHA 必然变化 exit 1，后续只读验证通过，源/index/object 后置断言未执行，不能称已实测。407个无引用对象未删除。此次未触真实项目/用户窗口/默认 pipe/MCP，无重载重启或包后冒烟；安装登记不证明活动宿主已加载。
+
+### X 固定块预览后继续
+
+普通已授权写作、位置明确时，MCP `prepare_block` 描述和实际写作指南现要求先预览并核对边界，再用返回的 block_id 和未变化源码/状态版本继续，不逐块询问；位置有歧义时询问具体位置，建立标记不代表接收候选。README 同步说明。手动选区入口原有确认、旧格式迁移及 `reassociate_block` 修复确认均保留，后端写入和宿主安全协议未改。
+
+X-checks2 在独立根与专属 pipe，先核 FakeHostSession，再运行真实 Server.call 预览及 apply 和两个固定块边界用例，三项 exit 0：预览不改源码或状态，缺 block_id、实际源码或状态变化、非法边界均拒绝，合法预览返回 ID 后无需额外确认参数即可应用；保留宏边界及问题容器边界检查。X-checks1 在补充真实源码/状态变化断言前 exit 0；完整 argv/cwd/选定环境/stdout/stderr/exit 位于 `D:/latex-writing-checks/review-efficiency-20261122/X-checks*`。首次只读尝试使用不存在的 multi-session 技能别名路径报错，随后读取目录中实际技能文件。未触真实项目、默认 pipe 或用户窗口；未运行 UI、性能、删除、构建或发行。

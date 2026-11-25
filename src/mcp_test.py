@@ -252,9 +252,30 @@ class MCP(unittest.TestCase):
         spec = {'file': 'draft.tex', 'kind': 'paragraph', 'start': start, 'end': text.index('\n', start) + 1,
                 'source_revision': current['context']['source_revisions']['draft.tex']}
         request = {'project': str(root), 'state': current['owner'], 'expected_sha256': result['sha256'], 'spec': spec}
+        state_before = (root / current['owner']).read_bytes()
         preview = server.call('prepare_block', {**request, 'apply': False})
         self.assertEqual(source.read_bytes(), before)
+        self.assertEqual((root / current['owner']).read_bytes(), state_before)
         self.assertIn('TS-BLOCK-BEGIN', preview['marked'])
+        with self.assertRaisesRegex(Conflict, 'block ID from the preview'):
+            server.call('prepare_block', request)
+        with self.assertRaises(ToolConflict):
+            server.call('prepare_block', {**request, 'expected_sha256':'0' * 64, 'spec':{**spec, 'block_id':preview['block_id']}})
+        state_path = root / current['owner']
+        state_path.write_bytes(state_before + b' ')
+        with self.assertRaises(ToolConflict):
+            server.call('prepare_block', {**request, 'spec':{**spec, 'block_id':preview['block_id']}})
+        state_path.write_bytes(state_before)
+        source.write_bytes(before.replace(b'Text.', b'Changed.'))
+        with self.assertRaisesRegex(Conflict, '正文已变化'):
+            server.call('prepare_block', {**request, 'spec':{**spec, 'block_id':preview['block_id']}})
+        source.write_bytes(before)
+        with self.assertRaisesRegex(Conflict, '正文已变化'):
+            server.call('prepare_block', {**request, 'apply':False, 'spec':{**spec, 'source_revision':'0' * 64}})
+        with self.assertRaises(Conflict):
+            server.call('prepare_block', {**request, 'apply':False, 'spec':{**spec, 'start':start+1}})
+        self.assertEqual(source.read_bytes(), before)
+        self.assertEqual((root / current['owner']).read_bytes(), state_before)
         applied = server.call('prepare_block', {**request, 'spec': {**spec, 'block_id': preview['block_id']}})
         self.assertTrue(applied['applied'])
         self.assertEqual(source.read_text(encoding='utf-8').count(preview['block_id']), 2)

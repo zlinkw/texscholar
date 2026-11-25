@@ -79,7 +79,7 @@ TOOLS = [
     ('write_personal_prompts', 'Update this profile only when the author explicitly requests a cross-paper preference; pass exact profile_id and revision, preserve other entries.', schema({**BASE, 'profile_id':{'type':['string','null']}, 'revision':{'type':'integer','minimum':0}, 'entries':{'type':'array','items':PERSONAL_ENTRY}}, ['project','profile_id','revision','entries']), False),
     ('begin_review', 'Explicit new batch only, after protecting unbacked accepted results. Reuses an existing author-approved state header; never silently starts a batch.',
      schema({**WRITE, 'round': STRING, 'files': {'type': 'array', 'items': STRING}, 'submission': STRING}, ['project', 'state', 'expected_sha256', 'round', 'files']), False),
-    ('prepare_block', 'Preview fixed block boundaries first. Apply only after explicit author confirmation using the returned block_id and unchanged source/state revisions.',
+    ('prepare_block', 'For an authorized writing task with an unambiguous location, preview and check safe block boundaries, then apply using the returned block_id and unchanged source/state revisions without asking for confirmation per block. Ask for the specific location if ambiguous. Marking a block does not accept a candidate.',
      schema({**WRITE, 'spec': schema({'file': STRING, 'kind': {'type': 'string', 'enum': ['paragraph', 'display', 'slot', 'question']},
          'start': {'type': 'integer'}, 'end': {'type': 'integer'}, 'source_revision': STRING, 'block_id': STRING,
          'questions': {'type': 'array', 'items': QUESTION}},
