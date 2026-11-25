@@ -1,6 +1,10 @@
 # 问题审核能力对照执行记录
 
-现任 local/01a208d4-2ab9-7a93-9994-56e2c5dfc6c7，Terra 6.1/high 实核 match/continue，tier default；M 返修 0。起点 02f0c688b4f069aa447cbfd1e8d20ebd04b286a0 与 origin/master 相同、clean。真实论文、P、默认管道、MCP及用户窗口受保护；不构建或发行。
+现任 local/01a21288-5815-7312-b496-006ade07bede，Terra 6.1/high 实核 match/continue，tier priority；Y 返修 0。Y 起点 ededb5e0c0be2b20ba4c8dc0dd7e51757754ad44 与 origin/master 相同，计划和索引已有总控支持改动。真实论文、P、默认管道、MCP及用户窗口受保护；Y1–Y4 完成并审核前不构建或发行。
+
+Y1 隔离探索：`D:/latex-writing-checks/review-efficiency-20261122/Y-tex-probe1` 至 `Y-tex-probe8` 使用 TinyTeX pdflatex 和合成文本，均 exit 0，但 probe1–4 未产生页面，不能算功能通过；probe5 产生 PDF，提取发现行尾注释后的下一行丢失。probe6–8 调整重扫描换行后提取到下一行，空格显示及其他 TeX 结构与副作用仍未验证。日志保留原始 stdout/stderr、实际命令和退出码；PDF 提取另用工作区依赖 Python 的 pypdf。此为探索，不是 Y1 验收，尚无产品源码修改。
+
+Y1 实现与局部验证：最小 `texscholar-excerpt.sty` 读取论文内正文文件和固定块，引用处独立分组，恢复非页码计数器并屏蔽重复 label/目录/锚点；按原生 TeX 源读取，引用嵌套、路径异常、缺源、缺块、重复或损坏标记报错。`review_excerpts.py` 为消费者提供有序解析和当前源解析；运行资源纳入构建清单。首次 `Y-checks1` 的像素对照 exit 1，发现空行段落被合并；修正重扫描末行字符后，最终 `Y-checks4` 实际 pdflatex 禁 shell escape 两遍及 pdftoppm 逐像素对照 exit 0，覆盖正文词间空格、注释后续行、空段、公式、颜色、引用、文献引用、图表、中文及空格来源路径，核计数器恢复、无重复 label 而 citation 保留。`Y-multi3` exit 0 覆盖多源顺序与同源红蓝独立样式；`Y-negative3` 六种缺失、重复、损坏、嵌套及越界错误均以非零和块身份可见失败；`Y-python2` 四项 exit 0。完整实际命令与原日志在 `D:/latex-writing-checks/review-efficiency-20261122/Y-*`；未触真实论文，后续受保护写入、双模式审核和导出尚待完成，不能把 Y1 局部结果当整阶段完成。
 
 | 对照入口母集 | 状态与证据 |
 | --- | --- |

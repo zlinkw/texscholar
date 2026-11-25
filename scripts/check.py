@@ -11,7 +11,7 @@ GROUPS = {
     'editor': ['review_host_edit.test.js', 'review_host_registry.test.js', 'review_host_transaction.test.js', 'review_host_legacy.test.js', 'core.test.js', 'extension.test.js', 'navigation.test.js', 'chktex_actions.test.js',
                'document_roles.test.js', 'inline_review.test.js', 'candidate_panel.test.js', 'review_workbench.test.js', 'review_math.test.js', 'setup.test.js', 'questions.test.js', 'writing.test.js', 'pdf_navigation.test.js', 'menu_commands.test.js'],
     'backup': ['backup.test.js'],
-    'backend': ['document_roles_test', 'native_review_test', 'source_review_test', 'mcp_test', 'review_facts_test'],
+    'backend': ['document_roles_test', 'native_review_test', 'source_review_test', 'mcp_test', 'review_facts_test', 'review_excerpts_test'],
     'pdf': ['review_pdf_test.ReviewUnits', 'review_pdf_test.ReviewPDF'],
     'translation': ['review_translate_test'],
 }

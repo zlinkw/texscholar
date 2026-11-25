@@ -13,7 +13,7 @@ RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', '
            'chktex_actions.js', 'chktex_messages.js', 'chktex_filter.py', 'inline_review.js', 'review_positions.js', 'candidate_panel.js', 'review_pdf.py', 'review_translate.py', 'tools.js',
            'setup.js', 'questions.js', 'writing.js', 'ai_setup.js', 'review_style.js', 'pdf_navigation.js', 'writing-guide.md', 'question-linking-guide.md', 'writing-presets.json',
            'paper.code-snippets', 'document_roles.py', 'document_roles.js', 'source_review.py', 'review_facts.py', 'review_checkpoint.py', 'review_archive.py', 'auto_backup.py',
-           'review_blocks.py', 'review_migration.py', 'review_option_migration.py', 'review_header_migration.py', 'profile_transition_check.py', 'review_host_client.py', 'review_host_bridge.js', 'review_host_registry.js',
+           'review_blocks.py', 'review_excerpts.py', 'texscholar-excerpt.sty', 'review_migration.py', 'review_option_migration.py', 'review_header_migration.py', 'profile_transition_check.py', 'review_host_client.py', 'review_host_bridge.js', 'review_host_registry.js',
            'review_host_transaction.js', 'review_host_legacy.js', 'review_host_migration.js', 'review_host_edit.js',
            'review.svg', 'review_math.js', 'review_workbench.js', 'review_workbench_client.js', 'collaboration-guide.md', 'mcp_server.py', 'mcp_config.py', 'mcp_setup.js',
            'mcp_runtime.py', 'mcp_clients.py', 'mcp_version.js', 'updates.js', 'update_check.py', 'ai_context.py', 'reference_context.py', 'paper_background.py')
@@ -62,7 +62,7 @@ def build(output):
 <Default Extension="json" ContentType="application/json"/><Default Extension="js" ContentType="application/javascript"/>
 <Default Extension="png" ContentType="image/png"/>
 <Default Extension="svg" ContentType="image/svg+xml"/><Default Extension="css" ContentType="text/css"/><Default Extension="woff2" ContentType="font/woff2"/>
-<Default Extension="py" ContentType="text/x-python"/><Default Extension="md" ContentType="text/markdown"/>
+<Default Extension="py" ContentType="text/x-python"/><Default Extension="md" ContentType="text/markdown"/><Default Extension="sty" ContentType="text/x-tex"/>
 <Default Extension="code-snippets" ContentType="application/json"/><Default Extension="vsixmanifest" ContentType="text/xml"/>
 </Types>'''
     files = {'extension/package.json': (ROOT / 'package.json').read_bytes(),
@@ -90,7 +90,7 @@ def build(output):
     sources.update({'src/' + name: (ROOT / 'src' / name).read_bytes() for name in RUNTIME})
     for name in ('review_archive.py', 'review_host_test_support.py', 'review_host_edit.test.js', 'review_host_registry.test.js',
                  'review_host_transaction.test.js', 'review_host_legacy.test.js', 'native_review_test.py', 'source_review_test.py', 'mcp_test.py', 'review_pdf_test.py', 'review_translate_test.py',
-                 'document_roles_test.py', 'review_facts_test.py', 'review_option_migration_test.py', 'review_header_migration_test.py', 'document_roles.test.js', 'inline_review.test.js', 'candidate_panel.test.js', 'review_workbench.test.js', 'review_math.test.js', 'setup.test.js', 'questions.test.js', 'extension.test.js',
+                 'document_roles_test.py', 'review_facts_test.py', 'review_excerpts_test.py', 'review_option_migration_test.py', 'review_header_migration_test.py', 'document_roles.test.js', 'inline_review.test.js', 'candidate_panel.test.js', 'review_workbench.test.js', 'review_math.test.js', 'setup.test.js', 'questions.test.js', 'extension.test.js',
                  'core.test.js', 'backup.test.js', 'menu_commands.test.js', 'navigation.test.js', 'chktex_actions.test.js', 'writing.test.js', 'pdf_navigation.test.js'):
         sources['src/' + name] = (ROOT / 'src' / name).read_bytes()
     sources['scripts/build.py'] = Path(__file__).read_bytes()

@@ -1,0 +1,141 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{texscholar-excerpt}[2026/11/25 Source excerpts]
+\RequirePackage{expl3}
+\ExplSyntaxOn
+\ior_new:N \l__ts_excerpt_input_ior
+\tl_new:N \l__ts_excerpt_body_tl
+\tl_new:N \l__ts_excerpt_begin_tl
+\tl_new:N \l__ts_excerpt_end_tl
+\int_new:N \l__ts_excerpt_state_int
+\int_new:N \l__ts_excerpt_count_int
+\seq_new:N \l__ts_excerpt_stack_seq
+\seq_new:N \l__ts_excerpt_seen_seq
+\seq_new:N \l__ts_excerpt_marker_seq
+\tl_new:N \l__ts_excerpt_marker_id_tl
+\bool_new:N \l__ts_excerpt_active_bool
+\msg_new:nnn { texscholar } { excerpt } { Excerpt~#1:~#2 }
+\cs_new_protected:Npn \__ts_excerpt_error:nn #1#2
+  { \msg_error:nnnn { texscholar } { excerpt } {#1} {#2} }
+\cs_new_protected:Npn \__ts_excerpt_read:nn #1#2
+  {
+    \regex_match:nnF { \A [^\x{00}-\x{1f}\x{23}\x{25}\x{5c}\x{5e}\x{7b}\x{7d}\x{7e}]+ \.tex \Z } {#1}
+      { \__ts_excerpt_error:nn {#2} { Invalid~source~path~#1 } }
+    \regex_match:nnT { (\A|/)\.\.?(/|\Z) | \A/ | // } {#1}
+      { \__ts_excerpt_error:nn {#2} { Invalid~source~path~#1 } }
+    \regex_match:nnF
+      { \A [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12} \Z } {#2}
+      { \__ts_excerpt_error:nn {#2} { Invalid~block~identity } }
+    \file_if_exist:nF {#1}
+      { \__ts_excerpt_error:nn {#2} { Missing~source~file~#1 } }
+    \tl_clear:N \l__ts_excerpt_body_tl
+    \int_zero:N \l__ts_excerpt_state_int
+    \int_zero:N \l__ts_excerpt_count_int
+    \seq_clear:N \l__ts_excerpt_stack_seq
+    \seq_clear:N \l__ts_excerpt_seen_seq
+    \tl_set:Nx \l__ts_excerpt_end_tl
+      { \c_percent_str \c_space_tl TS-BLOCK-END~id=#2 }
+    \ior_open:Nn \l__ts_excerpt_input_ior {#1}
+    \ior_str_map_inline:Nn \l__ts_excerpt_input_ior
+      {
+        \regex_match:nnT { \A \x{25}\x{20}TS-BLOCK- } {##1}
+          {
+            \regex_extract_once:nnNTF
+              { \A \x{25}\x{20}TS-BLOCK-(BEGIN|END)\x{20}id=([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\x{20}kind=(paragraph|display|slot|question))? \Z }
+              {##1} \l__ts_excerpt_marker_seq
+              {
+                \tl_set:Nx \l__ts_excerpt_marker_id_tl { \seq_item:Nn \l__ts_excerpt_marker_seq {3} }
+                \str_if_eq:eeTF { \seq_item:Nn \l__ts_excerpt_marker_seq {2} } { BEGIN }
+                  {
+                    \tl_if_empty:eT { \seq_item:Nn \l__ts_excerpt_marker_seq {4} }
+                      { \__ts_excerpt_error:nn {#2} { Block~type~missing } }
+                    \exp_args:NNV \seq_if_in:NnT \l__ts_excerpt_seen_seq \l__ts_excerpt_marker_id_tl
+                      { \__ts_excerpt_error:nn {#2} { Duplicate~block~marker } }
+                    \seq_put_right:NV \l__ts_excerpt_seen_seq \l__ts_excerpt_marker_id_tl
+                    \seq_put_right:NV \l__ts_excerpt_stack_seq \l__ts_excerpt_marker_id_tl
+                  }
+                  {
+                    \tl_if_empty:eF { \seq_item:Nn \l__ts_excerpt_marker_seq {4} }
+                      { \__ts_excerpt_error:nn {#2} { Invalid~end~marker } }
+                    \seq_if_empty:NTF \l__ts_excerpt_stack_seq
+                      { \__ts_excerpt_error:nn {#2} { Unexpected~block~end } }
+                      {
+                        \seq_pop_right:NN \l__ts_excerpt_stack_seq \l_tmpa_tl
+                        \str_if_eq:eeF {\l_tmpa_tl} {\l__ts_excerpt_marker_id_tl}
+                          { \__ts_excerpt_error:nn {#2} { Mismatched~block~end } }
+                      }
+                  }
+              }
+              { \__ts_excerpt_error:nn {#2} { Damaged~block~marker } }
+          }
+        \bool_set_false:N \l_tmpa_bool
+        \clist_map_inline:nn { paragraph, display, slot, question }
+          {
+            \tl_set:Nx \l__ts_excerpt_begin_tl
+              { \c_percent_str \c_space_tl TS-BLOCK-BEGIN~id=#2~kind=####1 }
+            \str_if_eq:eeT {##1} {\l__ts_excerpt_begin_tl}
+              { \bool_set_true:N \l_tmpa_bool }
+          }
+        \bool_if:NTF \l_tmpa_bool
+          {
+            \int_incr:N \l__ts_excerpt_count_int
+            \int_compare:nNnF {\l__ts_excerpt_state_int} = {0}
+              { \__ts_excerpt_error:nn {#2} { Duplicate~or~nested~begin } }
+            \int_set:Nn \l__ts_excerpt_state_int {1}
+          }
+          {
+            \str_if_eq:eeTF {##1} {\l__ts_excerpt_end_tl}
+              {
+                \int_compare:nNnF {\l__ts_excerpt_state_int} = {1}
+                  { \__ts_excerpt_error:nn {#2} { Unexpected~end } }
+                \int_set:Nn \l__ts_excerpt_state_int {2}
+              }
+              {
+                \int_compare:nNnT {\l__ts_excerpt_state_int} = {1}
+                  {
+                    \tl_put_right:Nn \l__ts_excerpt_body_tl {##1}
+                    \tl_put_right:Nx \l__ts_excerpt_body_tl { \char_generate:nn {10}{12} }
+                  }
+              }
+          }
+      }
+    \ior_close:N \l__ts_excerpt_input_ior
+    \seq_if_empty:NF \l__ts_excerpt_stack_seq
+      { \__ts_excerpt_error:nn {#2} { Unclosed~block~marker } }
+    \int_compare:nNnF {\l__ts_excerpt_count_int} = {1}
+      { \__ts_excerpt_error:nn {#2} { Missing~or~duplicate~block } }
+    \int_compare:nNnF {\l__ts_excerpt_state_int} = {2}
+      { \__ts_excerpt_error:nn {#2} { Missing~end~marker } }
+    \group_begin:
+    \char_set_catcode_space:n {32}
+    \char_set_catcode_math_subscript:n {95}
+    \char_set_catcode_other:n {58}
+    \char_set_catcode_end_line:n {13}
+    \tex_endlinechar:D = 13 \scan_stop:
+    \tex_newlinechar:D = 10 \scan_stop:
+    \exp_args:NV \tex_scantokens:D \l__ts_excerpt_body_tl
+    \group_end:
+  }
+\cs_new_protected:Npn \__ts_excerpt_render:nn #1#2
+  {
+    \bool_if:NTF \l__ts_excerpt_active_bool
+      { \__ts_excerpt_error:nn {#2} { Nested~excerpt~is~not~supported } }
+      {
+        \bool_set_true:N \l__ts_excerpt_active_bool
+        \__ts_excerpt_read:nn {#1} {#2}
+      }
+  }
+\ExplSyntaxOff
+\makeatletter
+\NewDocumentCommand\TSExcerpt{mm}{%
+  \begingroup
+  \def\TSrestore{}\def\TSpage{page}%
+  \def\@elt##1{\def\TSname{##1}\ifx\TSname\TSpage\else
+    \edef\TSrestore{\unexpanded\expandafter{\TSrestore}\noexpand\setcounter{##1}{\number\csname c@##1\endcsname}}\fi}%
+  \cl@@ckpt
+  \let\label\@gobble
+  \def\addcontentsline##1##2##3{}%
+  \def\hyper@anchorstart##1{}\def\hyper@anchorend{}%
+  \ExplSyntaxOn\csname __ts_excerpt_render:nn\endcsname{#1}{#2}\ExplSyntaxOff
+  \TSrestore\endgroup
+}
+\makeatother
