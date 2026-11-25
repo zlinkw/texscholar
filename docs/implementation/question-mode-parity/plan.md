@@ -1,16 +1,30 @@
 # 问题审核与段落审核能力对照及优化
 
+## AA阶段：左侧活动栏快捷入口
+
+2026-11-25用户在Z执行期间明确要求在VSCode最左侧活动栏增加图标，方便快捷打开和管理常用功能。保留Z旧批注直接点击修复，先完成Z返修再执行本后续功能批，最终一起发布安装一次，不自动重载或重启。总控和唯一Terra沿用Z现任，AA返修0。当前09b01b80c526bd5f4f200b3c8b005f4d7fdf6fde为Z首次交包基线，HEAD==origin/master、clean，未发行安装；Z最终审核发现的R1详见下节，不当作已通过。
+
+实现采用新增TeXScholar活动栏容器及轻量原生常用功能列表，复用实际注册命令和已有图标资源，不移动或删除底部论文评论、不复制审核状态、不覆盖用户视图布局。入口涵盖审核工作台、底部论文评论、批注管理、AI论文助手、当前论文背景、个人论文提示词、检查配置和检查更新；按实际语义清晰分组，只有存在且适用的命令才接入。快捷项仅打开对应原功能，保留项目选择、信任、脏稿及原有授权边界；不直接接收候选、自动发送消息或清理。采用VSCode原生拖移/隐藏管理，不新增自定义配置、偏好系统、依赖或管理平台。
+
+- [ ] AA1 原Terra一个完整功能批补齐package容器/view声明、现有激活链/命令消费者、最小必要运行资源及收包闭包。新入口在无TeX项目时仍可理解并可访问适用的配置/帮助，论文操作沿原上下文约束说明；不自动打开真稿或猜项目。不为入口文字写镜像测试，在现有合适边界验证实际命令路由、激活与旧panel保留。
+- [ ] AA2 Terra局部与真实UI：按silent-ui-screenshot在专属profile/pipe及私有未切桌面的正常Development真实点击活动栏图标、快捷项并核最终目标；验证旧底部列表/Z路径仍可用，以及无项目入口的当前适用行为。复用Z有效覆盖，不机械重跑同组；旧性能用例不得再无选择地纳入功能检查，不新增或改性能测试。截图实看，完整日志及失败保留于D:/latex-writing-checks/review-efficiency-20261122/AA-*。
+- [ ] AA3 总控冻结后审全量相关diff、激活/命令/打包消费者及有效UI和局部证据，仅补具体未覆盖风险。Z与AA均明确通过后，原Terra预核下一无冲突版本、必要发行检查、一次构建、附注tag、正式Release及同一VSIX安装；总控只核交付元数据并集中结案，不自动重载/重启或包后冒烟。
+
+租约、真实论文/用户窗口/默认pipe保护、无删除/无实网AI、UTF8及普通精确Git规则沿Z。总控现在仅修改plan/index支持增量，随后整体移交原Terra，支持docs随下个成功完整批集中提交；不为本计划另起微提交。
+
 ## Z阶段：底部旧批注直接打开审核页
 
 2026-11-25用户报告从底部“论文评论”列表点击以前剩余批注，提示“审核模式或批次已变化，请重新选择问题”；补充右键进入工作台后底部列表又可正常切换。当前基线32e991577524f7736506c9f8ae7f236ffb3e5906、master跟踪origin/master、开工clean，0.9.70已安装但未重载状态不推断。总控local/01a212c7-d736-7503-ab7a-9717a426fefb维护完整计划/索引及最终审核；复用唯一Terra local/01a21288-5815-7312-b496-006ade07bede连续诊断、实现、局部验证和execution，不新增代理。Z返修0。
 
 目标是底部问题组、审核项及其剩余批注在审核页尚未打开或已关闭后可直接打开正确问题/项，无需先右键进入工作台；已有审核页继续准确定位。必须复现用户错误后再确定根因，优先复用现有openWorkbench/show和定位链，保持repo/owner/session/问题身份/项版本、脏草稿、暂留和批注数据保护，不以去掉过期校验或猜配解决。相关静态入口为inline_review.js的updateList、reviewQuestionDirectory与review_workbench.js的focusQuestion；现有inline_review.test.js问题目录测试先手动打开工作台，可能漏冷打开路径，尚不当作运行复现。
 
-- [ ] Z1 一个完整修复批：Terra按diagnose建立实际调用链的失败信号，核冷打开/关闭再开及现有页路径，修复入口初始化与必要调用方；在现有宿主/工作台测试增加真实模式的必要回归，集中运行受影响检查。按silent-ui-screenshot在专属profile/pipe及私有未切桌面的正常Development核底部真实点击与最终定位，复用已有准备，不操作用户窗口。保留首败、完整argv/cwd/env/stdout/stderr/exit及截图，不新加性能组或删除测试。
+- [x] Z1 一个完整修复批：Terra按diagnose建立实际调用链的失败信号，核冷打开/关闭再开及现有页路径，修复入口初始化与必要调用方；在现有宿主/工作台测试增加真实模式的必要回归，集中运行受影响检查。按silent-ui-screenshot在专属profile/pipe及私有未切桌面的正常Development核底部真实点击与最终定位，复用已有准备，不操作用户窗口。保留首败、完整argv/cwd/env/stdout/stderr/exit及截图，不新加性能组或删除测试。
 - [ ] Z2 总控冻结后审真实diff、调用链和有效局部/UI证据，仅补会改变交付判断且未覆盖的具体缺口，失败交原Terra返修。真实论文/批注不动，不用右键绕过当作修复通过。
 - [ ] Z3 通过后沿原已授权流程由原Terra预核下一无冲突版本，必要发行检查、恰一次构建、附注tag/正式Release与同一VSIX安装；总控仅核元数据并集中结案。不自动重载/重启，不重做功能全组或包后冒烟。
 
 总控先写本计划和索引，随后交Terra独占产品/测试/UI/隔离配置/execution/Git租约，停止重叠写测；功能批成功纳入支持docs集中普通commit/push/fetch，远端前移停止，不reset/rebase/merge/force/改remote。真实论文D:/Overleaf/TMI-DA-Marked-up Copy、P/个人资料、原批注/候选/三类草稿/范围外stage、用户窗口及默认pipe/MCP无写权；不迁移真稿、不清理文件/对象/截图、不实网AI、不全局安装或改技能。pwsh7、显式UTF8、Python -B -X utf8。证据沿用D:/latex-writing-checks/review-efficiency-20261122/Z-*；无在途。相关通用技能不引入本次缺陷无关的issue tracker或通用配置初始化，遵循全局最小完整修改。
+
+Z1首次交包09b01b80c526bd5f4f200b3c8b005f4d7fdf6fde，Z-red2真实宿主命令复现原报错，根因是目录要求已有active；冷打开复用openWorkbench并在webview ready后定位。Z-check1相关两套97项、Z-check2定向3项exit0；Z-check1意外运行旧100项刷新性能用例，未新增/修改，不作性能结论，完整事实保留。Z-ui1真实点击底部旧批注直接打开第5项，宿主/观察器/外层exit0、前台HWND1706472保持；总控已看ui-2f8d4790f51840b0a2372fd8431a72de.png并核日志。Z2真实diff审查发现新增pendingQuestion未随后续显式show失效，独占controller-z-latest-navigation.py通过实际hostFixture复现：先冷点R1/1，在ready前显式open R2/2，ready仍投递R1/1定位，exit1。原完整证据controller-z-latest-navigation/{probe.js,run.json,stdout.log,stderr.log}；只动隔离夹具、无真稿/删除。Z返修1，须原Terra保留最新导航意图并补真实回归，不能以移除ready等待或身份校验解决；通过后再做AA并合并一次发行。
 
 ## Y阶段：正文单一来源与回复动态摘录
 

@@ -166,6 +166,32 @@ test('question groups and remaining notes reopen the right question without acce
     assert.equal(f.edit.requests[0].text,'剩余批注');
 });
 
+test('newer explicit navigation supersedes a cold directory focus before the page is ready', async () => {
+    const f=hostFixture({questionStore:true,initialMode:'question'});
+    f.edit.questions=[{id:'R1',file:'q.txt',quote:'first'}];
+    f.allCards['2']={...structuredClone(f.data),edit:{...structuredClone(f.edit),questions:[{id:'R2',file:'q.txt',quote:'second'}]}};
+    await f.ui.ready; await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const one=f.rows()[0].children[0].command.arguments[0], two=f.rows()[1].children[0].command.arguments[0];
+    await f.handlers.get('localLatex.reviewQuestionDirectory')(one);
+    await f.ui.open(two);
+    await f.receive({type:'ready',instance:'latest'});
+    assert.equal(f.packets.findLast(p=>p.type==='content').c.id,'2');
+    assert(!f.packets.some(p=>p.type==='focusQuestion' && p.target==='1'));
+});
+
+test('latest directory click wins while the page is opening', async () => {
+    const f=hostFixture({questionStore:true,initialMode:'question'});
+    f.edit.questions=[{id:'R1',file:'q.txt',quote:'first'}];
+    f.allCards['2']={...structuredClone(f.data),edit:{...structuredClone(f.edit),questions:[{id:'R2',file:'q.txt',quote:'second'}]}};
+    await f.ui.ready; await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const one=f.rows()[0].children[0].command.arguments[0], two=f.rows()[1].children[0].command.arguments[0];
+    const run=f.handlers.get('localLatex.reviewQuestionDirectory');
+    await run(one); await run(two);
+    await f.receive({type:'ready',instance:'latest-directory'});
+    assert.equal(f.packets.findLast(p=>p.type==='focusQuestion').target,'2');
+    assert.equal(f.packets.findLast(p=>p.type==='focusQuestion').questionKey,two.questionKey);
+});
+
 test('question directory groups exact identities, shared items and rejects stale navigation', async () => {
     const f = hostFixture({questionStore:true});
     const q1={id:'R1',file:'one.txt',quote:'first'}, q2={id:'R1',file:'two.txt',quote:'second'};

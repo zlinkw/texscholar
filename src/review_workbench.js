@@ -486,8 +486,9 @@ function createWorkbench(vscode, context, services) {
     async function show(c, restore, advance = false, switchApproved = false) {
         pendingCardAction = undefined;
         const request = ++showRequest;
-        if (active && key(active) === key(c) && panel && !restore) {panel.reveal(); sendContent(false); await services.activeChanged?.(active); return;}
+        if (active && key(active) === key(c) && panel && !restore) {pendingQuestion = undefined; panel.reveal(); sendContent(false); await services.activeChanged?.(active); return;}
         if (!switchApproved && !await allowSwitch()) {if (active) await services.activeChanged?.(active); return;}
+        pendingQuestion = undefined;
         const data = await (advance && services.readNext ? services.readNext(c) : services.read(c));
         if (request !== showRequest) return;
         if (data.id !== undefined && data.id !== c.id || data.version !== undefined && data.version !== c.version) throw new Error('读取卡片身份不一致；未切换或接收。');
