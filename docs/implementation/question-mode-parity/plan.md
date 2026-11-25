@@ -8,11 +8,13 @@
 
 - [x] AA1 原Terra一个完整功能批补齐package容器/view声明、现有激活链/命令消费者、最小必要运行资源及收包闭包。新入口在无TeX项目时仍可理解并可访问适用的配置/帮助，论文操作沿原上下文约束说明；不自动打开真稿或猜项目。不为入口文字写镜像测试，在现有合适边界验证实际命令路由、激活与旧panel保留。
 - [x] AA2 Terra局部与真实UI：按silent-ui-screenshot在专属profile/pipe及私有未切桌面的正常Development真实点击活动栏图标、快捷项并核最终目标；验证旧底部列表/Z路径仍可用，以及无项目入口的当前适用行为。复用Z有效覆盖，不机械重跑同组；旧性能用例不得再无选择地纳入功能检查，不新增或改性能测试。截图实看，完整日志及失败保留于D:/latex-writing-checks/review-efficiency-20261122/AA-*。
-- [ ] AA3 总控冻结后审全量相关diff、激活/命令/打包消费者及有效UI和局部证据，仅补具体未覆盖风险。Z与AA均明确通过后，原Terra预核下一无冲突版本、必要发行检查、一次构建、附注tag、正式Release及同一VSIX安装；总控只核交付元数据并集中结案，不自动重载/重启或包后冒烟。
+- [x] AA3 总控冻结后审全量相关diff、激活/命令/打包消费者及有效UI和局部证据，仅补具体未覆盖风险。Z与AA均明确通过后，原Terra预核下一无冲突版本、必要发行检查、一次构建、附注tag、正式Release及同一VSIX安装；总控只核交付元数据并集中结案，不自动重载/重启或包后冒烟。
 
 租约、真实论文/用户窗口/默认pipe保护、无删除/无实网AI、UTF8及普通精确Git规则沿Z。总控现在仅修改plan/index支持增量，随后整体移交原Terra，支持docs随下个成功完整批集中提交；不为本计划另起微提交。
 
-Z与AA最终审核通过，冻结27300a520e690288a1516143c88dd0293bd8ce8f，Z返修1、AA返修0。总控审Z-R1与AA共13文件真实diff、最新导航意图/ready队列、原命令实际注册与激活链、activitybar声明、旧panel保留及build/check资源闭包；复用Z-R1-check1五项和AA-check1七项exit0，原controller-z-latest-navigation首败由相同宿主seam回归证明已修，不重复同组。总控实看AA-ui2侧栏及底部目标、AA-ui-empty2空项目提示截图，核两组宿主/观察器/外层exit0及Default/前中后HWND1706472不变。真实UI中无关自动服务用桩，未逐项实操会访问个人资料/外网/AI的快捷项，仅核真实路由；AA-ui-empty观察器首败保留。无新增产品阻断，下一步由原Terra统一发行安装一次，AA3/Z3待真实交付元数据核完再结案。
+Z与AA最终审核通过，冻结27300a520e690288a1516143c88dd0293bd8ce8f，Z返修1、AA返修0。总控审Z-R1与AA共13文件真实diff、最新导航意图/ready队列、原命令实际注册与激活链、activitybar声明、旧panel保留及build/check资源闭包；复用Z-R1-check1五项和AA-check1七项exit0，原controller-z-latest-navigation首败由相同宿主seam回归证明已修，不重复同组。总控实看AA-ui2侧栏及底部目标、AA-ui-empty2空项目提示截图，核两组宿主/观察器/外层exit0及Default/前中后HWND1706472不变。真实UI中无关自动服务用桩，未逐项实操会访问个人资料/外网/AI的快捷项，仅核真实路由；AA-ui-empty观察器首败保留。无新增产品阻断；共同发行安装及总控元数据核验已完成，结果如下。
+
+AA与Z共同完成，[0.9.71正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.71)并同一VSIX安装，构建输入fe682e464f562f5a5a02281243de40fd5bc9489a，scripts/build.py恰一次exit0。总控独立核本地/远端附注tag对象35f96bdfb2da5ea4d13f5c025a756d59b279ef2b、构建目标和注释双包摘要；controller-aa-release-meta.py实际读取Release API，正式非draft/prerelease、三附件digest与同一本地产物一致，manifest及source=vsix/pinned登记0.9.71，exit0。原始API/argv/cwd/exit及结果在D:/latex-writing-checks/review-efficiency-20261122/controller-aa-release*，实际构建/发行/安装日志AA-delivery-*。安装exit0伴Node DEP0169警告；未自动重载/重启，活动宿主加载状态未知，用户自行重载目标VSCode窗口后启用新侧栏与修复。真实论文/批注/资料未改，无删除或包后冒烟；Z返修1、AA返修0，无在途，三份支持记录集中结案。
 
 ## Z阶段：底部旧批注直接打开审核页
 
@@ -22,7 +24,7 @@ Z与AA最终审核通过，冻结27300a520e690288a1516143c88dd0293bd8ce8f，Z返
 
 - [x] Z1 一个完整修复批：Terra按diagnose建立实际调用链的失败信号，核冷打开/关闭再开及现有页路径，修复入口初始化与必要调用方；在现有宿主/工作台测试增加真实模式的必要回归，集中运行受影响检查。按silent-ui-screenshot在专属profile/pipe及私有未切桌面的正常Development核底部真实点击与最终定位，复用已有准备，不操作用户窗口。保留首败、完整argv/cwd/env/stdout/stderr/exit及截图，不新加性能组或删除测试。
 - [x] Z2 总控冻结后审真实diff、调用链和有效局部/UI证据，仅补会改变交付判断且未覆盖的具体缺口，失败交原Terra返修。真实论文/批注不动，不用右键绕过当作修复通过。
-- [ ] Z3 通过后沿原已授权流程由原Terra预核下一无冲突版本，必要发行检查、恰一次构建、附注tag/正式Release与同一VSIX安装；总控仅核元数据并集中结案。不自动重载/重启，不重做功能全组或包后冒烟。
+- [x] Z3 通过后沿原已授权流程由原Terra预核下一无冲突版本，必要发行检查、恰一次构建、附注tag/正式Release与同一VSIX安装；总控仅核元数据并集中结案。不自动重载/重启，不重做功能全组或包后冒烟。
 
 总控先写本计划和索引，随后交Terra独占产品/测试/UI/隔离配置/execution/Git租约，停止重叠写测；功能批成功纳入支持docs集中普通commit/push/fetch，远端前移停止，不reset/rebase/merge/force/改remote。真实论文D:/Overleaf/TMI-DA-Marked-up Copy、P/个人资料、原批注/候选/三类草稿/范围外stage、用户窗口及默认pipe/MCP无写权；不迁移真稿、不清理文件/对象/截图、不实网AI、不全局安装或改技能。pwsh7、显式UTF8、Python -B -X utf8。证据沿用D:/latex-writing-checks/review-efficiency-20261122/Z-*；无在途。相关通用技能不引入本次缺陷无关的issue tracker或通用配置初始化，遵循全局最小完整修改。
 
