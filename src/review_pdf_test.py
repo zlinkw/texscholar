@@ -310,6 +310,106 @@ class ReviewPDF(unittest.TestCase):
     apply = NativeReview.apply
     proposal = NativeReview.proposal
 
+    def test_excerpt_preview_tracks_selected_snapshot_and_saved_formal_source(self):
+        from source_review import Review, digest, Conflict
+        NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
+        state = '.codex-review/state.json'
+        def review(): return Review(self.root, state, 'missing-git')
+        ids = {}
+        for file, needle in [('main.tex', 'The model'), ('reply.tex', 'Thank you.')]:
+            r = review(); text = r.read(file); start = text.index(needle); end = text.index('\n', start) + 1
+            updated, block = r.prepare_block({'file': file, 'kind': 'paragraph', 'start': start, 'end': end,
+                                               'source_revision': r.source_digest(text)})
+            r.persist(updated, digest(r.raw)); ids[file] = block['block_id']
+        r = review(); reply = r.read('reply.tex'); source = r.read('main.tex'); pos = reply.index('Thank you.') + len('Thank you.')
+        spec = {'file': 'reply.tex', 'block_id': ids['reply.tex'], 'start': pos, 'end': pos, 'before': '',
+                'source_revision': r.source_digest(reply), 'root_revision': r.source_digest(reply), 'mode': 'insert',
+                'sources': [{'file': 'main.tex', 'block_id': ids['main.tex'], 'source_revision': r.source_digest(source)}]}
+        roles = {'status': 'confirmed', 'files': [{'file': 'main.tex', 'roles': ['manuscript'], 'root': 'main.tex'},
+                 {'file': 'reply.tex', 'roles': ['response'], 'root': 'reply.tex'}]}
+        updated, _ = r.prepare_excerpt(spec, roles, apply=True); r.persist(updated, digest(r.raw))
+        r = review(); updated, source_edit = r.propose({'file': 'main.tex', 'kind': 'manuscript', 'block_id': ids['main.tex'],
+            'before': 'The model is strong and fast.', 'after': 'The model is reliable and compact.'}); r.persist(updated, digest(r.raw))
+        r = review(); updated, reply_edit = r.propose({'file': 'reply.tex', 'kind': 'response', 'block_id': ids['reply.tex'],
+            'before': 'Thank you.', 'after': 'Thank you for your suggestion.'}); r.persist(updated, digest(r.raw))
+        r = review(); card = r.cards()['cards'][reply_edit['id']]
+        self.assertIn('strong and fast', card['excerpt_views'][0]['text'])
+        self.assertIn('main.tex', r.cards()['excerpt_sources'])
+        before = {f: (self.root / f).read_bytes() for f in ['main.tex', 'reply.tex']}
+        latex = str(BIN / ('latexmk' + EXE)); diff = str(BIN / ('latexdiff' + EXE))
+        result = preview(self.root, state, self.root / 'reply.tex', reply_edit['id'], r.inspect(reply_edit['id'])['version'],
+                         'missing-git', diff, latex)
+        content = ' '.join(page.extract_text() for page in PdfReader(result['pdf']).pages)
+        self.assertIn('strong and fast', content)
+        self.assertNotIn('reliable and compact', content)
+        from unittest.mock import patch
+        with patch('review_pdf.prune_build_cache'):
+            result = preview(self.root, state, self.root / 'reply.tex', source_edit['id'], r.inspect(source_edit['id'])['version'],
+                             'missing-git', diff, latex)
+        content = ' '.join(page.extract_text() for page in PdfReader(result['pdf']).pages)
+        self.assertIn('reliable and compact', content)
+        self.assertNotIn('strong and fast', content)
+        self.assertEqual({f: (self.root / f).read_bytes() for f in before}, before)
+        # A separate isolated generation does not reuse or remove the review PDF.
+        with patch('review_pdf.prune_build_cache'):
+            formal = preview(self.root, state, self.root / 'reply.tex', 'formal', None, 'missing-git', diff, latex, source_only=True)
+        content = ' '.join(page.extract_text() for page in PdfReader(formal['pdf']).pages)
+        self.assertIn('strong and fast', content)
+        self.assertNotIn('reliable and compact', content)
+        self.assertEqual({f: (self.root / f).read_bytes() for f in before}, before)
+        from review_archive import export_sources
+        import subprocess
+        destination = self.root.parent / (self.root.name + '-submission')
+        result = export_sources(self.root, destination)
+        exported = (destination / 'reply.tex').read_text(encoding='utf-8')
+        self.assertNotIn(r'\TSExcerpt{', exported)
+        self.assertNotIn('TS-BLOCK-', exported)
+        self.assertIn('strong and fast', exported)
+        self.assertNotIn('reliable and compact', exported)
+        self.assertFalse((destination / '.codex-review').exists())
+        argv = [latex, '-pdf', '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', 'reply.tex']
+        proc = subprocess.run(argv, cwd=destination, capture_output=True)
+        (destination.parent / (destination.name + '-compile.stdout.log')).write_bytes(proc.stdout)
+        (destination.parent / (destination.name + '-compile.stderr.log')).write_bytes(proc.stderr)
+        (destination.parent / (destination.name + '-compile.json')).write_text(json.dumps({'argv': argv, 'cwd': str(destination), 'exit': proc.returncode}), encoding='utf-8')
+        self.assertEqual(proc.returncode, 0, proc.stdout.decode('utf-8', errors='replace'))
+        self.assertIn('strong and fast', ' '.join(page.extract_text() for page in PdfReader(destination / 'reply.pdf').pages))
+        self.assertEqual({f: (self.root / f).read_bytes() for f in before}, before)
+        from auto_backup import saved_sources
+        names = ['main.tex', 'reply.tex', 'texscholar-excerpt.sty']
+        _, saved = saved_sources(self.root, names, 'missing-git')
+        self.assertIn(b'TS-BLOCK-BEGIN', saved['main.tex'])
+        self.assertIn(b'\\TSExcerpt{main.tex}', saved['reply.tex'])
+        self.assertEqual(saved['texscholar-excerpt.sty'], (self.root / 'texscholar-excerpt.sty').read_bytes())
+        with self.assertRaisesRegex(Conflict, '备份不能省略或损坏摘录来源'):
+            saved_sources(self.root, ['reply.tex', 'texscholar-excerpt.sty'], 'missing-git')
+        with self.assertRaisesRegex(Conflict, 'texscholar-excerpt.sty'):
+            saved_sources(self.root, ['main.tex', 'reply.tex'], 'missing-git')
+        from review_archive import backup, restore
+        archive = self.root.parent / (self.root.name + '-reference.zip')
+        restored = self.root.parent / (self.root.name + '-reference-restored')
+        backup(self.root, state, archive, 'missing-git')
+        restore(archive, restored, 'missing-git')
+        for file in names:
+            self.assertEqual((restored / file).read_bytes(), (self.root / file).read_bytes())
+        source_path = self.root / 'main.tex'
+        source_path.write_bytes(before['main.tex'].replace(b'strong and fast', b'current and clear'))
+        card = review().cards()['cards'][reply_edit['id']]
+        self.assertIn('current and clear', card['excerpt_views'][0]['text'])
+        source_path.write_bytes(source_path.read_bytes().replace(b'TS-BLOCK-END', b'TS-BLOCK-BROKEN'))
+        card = review().cards()['cards'][reply_edit['id']]
+        self.assertFalse(card['source_match'])
+        self.assertIn('摘录', card['excerpt_conflict'])
+        source_path.write_bytes(before['main.tex'])
+        self.assertTrue(review().cards()['cards'][reply_edit['id']]['source_match'])
+        r = review(); updated, _ = r.begin('next-round', ['main.tex', 'reply.tex']); r.persist(updated, digest(r.raw))
+        r = review()
+        self.assertEqual(r.state['edits'], {})
+        from review_excerpts import resolve
+        linked = resolve(r.read('reply.tex'), r.read)
+        self.assertEqual(linked[0]['block_id'], ids['main.tex'])
+        self.assertIn('strong and fast', linked[0]['content'])
+
     def test_fixed_block_preview_uses_automatically_synchronized_source(self):
         from source_review import Review, digest
         NativeReview.install_sidecar(self, dict(self.review().state, schema=3))

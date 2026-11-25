@@ -147,6 +147,7 @@ def saved_recover(root, git_exe):
 def saved_sources(root, names, git_exe, overrides=None):
     """Capture saved paper bytes and remove only verified review runtime data."""
     from review_blocks import MARKER
+    from review_excerpts import resolve
     originals = {}
     for name in names:
         relative = Path(name)
@@ -188,7 +189,7 @@ def saved_sources(root, names, git_exe, overrides=None):
             restored = review.defer_pending()
         except (Conflict, OSError, ValueError, KeyError) as error:
             raise Conflict('旧格式源码无法安全排除未接收候选：' + owners[0] + '；' + str(error)) from error
-    files = {}
+    files, tex = {}, {}
     for name in names:
         raw = (overrides or {}).get(name, originals[name])
         if raw is None or not name.lower().endswith('.tex'):
@@ -199,7 +200,19 @@ def saved_sources(root, names, git_exe, overrides=None):
         text = restored.get(name, raw.decode('utf-8-sig'))
         if name in owners:
             text = body(text)
-        text = MARKER.sub('', source_text(text, sidecar=True))
+        tex[name] = source_text(text, sidecar=True)
+    linked = False
+    for name, text in tex.items():
+        try:
+            linked |= bool(resolve(text, lambda source: tex[source]))
+        except ValueError as error:
+            raise Conflict('备份不能省略或损坏摘录来源：' + name + '；' + str(error)) from error
+    if linked and not any(Path(name).name == 'texscholar-excerpt.sty' and files[name] is not None for name in files):
+        raise Conflict('备份缺少论文内的 texscholar-excerpt.sty；请先检查 Git 忽略规则。')
+    for name, text in tex.items():
+        raw = (overrides or {}).get(name, originals[name])
+        if not linked:
+            text = MARKER.sub('', text)
         files[name] = (b'\xef\xbb\xbf' if raw.startswith(b'\xef\xbb\xbf') else b'') + text.encode('utf-8')
     return originals, files
 

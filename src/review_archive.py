@@ -195,6 +195,7 @@ def export_sources(repo, destination, extras=()):
     """Create a clean source copy; never change the working paper or review state."""
     from review_blocks import index, MARKER
     from review_checkpoint import source_text
+    from review_excerpts import resolve
     root, dest = Path(repo).resolve(strict=True), Path(destination).resolve()
     if dest.exists() or dest.is_relative_to(root):
         raise Conflict('Clean export requires an absent destination outside the project')
@@ -211,6 +212,7 @@ def export_sources(repo, destination, extras=()):
         raise Conflict('Clean export requires at least one TeX source')
     originals = {name: plain_file(root, name).read_bytes() for name in sorted(names)}
     files = {}
+    has_excerpts = False
     for name, raw in originals.items():
         if Path(name).suffix.lower() == '.tex':
             text = raw.decode('utf-8-sig')
@@ -218,11 +220,38 @@ def export_sources(repo, destination, extras=()):
                 raise Conflict('Clean export requires legacy embedded review state to be migrated first: ' + name)
             try:
                 index(text)
+                excerpts = resolve(text, lambda path: originals[path].decode('utf-8-sig'))
             except ValueError as error:
                 raise Conflict('Clean export blocked by invalid block markers in ' + name + ': ' + str(error)) from error
+            if excerpts:
+                has_excerpts = True
+                for ref in reversed(excerpts):
+                    expanded = '\\TSExcerptBegin\n' + ref['content'] + '\\TSExcerptEnd{}'
+                    text = text[:ref['start']] + expanded + text[ref['end']:]
             text = MARKER.sub('', source_text(text, sidecar=True))
             raw = (b'\xef\xbb\xbf' if raw.startswith(b'\xef\xbb\xbf') else b'') + text.encode('utf-8')
         files[name] = raw
+    if has_excerpts:
+        support = [name for name in files if PurePosixPath(name).name == 'texscholar-excerpt.sty']
+        if not support:
+            raise Conflict('Clean export requires the paper-local texscholar-excerpt.sty support file.')
+        expanded_support = r'''
+\makeatletter
+\newcommand\TSExcerptBegin{%
+  \begingroup
+  \def\TSrestore{}\def\TSpage{page}%
+  \def\@elt##1{\def\TSname{##1}\ifx\TSname\TSpage\else
+    \edef\TSrestore{\unexpanded\expandafter{\TSrestore}\noexpand\setcounter{##1}{\number\csname c@##1\endcsname}}\fi}%
+  \cl@@ckpt
+  \let\label\@gobble
+  \def\addcontentsline##1##2##3{}%
+  \def\hyper@anchorstart##1{}\def\hyper@anchorend{}%
+}
+\newcommand\TSExcerptEnd{\TSrestore\endgroup}
+\makeatother
+'''.encode('utf-8')
+        for name in support:
+            files[name] += expanded_support
     for name, raw in originals.items():
         if plain_file(root, name).read_bytes() != raw:
             raise Conflict('Source changed during clean export: ' + name)

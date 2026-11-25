@@ -10,6 +10,8 @@ Y1 提交 `5fbe80cbe03a9663aa1a171f2206150c36dfa6d3`，普通 push 后 fetch 核
 
 Y2 提交 `50115db6b8389e352e7bbf702d663b5c7b4be2f` 已普通 push/fetch。Y3 审核两模式显示已保存正文摘录及文件/块身份，来源变化刷新且不重置解释草稿；来源失效阻止接收。PDF 从同一快照取引用，默认显示已保存源，选择正文候选时改用该临时版本；正式源码预览不带候选。`Y-final-check1` 实际 PDF、解析及旧消费者八项与 JS 95 项 exit 0。`Y3-ui2` 首次发现初始卡片消息漏传摘录，已修；`Y3-ui3/4` 夹具用首个通用 CSS 选择器误选隐藏空卡，观察器 exit 1，`Y3-ui4/debug.json` 已证明实际卡数据和 DOM；`Y3-ui5` 专属 profile/pipe、私有未切桌面 Development 宿主/观察器/外层 exit 0，Default 前中后 HWND 68312 不变；段落截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-ae34cffe0f0d45d1bccf64f112b0465b.png` 已看。`Y3-ui6` 问题模式滚动到回复摘录截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-d777e91945ce4935b547ff14da95dec8.png` 已看，宿主及观察成功，但外层退出时枚举空桌面返回 false/错误码 0 而 exit 1；不当作外层通过，隔离保护以 ui5 完整通过结果为准。截图均保留，未操作用户窗口或真稿。
 
+Y3 提交 `ccb68cbd011888d3c041918029523bb963603950` 已普通 push/fetch。Y4 投稿副本先对同一读入快照解析并展开引用，再移除定位标记，复制必要 TeX 支持并在展开处保留原计数器/label 隔离；工作稿不写入。自动 Git 备份发现引用时保留稳定块标记，并拒绝漏掉来源或支持文件的快照；私有 ZIP 备份/恢复携带正文和 sty。`Y4-export1` 首次独立编译因展开包装中 TeX 宏参数未加倍 exit 1，修后 `Y4-export2` exit 0；`Y4-final1` 两项 exit 0，实际 latexmk 编译并检查 PDF 提取内容，覆盖预览与正式版本分离、导出前后源不变、缺来源/支持拒绝、ZIP 恢复字节及新批次清 edits 后引用身份保留。未运行会删除文件的整组备份/PDF 测试，未执行 cleanup；跨进程、两个回复同源及精简后独立编译属于总控未重叠组合，尚待总控核验。
+
 | 对照入口母集 | 状态与证据 |
 | --- | --- |
 | 问题身份、导航、未绑定、同名跨文件、目录筛选、前后与返回 | 正常：questionTable 按 id/file/quote 定位，questionEntries 含未绑定；目录与前后项保留。Q 总控 controller1 曾核同 ID 不同 file/quote 不串，M-open-ui-green 核精确项及返回入口。 |
