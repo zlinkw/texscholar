@@ -1,5 +1,9 @@
 # 问题审核能力对照执行记录
 
+Z1：`Z-red2` 通过实际底部问题目录命令复现用户原错误“审核模式或批次已变化，请重新选择问题”，冷状态没有创建审核页；`Z-red1` 同路径先以未创建 panel 的断言失败。排查假设依次为冷状态未初始化、关闭后状态残留、问题或版本过期、ready 消息竞态；实测根因为 handler 直接要求已有 active，而保存的问题模式允许底部列表先于工作台存在，且新 panel ready 前直接 post 会丢定位。现先按列表已核 repo/owner/session/question/id/version 选取对应项，复用 openWorkbench；ready 后重验并投递精确定位，已打开页沿原校验与草稿保护。问题组、项和剩余批注复用原命令；无匹配或旧身份仍拒绝。
+
+`Z-green1` 冷打开通过；`Z-check1` 两个受影响现有宿主/工作台套件共 97 项 exit 0，包含新增冷打开、关闭重开、问题组、剩余批注、过期身份与既有页回归；随后 `Z-check2` 定向三项 exit 0，补核跨仓库、owner、问题和批次/版本过期拒绝。`Z-check1` 完整既有套件意外包含原有 100 项宿主刷新性能测试并实际运行，未新增性能测试；此项不作为本次授权性能结论，事实和输出保留。`Z-ui1` 正常 Development 专属 profile/pipe、CreateDesktopW 私有未切桌面，真实点击底部旧批注后直接定位问题模式中第 5 项；宿主/观察器/外层 exit 0，Default 输入桌面和前中后前台 HWND 1706472 不变。截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-2f8d4790f51840b0a2372fd8431a72de.png` 已实看并保留；无真实稿/默认管道/用户窗口操作。新用户要求另增左侧活动栏快捷入口作为后续 AA 功能批，待总控更新计划和派单后实施，与 Z 合并一次新版发行；本批不提前构建或安装。
+
 现任总控local/01a212c7-d736-7503-ab7a-9717a426fefb已按caveman实核Sol/high match/continue并接权，旧总控01a20811结束后已归档；唯一Terra和Y返修0不变。Y5已交回全部租约，无在途。
 
 总控Y5交付元数据最终核对通过：本地/远端附注tag对象及构建目标、注释双包摘要一致；controller-y-release-meta.py实际读Release API，三附件digest与本地产物一致，manifest和source=vsix/pinned登记为0.9.70，exit0。原始API、argv/cwd/exit及结果在D:/latex-writing-checks/review-efficiency-20261122/controller-y-release*。安装原日志exit0伴Node DEP0169警告，未重装；Y1–Y4和总控独占组合复用有效证据，不重复功能组或包后冒烟。plan/index/execution集中结案；未自动重载/重启，活动宿主加载状态未知，真实旧复制摘录未自动转换，须明确来源映射后处理。

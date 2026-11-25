@@ -27,14 +27,14 @@ test('one PDF queue coalesces pending document updates and preserves running wor
     assert.equal(events.at(-1), 'recovered');
 });
 
-function hostFixture({tex = true, state = true, autoPDF = true, questionStore = false} = {}) {
+function hostFixture({tex = true, state = true, autoPDF = true, questionStore = false, initialMode} = {}) {
     const root = fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT, 'review-list-'));
     const file = path.join(root, tex ? 'paper.tex' : 'main.js'), owner = path.join(root, 'reply.tex');
     let value = tex ? '\\documentclass{article}\n😀 First sentence. Second sentence.' : 'const x = 1;';
     fs.writeFileSync(file, value, 'utf8');
     if (state) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n% CODEX-REVIEW-STATE-END', 'utf8');
     const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [], reveals = [];
-    let receive, panels = 0, provider, fileChanged, texChanged, saveHandler, configurationChanged, selectionHandler, sourceValue, cardsHook, cardsTransform, pdfHook, migrationHook, manualHook, syncHook, saveSourceHook, batchHook, revealHook;
+    let receive, panelDispose, panels = 0, provider, fileChanged, texChanged, saveHandler, configurationChanged, selectionHandler, sourceValue, cardsHook, cardsTransform, pdfHook, migrationHook, manualHook, syncHook, saveSourceHook, batchHook, revealHook;
     const original = value, edit = {file: path.basename(file), kind: 'manuscript', deferred: true, status: 'pending', versions: ['v1'], requests: [], questions: []};
     const start = Array.from(original.slice(0, original.indexOf('First'))).length;
     const data = {version: 'v1', edit, original: 'First sentence.', candidate: 'Better sentence.', options: [
@@ -59,7 +59,7 @@ function hostFixture({tex = true, state = true, autoPDF = true, questionStore = 
         window: {activeTextEditor: editor, visibleTextEditors: [editor], tabGroups: {all: [pdfGroup], activeTabGroup: pdfGroup},
             createTreeView(id, options) {provider = options.treeDataProvider; trees.push(id); return {dispose() {}, message: '', selection: [],
                 async reveal(item, options) {if(revealHook) await revealHook(item,provider); assert(provider.getParent(item)); reveals.push({item, options}); this.selection = [item];}};},
-            createWebviewPanel() {panels++; return {visible: true, onDidChangeViewState: disposable, webview: {html: '', cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}), postMessage: m => packets.push(m), onDidReceiveMessage: f => {receive = f;}}, reveal() {}, onDidDispose() {}, dispose() {}};},
+            createWebviewPanel() {panels++; return {visible: true, onDidChangeViewState: disposable, webview: {html: '', cspSource: 'vscode-webview:', asWebviewUri: uri => ({toString: () => 'vscode-resource:' + uri.fsPath}), postMessage: m => packets.push(m), onDidReceiveMessage: f => {receive = f;}}, reveal() {}, onDidDispose(f) {panelDispose=f;}, dispose() {panelDispose?.();}};},
             createTextEditorDecorationType: disposable, registerUriHandler: disposable, onDidChangeActiveTextEditor: disposable,
             onDidChangeTextEditorSelection: f => {selectionHandler = f; return disposable();},
             async showTextDocument(target, options) {calls.push(['showTextDocument', target, options]); return editor;},
@@ -121,13 +121,50 @@ function hostFixture({tex = true, state = true, autoPDF = true, questionStore = 
     };
     const storage = () => {const values = new Map(); return {get:(key,fallback)=>values.has(key) ? values.get(key) : fallback, update:async(key,value)=>{values.set(key,value);}};};
     const context = {subscriptions: [], ...(questionStore ? {workspaceState:storage(), globalState:storage()} : {})};
+    if (initialMode) context.globalState.update('reviewMode',initialMode);
     const ui = createInlineReview(vscode, context, backend);
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
         get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set cardsTransform(fn) {cardsTransform = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;}, set syncHook(fn) {syncHook = fn;}, set saveSourceHook(fn) {saveSourceHook = fn;}, set batchHook(fn) {batchHook = fn;}, set revealHook(fn) {revealHook = fn;},
-        rows: () => provider.getChildren(), receive: m => receive(m),
+        rows: () => provider.getChildren(), receive: m => receive(m), closePanel: () => panelDispose(),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
         changed: () => fileChanged(uri(owner)), saved: () => saveHandler(document), savedDocument: doc => saveHandler(doc), texChanged: () => texChanged(uri(file)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
 }
+
+test('question directory opens a cold workbench before focusing its exact item', async () => {
+    const f=hostFixture({questionStore:true,initialMode:'question'});
+    f.edit.questions=[{id:'R1',file:'one.txt',quote:'first'}];
+    await f.ui.ready; await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const target=f.rows()[0].children[0].command.arguments[0];
+    await f.handlers.get('localLatex.reviewQuestionDirectory')(target);
+    assert(!f.notices.some(message=>message.includes('审核模式或批次已变化')), f.notices.join('\n'));
+    assert.equal(f.panels,1);
+    await f.receive({type:'ready',instance:'cold'});
+    assert(f.packets.some(p=>p.type==='focusQuestion' && p.target==='1' && p.questionKey===target.questionKey));
+});
+
+test('question groups and remaining notes reopen the right question without accepting stale targets', async () => {
+    const f=hostFixture({questionStore:true,initialMode:'question'});
+    const q={id:'R1',file:'one.txt',quote:'first'};
+    f.edit.questions=[q]; f.edit.requests.push({id:'old',version:'v1',side:'original',quote:'First',text:'剩余批注',status:'open'});
+    await f.ui.ready; await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const group=f.rows()[0], item=group.children[0], note=item.children[0];
+    assert.deepEqual(note.command.arguments,item.command.arguments);
+    const run=f.handlers.get('localLatex.reviewQuestionDirectory');
+    await run({...item.command.arguments[0],version:'stale'});
+    await run({...item.command.arguments[0],session:'old'});
+    await run({...item.command.arguments[0],repo:f.root+'-other'});
+    await run({...item.command.arguments[0],owner:'other.tex'});
+    await run({...item.command.arguments[0],questionKey:'missing'});
+    assert.equal(f.panels,0); assert.equal(f.notices.length,5);
+    await run(group.command.arguments[0]); assert.equal(f.panels,1);
+    await f.receive({type:'ready',instance:'group'});
+    assert.deepEqual(f.packets.findLast(p=>p.type==='focusQuestion'),{type:'focusQuestion',session:'batch',questionKey:group.command.arguments[0].questionKey,target:undefined,version:undefined});
+    f.closePanel();
+    await run(note.command.arguments[0]); assert.equal(f.panels,2);
+    await f.receive({type:'ready',instance:'reopened'});
+    assert.equal(f.packets.findLast(p=>p.type==='focusQuestion').target,'1');
+    assert.equal(f.edit.requests[0].text,'剩余批注');
+});
 
 test('question directory groups exact identities, shared items and rejects stale navigation', async () => {
     const f = hostFixture({questionStore:true});

@@ -1340,7 +1340,21 @@ function createInlineReview(vscode, context, execute = run) {
         }
     });
     command('localLatex.reviewWorkbench', openWorkbench, true);
-    command('localLatex.reviewQuestionDirectory', target => {workbench.focusQuestion(target); questionDirectoryTarget = target;}, true);
+    command('localLatex.reviewQuestionDirectory', async target => {
+        if (!workbench.active) {
+            const group = fileRows.find(row => {
+                const value = row.command?.arguments[0];
+                return value && value.repo === target.repo && value.owner === target.owner &&
+                    value.session === target.session && value.questionKey === target.questionKey;
+            });
+            const item = group?.children.find(row => !target.id ||
+                row.command.arguments[0].id === target.id && row.command.arguments[0].version === target.version);
+            if (!item) throw new Error('问题或审核项已变化，请重新选择。');
+            await openWorkbench(item.command.arguments[0]);
+        }
+        workbench.focusQuestion(target);
+        questionDirectoryTarget = target;
+    }, true);
     context.subscriptions.push(vscode.commands.registerCommand('localLatex.checkReviewBeforeReload', () => workbench.assertReloadSafe()));
     command('localLatex.inlineReviewAt', c => open(c));
     command('localLatex.inlineNext', arg => select(true, arg), true);

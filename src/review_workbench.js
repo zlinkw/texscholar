@@ -118,7 +118,7 @@ function createWorkbench(vscode, context, services) {
     let lastRecords = new Map(), sourceSelection;
     let reviewMode = context.globalState?.get('reviewMode', 'paragraph') || 'paragraph', paragraphVisible = new Set();
     let questionPosition = '';
-    let ready = false, client, uiState, notice, reading, handoffRetry, restoredDraft;
+    let ready = false, client, uiState, notice, reading, handoffRetry, restoredDraft, pendingQuestion;
     let batchScope, batchItems = [];
     const selectionScope = (c, session) => JSON.stringify([c.repo, c.owner, session]);
     let appearanceWork = Promise.resolve(), draftWork = Promise.resolve();
@@ -507,7 +507,7 @@ function createWorkbench(vscode, context, services) {
             panel.onDidChangeViewState(({webviewPanel}) => {if (!webviewPanel.visible) {ready = false; translationRequested = retryTranslation = false;paragraphVisible.clear();questionVisible.clear();questionView='';translationEpoch++;}});
             panel.onDidDispose(() => {panel = undefined; active = loaded = pending = sourceSelection = undefined;
                 lastRecords = new Map(); hasPending = dirty = noteDirty = ready = handling = false; pendingSynchronized.clear(); showRequest++;
-                uiState = notice = client = reading = relatedReturn = restoredDraft = batchScope = pendingCardAction = undefined; batchItems = []; translationEpoch++; translations.clear(); questionTranslations.clear(); questionVisible.clear(); paragraphVisible.clear(); questionView='';});
+                uiState = notice = client = reading = relatedReturn = restoredDraft = batchScope = pendingCardAction = pendingQuestion = undefined; batchItems = []; translationEpoch++; translations.clear(); questionTranslations.clear(); questionVisible.clear(); paragraphVisible.clear(); questionView='';});
             const asset = name => panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'vendor', 'katex', name))).toString();
             panel.webview.html = html(crypto.randomBytes(16).toString('hex'), {source: panel.webview.cspSource, css: asset('katex.min.css'), script: asset('katex.min.js')});
         } else {panel.reveal(); sendContent();}
@@ -651,7 +651,12 @@ function createWorkbench(vscode, context, services) {
             if (!active || !panel?.visible || ready && client === message.instance) return;
             if (!uiState && message.state?.c && key(message.state.c) === key(active)) uiState = message.state;
             if (!reading && uiState) reading = {sourceMode: uiState.sourceMode, chinese: uiState.chinese};
-            client = message.instance; ready = true; sendContent(); return;
+            client = message.instance; ready = true; sendContent();
+            if (pendingQuestion) {
+                const target = pendingQuestion; pendingQuestion = undefined;
+                try {focusQuestion(target);} catch (error) {vscode.window.showErrorMessage(error.message);}
+            }
+            return;
         }
         if (!active || !panel) return;
         if (message.type === 'questionTranslateBatch') {
@@ -1221,19 +1226,20 @@ function createWorkbench(vscode, context, services) {
             }
         }
     }
+    function focusQuestion(target) {
+        if (!active || reviewMode !== 'question' || target.repo !== active.repo || target.owner !== active.owner || target.session !== services.session(active))
+            throw new Error('审核模式或批次已变化，请重新选择问题。');
+        const rows = questionTable(active);
+        const entries = target.questionKey === '__unbound__' ? directory().filter(item => !rows.some(row => row.entries.some(entry => entry.id === item.id))) :
+            rows.find(row => row.key === target.questionKey)?.entries.filter(entry => entry.card);
+        if (!entries?.length || target.id && !entries.some(entry => entry.id === target.id && entry.version === target.version))
+            throw new Error('问题或审核项已变化，请重新选择。');
+        panel.reveal();
+        if (!ready || !panel.visible) pendingQuestion = {...target};
+        else post({type:'focusQuestion', session:target.session, questionKey:target.questionKey, target:target.id, version:target.version});
+    }
     context.subscriptions.push({dispose() {panel?.dispose();}});
-    return {show, sync, observeSession, setRecords(records) {lastRecords = records; trimTranslations();},
-        focusQuestion(target) {
-            if (!active || reviewMode !== 'question' || target.repo !== active.repo || target.owner !== active.owner || target.session !== services.session(active))
-                throw new Error('审核模式或批次已变化，请重新选择问题。');
-            const rows = questionTable(active);
-            const entries = target.questionKey === '__unbound__' ? directory().filter(item => !rows.some(row => row.entries.some(entry => entry.id === item.id))) :
-                rows.find(row => row.key === target.questionKey)?.entries.filter(entry => entry.card);
-            if (!entries?.length || target.id && !entries.some(entry => entry.id === target.id && entry.version === target.version))
-                throw new Error('问题或审核项已变化，请重新选择。');
-            panel.reveal();
-            post({type:'focusQuestion', session:target.session, questionKey:target.questionKey, target:target.id, version:target.version});
-        },
+    return {show, sync, observeSession, setRecords(records) {lastRecords = records; trimTranslations();}, focusQuestion,
         coordinating(scope, busy) {
             if (busy) coordinatingScope = scope;
             else if (coordinatingScope === scope) coordinatingScope = undefined;
