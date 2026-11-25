@@ -196,3 +196,15 @@ W-r1-backup7 在新隔离 bare 仓库实际验证：断网不精简；远端确�
 普通已授权写作、位置明确时，MCP `prepare_block` 描述和实际写作指南现要求先预览并核对边界，再用返回的 block_id 和未变化源码/状态版本继续，不逐块询问；位置有歧义时询问具体位置，建立标记不代表接收候选。README 同步说明。手动选区入口原有确认、旧格式迁移及 `reassociate_block` 修复确认均保留，后端写入和宿主安全协议未改。
 
 X-checks2 在独立根与专属 pipe，先核 FakeHostSession，再运行真实 Server.call 预览及 apply 和两个固定块边界用例，三项 exit 0：预览不改源码或状态，缺 block_id、实际源码或状态变化、非法边界均拒绝，合法预览返回 ID 后无需额外确认参数即可应用；保留宏边界及问题容器边界检查。X-checks1 在补充真实源码/状态变化断言前 exit 0；完整 argv/cwd/选定环境/stdout/stderr/exit 位于 `D:/latex-writing-checks/review-efficiency-20261122/X-checks*`。首次只读尝试使用不存在的 multi-session 技能别名路径报错，随后读取目录中实际技能文件。未触真实项目、默认 pipe 或用户窗口；未运行 UI、性能、删除、构建或发行。
+
+### X3 正式交付
+
+总控最终审核通过，返修 0；预核 v0.9.69 本地/远端 tag 不存在、Release API 404、输出目录不存在，原登记为 0.9.68。版本/MCP 一致及发行工具检查、全新隔离 FakeHost/专属 pipe MCP 检查均 exit 0；既有运行清单包含本次实际变更的 MCP 和写作指南。总控审查时两次只读猜测不存在的 JS 路径报错，随后核对实际 `src/writing.js`。
+
+版本及总控计划同批普通提交 push/fetch，唯一构建 X-delivery-build exit 0，输入 65f13c63a01c57ebae66bba5c73e7cdef2c35475。`dist/v0.9.69/texscholar-0.9.69.vsix` SHA256 `8c444ed989fe66052456b1dcc335bbb70f6297a6ffd1d1919f4243cb4e70aac5`；`texscholar-0.9.69-source.zip` `4392c50f7f6221b28098e102f6c56b596e4e157033e8ed45b7983f1a590eff17`；`SHA256SUMS.txt` `1dce2b71f15851658861cf8c82c8b9051013e623eec02b0d04cdeb77f519ba8e`。
+
+远端附注 tag v0.9.69 对象 130bb46b3f535b142bd626976d8682fa060c0634 指向该输入，附注包含准确 SOURCE-COMMIT/VSIX-SHA256/SOURCE-SHA256。正式 Release https://github.com/zlinkw/texscholar/releases/tag/v0.9.69 为非 draft、非 prerelease，X-delivery-verify 逐项核三个 API digest 与本地相同，exit 0。在仓库实际运行 `C:/Software/apps/Microsoft VS Code/bin/code.cmd --install-extension D:/GitRepo/texscholar/dist/v0.9.69/texscholar-0.9.69.vsix`，无 force，exit 0；CLI、manifest 和登记均为 local-research.latex-writing-tools 0.9.69，source=vsix、pinned=true。完整 argv/cwd/相关环境/stdout/stderr/exit 见 `D:/latex-writing-checks/review-efficiency-20261122/X-delivery-*`。
+
+未触真实论文/资料/用户窗口/默认 pipe/MCP，未删除或执行包后冒烟，未重载/重启；安装登记不证明活动宿主已加载，未实测网络 AI 提示质量。
+
+总控X3元数据最终核对通过：本地/远端附注tag对象及构建目标一致，controller-x-release-meta.py实际读Release API、三附件摘要与本地包一致，实际manifest/登记为0.9.69、source=vsix/pinned，exit0。原始API/stdout/stderr/结果保留于D:/latex-writing-checks/review-efficiency-20261122/controller-x-release*。X返修0，plan/index及本交付尾集中收尾，无在途；未新增功能测试或包后冒烟，现有MCP连接和目标窗口需用户自行重新连接/重载后启用新版说明。

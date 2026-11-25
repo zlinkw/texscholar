@@ -6,11 +6,13 @@
 
 - [x] X1 Terra统一prepare_block工具说明、实际传给AI的写作指南及受影响用户说明：已获授权且位置明确时，AI自行预览、检查合法边界，再用返回block_id和未变源/state版本继续，无需逐块询问；边界不明确时向作者问最小具体位置。建立标记不等于接收候选。保留旧项目迁移、缺失/错位标记修复与重新关联的原确认要求；不新增确认字段、自动重试或定位猜测，不削弱宿主唯一性、writer锁、脏缓冲、精确版本及TeX边界保护。
 - [x] X2 Terra核真实MCP工具描述和指南消费者，复用已有prepare_block预览→apply用例，定向验证明确位置无需额外人工确认参数即可走现有受控写入，缺少preview block_id、源/state变化和非法边界仍拒绝；只补当前受影响且尚未有效覆盖的必要检查，不写镜像文案测试、不做UI/性能/完整备份或删除组。总控冻结后审实际diff、描述与指南一致性及必要调用链，复用局部证据，不重跑同场景。
-- [ ] X3 总控通过后Terra按已有发行安装授权预核下一无冲突版本，必要版本/MCP/发行工具检查，scripts/build.py一次构建，附注tag及正式Release，同一VSIX安装；不重载或重启用户窗口/MCP、不包后冒烟。总控只核交付元数据及完成状态。支持plan/index/execution随实际功能或交付批集中同步，不另造元数据提交循环。
+- [x] X3 总控通过后Terra按已有发行安装授权预核下一无冲突版本，必要版本/MCP/发行工具检查，scripts/build.py一次构建，附注tag及正式Release，同一VSIX安装；不重载或重启用户窗口/MCP、不包后冒烟。总控只核交付元数据及完成状态。支持plan/index/execution随实际功能或交付批集中同步，不另造元数据提交循环。
 
 总控先维护本计划与索引增量，随后将全部产品/测试/隔离配置/Git租约给原Terra；Terra实现并冻结交回后总控才审核。真实论文、P/个人资料、候选、批注、草稿、范围外暂存和全局技能均不改，不调用真实默认pipe/MCP，不清理任何文件/对象。当前任务只改插件政策与必要说明；不能借此去掉旧迁移或修复确认。普通精确stage/commit/push/fetch，远端前移停止，不reset/rebase/merge/force或改变remote；保留真实失败/未知/未测和完整原日志。有效现行全局AGENTS优先于历史批次描述。
 
 X1/X2总控最终审核通过，冻结b9ee4b76ba7a140ff78c3c476f590e6548a12ff3，返修0。实际运行改动仅工具描述与指南/README，后端安全逻辑未变；tools/list直接暴露TOOLS描述，MCP规则模块与写作入口读取同一writing-guide.md且构建清单已含。总控审真实diff、原prepare_block及MCP写边界、保留的reassociate/迁移确认，复用X-checks2真实三项exit0及完整stderr，不重复测试或新增UI。缺预览ID、源/state实际变化和非法边界拒绝，合法预览可直接应用；未测实网AI的提示遵循。总控只读检索曾带两个不存在的猜测JS路径报错，随后按实际src/writing.js和mcp_server.py补核；无业务写入或测试失败。X3按原授权继续，交付输入与结果随后记录。
+
+X阶段完成，返修0。[0.9.69正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.69)并同包安装，唯一构建输入65f13c63a01c57ebae66bba5c73e7cdef2c35475。总控核本地/远端附注tag对象130bb46b3f535b142bd626976d8682fa060c0634及构建目标、SOURCE-COMMIT/双包摘要；controller-x-release-meta.py实读Release API、比较三附件digest与本地产物、核实际manifest和source=vsix/pinned登记0.9.69，exit0，完整原始结果在D:/latex-writing-checks/review-efficiency-20261122/controller-x-release*。必要版本/MCP/发行检查均通过，无发行安装失败。未操作真实论文/资料/用户窗口，未自动重载或重启、删除或包后冒烟；未测实网AI提示遵循。用户需重载目标VSCode窗口、重新连接现有MCP服务，才会加载新版说明；安装登记不等于活动宿主已更新。执行尾与本计划/索引集中交付收尾，全租约已交回，无在途。
 
 ## 目标与授权
 
