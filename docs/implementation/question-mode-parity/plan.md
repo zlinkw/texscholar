@@ -1,5 +1,19 @@
 # 问题审核与段落审核能力对照及优化
 
+## AB阶段：保存与后台备份交叠恢复
+
+2026-11-25用户报告后台Git备份经常失败，提示类似后台正在修改。基线0524a584746041c68a0d95aece71a63990a1983e、master==origin/master、开工clean，0.9.71已正式安装。总控local/01a212c7-d736-7503-ab7a-9717a426fefb维护计划/索引和最终审核，唯一Terra local/01a21288-5815-7312-b496-006ade07bede负责复现、修复及局部验证，AB返修0，不新增代理。
+
+只读现场证据：Code日志20261125T193440/window1/exthost/output_logging_20261125T193443/6-TeXScholar Git 备份.log第33、35、40行记录“备份期间源码发生变化：main.tex”，第59行同错误涉及GMAP补充实验Markdown。最新20261125T210917同类日志仅见排队/已保存项目无变化，不能称当前正在失败。真实论文automatic-backup.json的saved_status为idle、saved_done存在；另有旧status记录未归属本地提交/远端推进失败，不得混为同一根因或为消提示绕过其保护。只读未改真稿、ledger或Git。
+
+目标是在自动备份与正常保存/接收/后台写入交叠时，保留待备份意图，在可恢复条件满足后以一致版本继续，避免正常竞态反复终止或遗留失败；不得降低源码一致性、未归属提交/远端历史、暂存区、writer锁及真实错误可见性。先按diagnose用真实隔离Git/宿主/队列复现同一错误，再决定最小修法；不预设重试次数、轮询、超时、吞错或直接跳过校验。检查当前saved_commit、saved_job恢复、事件合并及reviewWriter协作，已有保存发生于hook期间的用例和writer等待用例按有效覆盖复用。
+
+- [ ] AB1 原Terra一个完整功能批复现并修复当前可达的源码变化/写入交叠恢复，补齐负责调用方、状态呈现和必要回归。用隔离本地bare仓库及真实Git验证连续保存/接收后最新保存字节最终进入正确提交并推送，工作树新编辑和原index/stage不被覆盖；真实不可恢复冲突仍可见且不误报成功。不要运行含cleanup/完整文件删除的整组backup或finishReview用例，不新增/修改性能测试；新增恢复机制须有本次实际错误和事件依据。
+- [ ] AB2 总控冻结后审实际diff/调用链和局部证据，仅补未覆盖且影响结论的具体组合。若需审核页状态视觉验收，由Terra按silent-ui-screenshot使用私有未切桌面及专属profile/pipe实测，不操作真实窗口或将API冒充点击。
+- [ ] AB3 审核通过后按原已授权流程由原Terra预核下一无冲突版本、必要发行检查、一次构建、正式Release和同一VSIX安装；总控仅核交付元数据并集中结案，不自动重载/重启，不包后冒烟。
+
+总控先写plan/index支持增量，随后移交产品/测试/UI/隔离配置/execution/Git租约给原Terra，停止重叠写测，支持docs随成功完整功能批集中普通提交推送核一致。真实论文D:/Overleaf/TMI-DA-Marked-up Copy、个人资料、state/ledger/批注/候选/三稿和范围外stage只读保护，不实际重试/推送真稿，不删除对象/截图/其他文件、不cleanup、不实网AI、不改全局技能/配置/TeX。必要程序自有锁生命周期沿既有安全契约，涉及删除路径的设计/审查按safe-delete-paths，不扩为文件清理。远端前移或真实权限/Hook拒绝停止相应动作，不reset/rebase/merge/force/改remote。pwsh7、UTF8、Python -B -X utf8；证据D:/latex-writing-checks/review-efficiency-20261122/AB-*，保留完整argv/cwd/env/stdout/stderr/exit及首败。
+
 ## AA阶段：左侧活动栏快捷入口
 
 2026-11-25用户在Z执行期间明确要求在VSCode最左侧活动栏增加图标，方便快捷打开和管理常用功能。保留Z旧批注直接点击修复，先完成Z返修再执行本后续功能批，最终一起发布安装一次，不自动重载或重启。总控和唯一Terra沿用Z现任，AA返修0。当前09b01b80c526bd5f4f200b3c8b005f4d7fdf6fde为Z首次交包基线，HEAD==origin/master、clean，未发行安装；Z最终审核发现的R1详见下节，不当作已通过。

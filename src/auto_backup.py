@@ -20,6 +20,10 @@ from source_review import Review, Conflict, digest, body, writer_lock_at
 from review_checkpoint import source_text
 
 
+class SavedSourceChanged(Conflict):
+    """A captured source changed before the backup commit was created."""
+
+
 def saved_ledger(root, mutation=None):
     directory = root / '.codex-review'
     if directory.is_symlink() or directory.is_junction():
@@ -269,7 +273,7 @@ def saved_commit(root, git_exe, spec, storage=None):
         captured = originals
         originals, files = saved_sources(root, names, git_exe, overrides)
         if originals != captured:
-            raise Conflict('备份期间项目文件发生变化；未创建提交。')
+            raise SavedSourceChanged('备份期间项目文件发生变化；未创建提交。')
     if git('ls-files', '--stage', '-z') != staged_before:
         raise Conflict('暂存区在准备期间变化，未创建备份。')
     attrs = git('check-attr', 'filter', 'working-tree-encoding', '--', *names).decode().splitlines()
@@ -296,7 +300,7 @@ def saved_commit(root, git_exe, spec, storage=None):
         for name, original in originals.items():
             path = root / name
             if (path.read_bytes() if path.exists() else None) != original:
-                raise Conflict('备份期间源码发生变化：' + name)
+                raise SavedSourceChanged('备份期间源码发生变化：' + name)
     def capture_review():
         unchanged()
         if spec.get('owner'):
@@ -310,7 +314,7 @@ def saved_commit(root, git_exe, spec, storage=None):
                         continue
                     text = r.read(name)
                     if r.original[name] != originals[name]:
-                        raise Conflict('备份期间源码发生变化：' + name)
+                        raise SavedSourceChanged('备份期间源码发生变化：' + name)
                     try:
                         r.locate_edit(text, edit)
                     except Conflict:
@@ -336,6 +340,8 @@ def saved_commit(root, git_exe, spec, storage=None):
                         'accepted_snapshot':r.state['accepted'],
                         'sources':{name:{'sha256':digest(raw), 'blob':blobs[name]}
                                    for name, raw in originals.items() if name in blobs and raw is not None}}, None
+            except SavedSourceChanged:
+                raise
             except (Conflict, OSError, ValueError, KeyError, json.JSONDecodeError) as error:
                 return None, str(error)
         return None, None
@@ -707,5 +713,5 @@ if __name__ == '__main__':
     try:
         main()
     except (Conflict, OSError, ValueError, KeyError) as error:
-        print(json.dumps({'error': str(error)}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps({'error': str(error), **({'code':'saved_source_changed'} if isinstance(error, SavedSourceChanged) else {})}, ensure_ascii=False), file=sys.stderr)
         sys.exit(2)

@@ -786,6 +786,52 @@ test('a save arriving during local backup metadata is serialized and checked aft
     assert.equal(events.at(-1).status,'idle');
 });
 
+const snapshotRaceCode = [
+        'import sys,json', 'from pathlib import Path', 'sys.path.insert(0,sys.argv.pop(1))', 'import auto_backup as a',
+        'original=a.saved_sources',
+        'def capture(root,names,git,overrides=None):\n result=original(root,names,git,overrides)\n (root/"main.tex").write_bytes((root/"main.tex").read_bytes()+b"Later save.\\n")\n return result',
+        'a.saved_sources=capture',
+        'try:\n a.main()\nexcept (a.Conflict,OSError,ValueError,KeyError) as error:\n print(json.dumps({"error":str(error),**({"code":"saved_source_changed"} if isinstance(error,a.SavedSourceChanged) else {})},ensure_ascii=False),file=sys.stderr)\n sys.exit(2)'
+    ].join('\n');
+test('a source change during snapshot is recaptured and backed up without losing staged work', async () => {
+    const f = await fixture('saved-snapshot-race'); f.edit();
+    fs.writeFileSync(path.join(f.root,'.env.local'),'keep staged\n','utf8'); await f.git(['add','.env.local']);
+    const staged = await f.git(['show',':.env.local']);
+    let injected = false;
+    const execute = async (exe,args,cwd,input) => {
+        if (args.at(-1)==='saved-local' && !injected) {
+            injected = true;
+            return run(PYTHON,['-X','utf8','-c',snapshotRaceCode,SCRIPTS,...args.slice(3)],cwd,input);
+        }
+        return f.execute(exe,args,cwd,input);
+    };
+    const events=[];
+    await enqueueAutomatic(f.root,null,{git:GIT,gh:'fixture-gh',python:PYTHON},value=>events.push(value),execute);
+    assert(injected);
+    assert.equal(await f.git(['show','origin/master:main.tex']),'Revised sentence.\nLater save.\n');
+    assert.equal(await f.git(['show',':.env.local']),staged);
+    assert(!events.some(value=>value.status==='failed'));
+});
+
+test('repeated source changes remain visible after the fresh capture also changes', async () => {
+    const f = await fixture('saved-snapshot-repeat'); f.edit();
+    let attempts = 0;
+    const execute = (exe,args,cwd,input) => {
+        if (args.at(-1)==='saved-local') {
+            attempts++;
+            return run(PYTHON,['-X','utf8','-c',snapshotRaceCode,SCRIPTS,...args.slice(3)],cwd,input);
+        }
+        return f.execute(exe,args,cwd,input);
+    };
+    const events=[];
+    await enqueueAutomatic(f.root,null,{git:GIT,gh:'fixture-gh',python:PYTHON},value=>events.push(value),execute);
+    assert.equal(attempts,2);
+    assert.match(events.at(-1).message,/备份期间源码发生变化：main\.tex/);
+    assert.equal(events.at(-1).status,'failed');
+    assert.equal((await f.git(['rev-parse','HEAD'])).trim(),f.baseline);
+    assert.equal(fs.readFileSync(path.join(f.root,'main.tex'),'utf8'),'Revised sentence.\nLater save.\nLater save.\n');
+});
+
 test('a saved event blocked by a review writer is resumed after that writer finishes', async () => {
     const f = await fixture('saved-review-lock'); f.edit();
     const code='import sys; from pathlib import Path; from source_review import writer_lock_at\nwith writer_lock_at(Path(sys.argv[1])/".codex-review"):\n print("locked",flush=True); sys.stdin.readline()';

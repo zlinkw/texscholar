@@ -35,6 +35,9 @@ function serializeGit(root, action) {
     return task;
 }
 function automaticStatus(root) {return automaticStates.get(root) || {status: 'idle', message: '后台 Git 备份尚无任务'};}
+function savedSourceChanged(error) {
+    try {return JSON.parse(error.message).code === 'saved_source_changed';} catch (_) {return false;}
+}
 async function legacyAutomaticBackup(root, owner, options, report = () => {}, execute = run) {
     const started = performance.now();
     root = fs.realpathSync(root);
@@ -95,7 +98,7 @@ async function legacyAutomaticBackup(root, owner, options, report = () => {}, ex
         throw new Error(value.message);
     }
 }
-async function automaticBackup(root, owner, options, report = () => {}, execute = run, trigger = '保存', afterResume = false, metadata = action => action()) {
+async function automaticBackup(root, owner, options, report = () => {}, execute = run, trigger = '保存', afterResume = false, metadata = action => action(), sourceRetry = false) {
     root = fs.realpathSync(root);
     const started = performance.now();
     const git = (args, input) => execute(options.git || 'git', args, root, input);
@@ -217,6 +220,10 @@ async function automaticBackup(root, owner, options, report = () => {}, execute 
         notify({status:'done',commit:pushed,message:(completed.saved_status?.status === 'done' ? completed.saved_status.message : '已备份 ' + pushed.slice(0,8)) + (compact.compact_error ? '；' + compact.compact_error : '')});
         return {commit:pushed,...compact};
     } catch (error) {
+        if (!local && savedSourceChanged(error) && !sourceRetry) {
+            notify({status:'queued',message:'源码在备份期间更新，正在重新检查已保存版本'});
+            return automaticBackup(root,owner,options,report,execute,trigger,afterResume,metadata,true);
+        }
         const value = {status:'failed', ...(local?.commit ? {commit:local.commit} : {}),
             message:(local?.commit ? '本地提交已保存，远端未确认。' : '') + '后台备份失败：' + error.message};
         try {await helper('saved-event',{action:'failed',...value},true);}
@@ -250,7 +257,7 @@ function enqueueAutomatic(root, owner, options, report = () => {}, execute = run
                 }
             }
         });
-        entry.records = result.then(() => {});
+        entry.records = result.then(() => {}, error => {if (!savedSourceChanged(error)) throw error;});
         entry.records.catch(() => {}); // The owning task observes the same rejection before its next run.
         return result;
     };
