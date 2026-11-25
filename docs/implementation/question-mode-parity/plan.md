@@ -8,11 +8,13 @@
 
 目标是在自动备份与正常保存/接收/后台写入交叠时，保留待备份意图，在可恢复条件满足后以一致版本继续，避免正常竞态反复终止或遗留失败；不得降低源码一致性、未归属提交/远端历史、暂存区、writer锁及真实错误可见性。先按diagnose用真实隔离Git/宿主/队列复现同一错误，再决定最小修法；不预设重试次数、轮询、超时、吞错或直接跳过校验。检查当前saved_commit、saved_job恢复、事件合并及reviewWriter协作，已有保存发生于hook期间的用例和writer等待用例按有效覆盖复用。
 
-- [ ] AB1 原Terra一个完整功能批复现并修复当前可达的源码变化/写入交叠恢复，补齐负责调用方、状态呈现和必要回归。用隔离本地bare仓库及真实Git验证连续保存/接收后最新保存字节最终进入正确提交并推送，工作树新编辑和原index/stage不被覆盖；真实不可恢复冲突仍可见且不误报成功。不要运行含cleanup/完整文件删除的整组backup或finishReview用例，不新增/修改性能测试；新增恢复机制须有本次实际错误和事件依据。
-- [ ] AB2 总控冻结后审实际diff/调用链和局部证据，仅补未覆盖且影响结论的具体组合。若需审核页状态视觉验收，由Terra按silent-ui-screenshot使用私有未切桌面及专属profile/pipe实测，不操作真实窗口或将API冒充点击。
+- [x] AB1 原Terra一个完整功能批复现并修复当前可达的源码变化/写入交叠恢复，补齐负责调用方、状态呈现和必要回归。用隔离本地bare仓库及真实Git验证连续保存/接收后最新保存字节最终进入正确提交并推送，工作树新编辑和原index/stage不被覆盖；真实不可恢复冲突仍可见且不误报成功。不要运行含cleanup/完整文件删除的整组backup或finishReview用例，不新增/修改性能测试；新增恢复机制须有本次实际错误和事件依据。
+- [x] AB2 总控冻结后审实际diff/调用链和局部证据，仅补未覆盖且影响结论的具体组合。若需审核页状态视觉验收，由Terra按silent-ui-screenshot使用私有未切桌面及专属profile/pipe实测，不操作真实窗口或将API冒充点击。
 - [ ] AB3 审核通过后按原已授权流程由原Terra预核下一无冲突版本、必要发行检查、一次构建、正式Release和同一VSIX安装；总控仅核交付元数据并集中结案，不自动重载/重启，不包后冒烟。
 
 总控先写plan/index支持增量，随后移交产品/测试/UI/隔离配置/execution/Git租约给原Terra，停止重叠写测，支持docs随成功完整功能批集中普通提交推送核一致。真实论文D:/Overleaf/TMI-DA-Marked-up Copy、个人资料、state/ledger/批注/候选/三稿和范围外stage只读保护，不实际重试/推送真稿，不删除对象/截图/其他文件、不cleanup、不实网AI、不改全局技能/配置/TeX。必要程序自有锁生命周期沿既有安全契约，涉及删除路径的设计/审查按safe-delete-paths，不扩为文件清理。远端前移或真实权限/Hook拒绝停止相应动作，不reset/rebase/merge/force/改remote。pwsh7、UTF8、Python -B -X utf8；证据D:/latex-writing-checks/review-efficiency-20261122/AB-*，保留完整argv/cwd/env/stdout/stderr/exit及首败。
+
+AB最终审核通过，冻结8e1af4cb1cdca2e90de5f3afc193150489c4aae7，返修0。总控审7文件真实diff、SavedSourceChanged仅发生在创建提交前、一次重取的停止边界与原五分钟/保存事件继续机制、metadata链仅释放可恢复错误及所有Git/暂存/锁保护；未改变自有锁释放路径或引入清理。复用AB-check2八项及AB-host-proof1实际子进程隔离证明，AB-check1默认管道尝试被拒与AB-check2七项重复执行均保留，不重签首败。总控独占controller-ab-recovery.py exit0：先正向核FakeHost，在真实隔离bare/自动队列连续两次快照变化可见失败后停止注入，发起后续真实保存，最终保存字节已提交推送、HEAD==origin/master，工作树及范围外.env.local暂存保持。完整argv/cwd/env/stdout/stderr在D:/latex-writing-checks/review-efficiency-20261122/controller-ab-recovery；无真稿/默认管道/删除。只改状态文字、无布局变化，未新增UI操作。下一步原Terra正式同包交付，AB3仍待元数据核对，不自动重载/重启。
 
 ## AA阶段：左侧活动栏快捷入口
 
