@@ -9,7 +9,7 @@ import zipfile
 from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parent.parent
-RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', 'menu_commands.js',
+RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', 'menu_commands.js', 'quick_actions.js',
            'chktex_actions.js', 'chktex_messages.js', 'chktex_filter.py', 'inline_review.js', 'review_positions.js', 'candidate_panel.js', 'review_pdf.py', 'review_translate.py', 'tools.js',
            'setup.js', 'questions.js', 'writing.js', 'ai_setup.js', 'review_style.js', 'pdf_navigation.js', 'writing-guide.md', 'question-linking-guide.md', 'writing-presets.json',
            'paper.code-snippets', 'document_roles.py', 'document_roles.js', 'source_review.py', 'review_facts.py', 'review_checkpoint.py', 'review_archive.py', 'auto_backup.py',
@@ -91,7 +91,7 @@ def build(output):
     for name in ('review_archive.py', 'review_host_test_support.py', 'review_host_edit.test.js', 'review_host_registry.test.js',
                  'review_host_transaction.test.js', 'review_host_legacy.test.js', 'native_review_test.py', 'source_review_test.py', 'mcp_test.py', 'review_pdf_test.py', 'review_translate_test.py',
                  'document_roles_test.py', 'review_facts_test.py', 'review_excerpts_test.py', 'review_option_migration_test.py', 'review_header_migration_test.py', 'document_roles.test.js', 'inline_review.test.js', 'candidate_panel.test.js', 'review_workbench.test.js', 'review_math.test.js', 'setup.test.js', 'questions.test.js', 'extension.test.js',
-                 'core.test.js', 'backup.test.js', 'menu_commands.test.js', 'navigation.test.js', 'chktex_actions.test.js', 'writing.test.js', 'pdf_navigation.test.js'):
+                 'core.test.js', 'backup.test.js', 'menu_commands.test.js', 'quick_actions.test.js', 'navigation.test.js', 'chktex_actions.test.js', 'writing.test.js', 'pdf_navigation.test.js'):
         sources['src/' + name] = (ROOT / 'src' / name).read_bytes()
     sources['scripts/build.py'] = Path(__file__).read_bytes()
     sources['scripts/check.py'] = (ROOT / 'scripts/check.py').read_bytes()

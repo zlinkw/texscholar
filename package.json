@@ -1065,6 +1065,13 @@
       }
     },
     "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "texscholarTools",
+          "title": "TeXScholar",
+          "icon": "src/review.svg"
+        }
+      ],
       "panel": [
         {
           "id": "texscholarReviews",
@@ -1074,6 +1081,12 @@
       ]
     },
     "views": {
+      "texscholarTools": [
+        {
+          "id": "texscholar.quickActions",
+          "name": "常用功能"
+        }
+      ],
       "texscholarReviews": [
         {
           "id": "texscholar.reviewList",

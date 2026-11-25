@@ -228,6 +228,16 @@ test('hidden compatibility commands remain registered and review aliases open th
         assert.equal(typeof f.handlers.get(id),'function');
 });
 
+test('review list shortcut opens the existing panel or explains a missing paper', async () => {
+    const f=hostFixture(); await f.ui.ready;
+    await f.handlers.get('localLatex.openReviewList')();
+    assert(f.calls.some(call=>call[0]==='texscholar.reviewList.focus'));
+    const empty=hostFixture({tex:false,state:false}); await empty.ui.ready;
+    await empty.handlers.get('localLatex.openReviewList')();
+    assert(empty.notices.some(message=>message.includes('请先打开包含 LaTeX 文件的论文文件夹')));
+    assert(!empty.calls.some(call=>call[0]==='texscholar.reviewList.focus'));
+});
+
 test('compacted closed items do not prevent the pending directory from loading its selected option', async () => {
     const f = hostFixture();
     f.allCards['2'] = {edit:{...structuredClone(f.edit), status:'accepted', versions:[]}};

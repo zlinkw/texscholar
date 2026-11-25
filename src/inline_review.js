@@ -1340,6 +1340,12 @@ function createInlineReview(vscode, context, execute = run) {
         }
     });
     command('localLatex.reviewWorkbench', openWorkbench, true);
+    command('localLatex.openReviewList', async () => {
+        if (!vscode.workspace.isTrusted) throw new Error('请先信任本地论文工作区。');
+        const scope = await discover(true);
+        if (!scope) return vscode.window.showInformationMessage('请先打开包含 LaTeX 文件的论文文件夹。');
+        await enableReview(true);
+    }, true);
     command('localLatex.reviewQuestionDirectory', async target => {
         if (!workbench.active) {
             const group = fileRows.find(row => {
