@@ -285,6 +285,21 @@ function renderText(node, raw, changes, side) {
     models.set(node, math.render(node, raw, changes, side, sourceMode ? 'source' : 'preview', globalThis.katex, models.get(node)));
     rendered.set(node, signature);
 }
+function renderExcerptViews(container, views, conflict) {
+    container.replaceChildren();
+    container.className = 'excerptViews';
+    container.hidden = !(views?.length || conflict);
+    if (conflict) {
+        const warning = document.createElement('small'); warning.className = 'excerptError';
+        warning.textContent = '正文摘录无法读取：' + conflict; container.appendChild(warning);
+    }
+    for (const view of views || []) {
+        const label = document.createElement('small'), text = document.createElement('div');
+        label.textContent = '已保存正文摘录 · ' + view.file + ' · ' + view.block_id;
+        text.className = 'review-text'; container.append(label, text);
+        math.render(text, view.text, [], 'readonly', sourceMode ? 'source' : 'preview', globalThis.katex);
+    }
+}
 function translationSource(key) {
     return key === 'original' ? data.original : key.startsWith('question') ? data.edit.questions?.[Number(key.slice(8))]?.quote : options.find(o => o.label === key)?.after;
 }
@@ -637,7 +652,9 @@ function renderQuestionMode() {
                     questionTranslationControl(reference,entry,'original',undefined,full ? entry.card.original : changedLines(entry.card.original,changes.flat(),'old'));
                     optionNodes.forEach(({option,node},index)=>questionTranslationControl(node,entry,'candidate',option.label,full ? option.after : changedLines(option.after,changes[index],'new')));
                 }
-                card.append(reference,comparison);
+                const excerpts=document.createElement('div');
+                renderExcerptViews(excerpts,entry.card.excerpt_views,entry.card.excerpt_conflict);
+                card.append(reference,excerpts,comparison);
             }
             const open=document.createElement('button');open.className='secondary';open.dataset.action='questionCard';open.dataset.intent='open';open.dataset.questionKey=selectedQuestion;open.dataset.target=entry.id;open.dataset.targetVersion=entry.version;open.textContent='打开本项（段落审核）';
             if (!entry.card) {open.dataset.action='switch';open.textContent='打开本项';}
@@ -706,6 +723,9 @@ function renderReadings() {
     const selectedOption = options.find(o => o.label === preview) || options[0];
     const originalChanges = hasDraft(selectedOption) ? textChanges($('text-' + selectedOption.label), data.original, displayed(selectedOption)) : selectedOption.changes;
     renderText($('original'), data.original, paired ? [] : originalChanges, 'original');
+    let excerpts = $('excerptViews');
+    if (!excerpts) {excerpts = document.createElement('div'); excerpts.id = 'excerptViews'; $('original').after(excerpts);}
+    renderExcerptViews(excerpts, data.excerpt_views, data.excerpt_conflict);
     const manual = options.some(o => o.manually_edited || hasDraft(o));
     $('comparisonNotice').hidden = !paired;
     $('comparisonNotice').textContent = paired ? `${left.label} → ${right.label}：仅突出两个方案之间的差异，不改变 PDF 或接收结果；接收按钮始终对应自己的方案。` : '';
@@ -1333,6 +1353,7 @@ window.addEventListener('message', ({data: message}) => {
         questionTranslations.set(message.displayKey,message); value.draw(); return;
     }
     if (message.type === 'factEvidence') {data.fact_evidence = message.evidence; keepReading(() => {options.forEach(renderOption); renderReadings();}); return;}
+    if (message.type === 'excerptViews') {data.excerpt_views = message.views; data.excerpt_conflict = message.conflict; keepReading(renderReadings); return;}
     if (message.type === 'pdfStatus') {pdfStatus(message.message); return;}
     if (message.type === 'locationStatus') {
         const oldBlock = data.block, changed = oldBlock?.text !== message.block?.text;
@@ -1340,15 +1361,15 @@ window.addEventListener('message', ({data: message}) => {
         if (changed && sourceDirty) sourceDraftStale = true;
         if (changed && options.some(o => drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n'))) candidateDraftStale = true;
         selectedBlockRevision = undefined;
-        data.block = message.block; data.source_match = message.source_match; data.conflict = message.conflict;
+        data.block = message.block; data.source_match = message.source_match; data.conflict = message.conflict; data.excerpt_conflict = message.excerpt_conflict;
         if (data.block && !sourceDraftStale && !sourceDirty) $('blockSource').value = data.block.text.replace(/\r\n/g, '\n');
         $('blockEditor').hidden = !data.block && !sourceDraftStale;
         $('currentBlockPanel').hidden = !data.block || message.source_match !== false && !candidateDraftStale && !sourceDraftStale && !(oldOriginal && $('note').value.trim());
         $('currentBlock').value = data.block?.text.replace(/\r\n/g, '\n') || '';
         $('locationConflict').hidden = message.source_match !== false;
         $('locationConflict').textContent = message.source_match === false ? '正文或审核块需核对：' + message.conflict + '。候选和批注仍保留。' : '';
-        $('syncBlock').hidden = !data.block || message.source_match !== false;
-        $('repairBlock').hidden = current.owner !== '.codex-review/state.json' || !data.edit.block_id || message.source_match !== false;
+        $('syncBlock').hidden = !data.block || message.source_match !== false || !!data.excerpt_conflict;
+        $('repairBlock').hidden = current.owner !== '.codex-review/state.json' || !data.edit.block_id || message.source_match !== false || !!data.excerpt_conflict;
         renderNotes(data.edit.requests || []); draftWarning(); dirty(); return;}
     if (message.type === 'titles') {data.edit.location = message.location; $('title').textContent = current.id + ' · ' + (data.edit.kind === 'response' ? '回复信' : '正文') + ' · ' + (message.location || data.edit.file) + ' · 候选 v' + (data.edit.generation ?? data.edit.versions.length); renderDirectory(message.directory); return;}
     if (message.type === 'titleStatus') {$('titleStatus').textContent = message.message; return;}
@@ -1419,8 +1440,8 @@ window.addEventListener('message', ({data: message}) => {
         pdfStatus(message.pdfStatus);
         $('locationConflict').hidden = data.source_match !== false;
         $('locationConflict').textContent = data.source_match === false ? '正文或审核块需核对：' + data.conflict + '。候选和批注仍保留。' : '';
-        $('syncBlock').hidden = !data.block || data.source_match !== false;
-        $('repairBlock').hidden = current.owner !== '.codex-review/state.json' || !data.edit.block_id || data.source_match !== false;
+        $('syncBlock').hidden = !data.block || data.source_match !== false || !!data.excerpt_conflict;
+        $('repairBlock').hidden = current.owner !== '.codex-review/state.json' || !data.edit.block_id || data.source_match !== false || !!data.excerpt_conflict;
         document.querySelector('[data-action="relocate"]').hidden = current.owner === '.codex-review/state.json';
         $('blockEditor').hidden = !data.block && !sourceDraftStale;
         $('blockSource').value = resume?.blockDraft ?? data.block?.text.replace(/\r\n/g, '\n') ?? '';

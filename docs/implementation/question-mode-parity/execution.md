@@ -8,6 +8,8 @@ Y1 实现与局部验证：最小 `texscholar-excerpt.sty` 读取论文内正文
 
 Y1 提交 `5fbe80cbe03a9663aa1a171f2206150c36dfa6d3`，普通 push 后 fetch 核 HEAD 与 origin/master 相等。Y2 加入显式来源预览、精确转换批准、MCP 写入/查询、无关联猜配的引用身份状态、解释编辑保护、未决候选锚点维护和支持文件同宿主事务创建；支持嵌套回复入口相对项目根路径。`Y2-mcp1` 首败为夹具把实际 CRLF 当 LF；`Y2-mcp3` 首次暴露转换时丢失标记前换行，已修；`Y-checks5` 新根路径检查使用了不存在的 TeX 变体而失败，已修。最终 `Y2-mcp8` 七项、`Y2-host3` 十项、`Y2-regress2` 九项均 exit 0，MCP 预览与应用经隔离 STDIO 进程及 FakeHost，宿主事务另测真实 JS 边界及脏缓冲/恢复；`Y-tex-nested1` 嵌套目录独立 pdflatex exit 0。最新资源的 `Y-checks6`、`Y-multi4`、`Y-negative4` 均 exit 0。实际命令与完整日志保留在对应 Y 路径；尚未完成真实 Development UI、审核渲染、投稿导出和生命周期。
 
+Y2 提交 `50115db6b8389e352e7bbf702d663b5c7b4be2f` 已普通 push/fetch。Y3 审核两模式显示已保存正文摘录及文件/块身份，来源变化刷新且不重置解释草稿；来源失效阻止接收。PDF 从同一快照取引用，默认显示已保存源，选择正文候选时改用该临时版本；正式源码预览不带候选。`Y-final-check1` 实际 PDF、解析及旧消费者八项与 JS 95 项 exit 0。`Y3-ui2` 首次发现初始卡片消息漏传摘录，已修；`Y3-ui3/4` 夹具用首个通用 CSS 选择器误选隐藏空卡，观察器 exit 1，`Y3-ui4/debug.json` 已证明实际卡数据和 DOM；`Y3-ui5` 专属 profile/pipe、私有未切桌面 Development 宿主/观察器/外层 exit 0，Default 前中后 HWND 68312 不变；段落截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-ae34cffe0f0d45d1bccf64f112b0465b.png` 已看。`Y3-ui6` 问题模式滚动到回复摘录截图 `C:/Users/ZLK/AppData/Local/Temp/CodexUiCaptures/ui-d777e91945ce4935b547ff14da95dec8.png` 已看，宿主及观察成功，但外层退出时枚举空桌面返回 false/错误码 0 而 exit 1；不当作外层通过，隔离保护以 ui5 完整通过结果为准。截图均保留，未操作用户窗口或真稿。
+
 | 对照入口母集 | 状态与证据 |
 | --- | --- |
 | 问题身份、导航、未绑定、同名跨文件、目录筛选、前后与返回 | 正常：questionTable 按 id/file/quote 定位，questionEntries 含未绑定；目录与前后项保留。Q 总控 controller1 曾核同 ID 不同 file/quote 不串，M-open-ui-green 核精确项及返回入口。 |

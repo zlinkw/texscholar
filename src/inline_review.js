@@ -452,14 +452,18 @@ function createInlineReview(vscode, context, execute = run) {
         for (const file of files) {
             if (!relevantFile(file)) continue;
             if ([...deferredFiles].some(p => sameFile(file, p))) return true;
-            const raw = await fs.readFile(file), text = raw.toString('utf8').replace(/^\uFEFF/, '');
+            let raw;
+            try {raw = await fs.readFile(file);} catch (error) {if (error.code === 'ENOENT') return true; throw error;}
+            const text = raw.toString('utf8').replace(/^\uFEFF/, '');
             if (sameFile(file, path.join(watchedScope.repo, watchedScope.owner))) {
                 // Compare the actual owner version with the backend packet, or
                 // our own exact write, before starting another Python process.
                 if (text !== ownerAfterWrite && crypto.createHash('sha256').update(raw).digest('hex') !== renderedOwnerHash) return true;
             } else {
                 const cached = [...records.values()].find(r => sameFile(file, path.join(r.c.repo, r.data.edit.file)));
-                if (!cached || cached.data.source.text !== text) return true;
+                const excerpt = latestReviewState?.excerpt_sources && Object.entries(latestReviewState.excerpt_sources)
+                    .find(([rel]) => sameFile(file, path.join(watchedScope.repo, rel)))?.[1];
+                if (cached ? cached.data.source.text !== text : excerpt !== text) return true;
             }
         }
         return false;
@@ -571,8 +575,9 @@ function createInlineReview(vscode, context, execute = run) {
         if (packet) {
             const owner = await fs.readFile(path.join(c.repo, c.owner));
             if (crypto.createHash('sha256').update(owner).digest('hex') !== packet.sha256) packet = undefined;
-            else for (const [file, text] of Object.entries(packet.sources)) {
-                if ((await fs.readFile(path.join(c.repo, file), 'utf8')).replace(/^\uFEFF/, '') !== text) {packet = undefined; break;}
+            else for (const [file, text] of Object.entries({...packet.sources, ...packet.excerpt_sources})) {
+                try {if ((await fs.readFile(path.join(c.repo, file), 'utf8')).replace(/^\uFEFF/, '') !== text) {packet = undefined; break;}}
+                catch (error) {if (error.code !== 'ENOENT') throw error; packet = undefined; break;}
             }
         }
         if (packet && Object.entries(packet.cards).some(([id, data]) => data.diff_reused && oldRecords.get(id)?.data.version !== data.version)) packet = undefined;
@@ -593,6 +598,7 @@ function createInlineReview(vscode, context, execute = run) {
         workbench.backupStatus?.(require('./backup').automaticStatus(c.repo));
         reviewFiles.clear(); deferredFiles.clear();
         for (const edit of Object.values(state.edits)) if (OPEN.has(edit.status)) reviewFiles.add(path.join(c.repo, edit.file));
+        for (const card of Object.values(state.cards)) for (const file of card.excerpt_files || []) reviewFiles.add(path.join(c.repo, file));
         if (batch && batch !== state.session) {
             pdfMetadata.clear();
             previewChoices.clear(); workbenchPDFStatus.clear();
@@ -637,7 +643,8 @@ function createInlineReview(vscode, context, execute = run) {
         const compared = new Set();
         const presentationChanged = oldRecords.size !== records.size || [...records].some(([id, record]) => {
             const previous = oldRecords.get(id);
-            if (!previous || previous.c.version !== record.c.version || JSON.stringify(previous.data.edit.questions) !== JSON.stringify(record.data.edit.questions)) return true;
+            if (!previous || previous.c.version !== record.c.version || JSON.stringify(previous.data.edit.questions) !== JSON.stringify(record.data.edit.questions) ||
+                JSON.stringify(previous.data.excerpt_views) !== JSON.stringify(record.data.excerpt_views) || previous.data.excerpt_conflict !== record.data.excerpt_conflict) return true;
             if (compared.has(record.data.edit.file)) return false;
             compared.add(record.data.edit.file);
             return positions.view(previous.data.source.text)?.body !== positions.view(record.data.source.text)?.body;

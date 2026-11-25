@@ -1787,6 +1787,13 @@ class Review:
                         raise Conflict(f'当前正文失配：审核项 {id_}，文件 {rel}；{error}') from error
                     label = option.get(id_) if isinstance(option, dict) else option
                     if id_ in accept:
+                        if self.sidecar:
+                            from review_excerpts import resolve
+                            row = self.block_row(text, rel, edit['block_id'])
+                            try:
+                                resolve(text[row['start']:row['end']], self.read)
+                            except (ValueError, OSError) as error:
+                                raise Conflict('正文摘录无法读取；未接收：' + str(error)) from error
                         if item.get('options') and label is None:
                             raise Conflict('Choose an explicit option A/B/C before accepting')
                         if label is not None:
@@ -1989,6 +1996,22 @@ class Review:
             result["source_match"] = True
         except Conflict as exc:
             result.update({"source_match": False, "conflict": str(exc)})
+        if self.sidecar and result.get('block'):
+            from review_excerpts import references, resolve
+            result['excerpt_views'], result['excerpt_files'] = [], []
+            try:
+                block_text = result['block']['text']
+                result['excerpt_files'] = list(dict.fromkeys(ref['file'] for ref in references(block_text)))
+                sources = {}
+                def excerpt_source(file):
+                    if file not in sources:
+                        sources[file] = self.read(file)
+                    return sources[file]
+                for ref in resolve(block_text, excerpt_source):
+                    result['excerpt_views'].append({'file':ref['file'], 'block_id':ref['block_id'], 'text':ref['content'],
+                                                    'source_revision':self.source_digest(sources[ref['file']])})
+            except (ValueError, OSError) as error:
+                result.update(source_match=False, conflict='正文摘录无法读取：' + str(error), excerpt_conflict=str(error))
         if source and result["source_match"]:
             raw = self._raw_sources[edit['file']]
             start, end = self.locate_edit(raw if self.sidecar else body(raw), edit, obj)
@@ -2419,7 +2442,7 @@ class Review:
         self.assert_ready()
         self._read_cache = {}
         result = copy.deepcopy(self.state)
-        result.update(sha256=digest(self.raw), cards={}, sources={}, **self.backup_packet())
+        result.update(sha256=digest(self.raw), cards={}, sources={}, excerpt_sources={}, **self.backup_packet())
         for id_, edit in result['edits'].items():
             if edit['status'] not in PENDING:
                 continue
@@ -2436,6 +2459,8 @@ class Review:
             if file in result['sources'] and result['sources'][file] != text:
                 raise Conflict('审核卡片读取期间原文发生变化，请重新打开；未修改正文或决定。')
             result['sources'][file] = text
+            for view in data.get('excerpt_views', []):
+                result['excerpt_sources'][view['file']] = self.read(view['file'])
             result['cards'][id_] = data
         if any(self.path(rel).read_bytes() != raw for rel, raw in self.original.items()):
             raise Conflict('审核卡片读取期间原文发生变化，请重新打开；未修改正文或决定。')

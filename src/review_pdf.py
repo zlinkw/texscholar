@@ -14,6 +14,7 @@ from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, wait
 
 from source_review import Review, PENDING, Conflict, body, locate, digest, writer_lock_at
+from review_excerpts import resolve as resolve_excerpts
 
 ASSETS = {'.tex', '.bib', '.cls', '.sty', '.bst', '.bbx', '.cbx', '.cfg', '.def', '.fd',
           '.map', '.enc', '.tfm', '.otf', '.ttf', '.pdf', '.png', '.jpg', '.jpeg', '.eps', '.svg', '.ps'}
@@ -896,13 +897,20 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
     # The renderer version and tool commands invalidate reuse after upgrades.
     normalized_files = {rel: (formal_source(raw) if source_only else (raw.decode('utf-8-sig') if review.sidecar else body(raw.decode('utf-8-sig'))).encode('utf-8')) if rel.suffix.lower() == '.tex' else raw
                         for rel, raw in files.items()}
-    scope = source_graph(relative, files)
+    render_scope = source_graph(relative, files)
+    excerpt_files = set()
+    for rel in render_scope:
+        text = files[rel].decode('utf-8-sig')
+        for ref in resolve_excerpts(text, lambda name: files[Path(name)].decode('utf-8-sig')):
+            excerpt_files.add(Path(ref['file']))
+    scope = render_scope | excerpt_files
     inputs = {'renderer': digest(Path(__file__).read_bytes()), 'document': relative.as_posix(), 'source_only': source_only,
               'commands': [latexdiff, *DIFF_OPTIONS, latexmk], 'style': appearance,
               'files': {rel.as_posix(): digest(raw) for rel, raw in normalized_files.items()}, 'items': {}, 'compare_id': compare_id}
     located = {}
     for item_id, edit in ([] if source_only else review.state['edits'].items()):
-        if edit['status'] in PENDING and Path(edit['file']) in scope:
+        if (edit['status'] in PENDING and Path(edit['file']) in scope and
+                (Path(edit['file']) in render_scope or item_id == id_)):
             context.update(stage='状态协调', file=edit['file'], id=item_id)
             review.question_links(edit.get('questions', []))
             item = review.payload(edit)
@@ -956,12 +964,25 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
     kind = 'formal-source' if source_only else 'full-paper-sentence-review'
     (out / 'comparison.json').write_text(json.dumps({'kind': kind, 'output': str(out),
                                                    'document': relative.as_posix(), 'status': 'building'}), encoding='utf-8')
-    source_dir = out / 'source'
+    snapshot = out / 'source'
+    working = '__texscholar_preview__' if excerpt_files else ''
+    while working and any(rel.parts[0] == working for rel in files):
+        working += '_'
+    source_dir = snapshot / working
     for rel, raw in files.items():
         destination = source_dir / rel
         destination.parent.mkdir(parents=True, exist_ok=True)
         write_review_file(destination, normalized_files[rel],
-                          previous / 'source' / rel if previous else None)
+                          previous / 'source' / working / rel if previous else None)
+    for rel in excerpt_files:
+        destination = snapshot / rel
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        text = normalized_files[rel].decode('utf-8')
+        edits = [(located[item_id], inputs['items'][item_id]['payload']) for item_id in located
+                 if Path(inputs['items'][item_id]['file']) == rel]
+        for (start, end), item in sorted(edits, key=lambda pair: pair[0][0], reverse=True):
+            text = text[:start] + item['after'] + text[end:]
+        destination.write_text(text, encoding='utf-8', newline='')
     main_raw = files[relative].decode('utf-8-sig')
     main_text = main_raw if review.sidecar else body(main_raw)
     preamble, marker, _ = main_text.partition(r'\begin{document}')
@@ -975,7 +996,8 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
         edit = review.state['edits'][id__]
         rel = Path(edit['file'])
         item = inputs['items'][id__]['payload']
-        grouped.setdefault(rel, []).append({'id': id__, 'start': start, 'end': end, 'item': item, 'deferred': edit.get('deferred', False)})
+        if rel in render_scope:
+            grouped.setdefault(rel, []).append({'id': id__, 'start': start, 'end': end, 'item': item, 'deferred': edit.get('deferred', False)})
     header, reused_fragments = None, 0
     for rel, edits in grouped.items():
         context.update(file=rel.as_posix(), id=','.join(e['id'] for e in edits))
@@ -1059,13 +1081,16 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
                 shown.extend(unit['ids'])
             display = ''.join(chunks)
             reviewed = reviewed[:a] + display + reviewed[b:]
-        write_review_file(source_dir / rel, reviewed.encode('utf-8'), previous / 'source' / rel if previous else None)
-    if header is None and not refresh_accepted and not source_only:
+        write_review_file(source_dir / rel, reviewed.encode('utf-8'), previous / 'source' / working / rel if previous else None)
+    if header is None and not refresh_accepted and not source_only and not any(Path(inputs['items'][item_id]['file']) in excerpt_files for item_id in located):
         raise ValueError('没有可预览的待审正文修改。')
     reviewed_main = (source_dir / relative).read_bytes().decode('utf-8')
     reviewed_body = reviewed_main.partition(r'\begin{document}')[2]
     derived = source_dir / relative.parent / '__codex_inline_review__.tex'
-    derived_text = ('\\PassOptionsToPackage{normalem}{ulem}\n' + header + preview_macros + '\\begin{document}' + with_legend(reviewed_body, preview_legend)) if header else main_text
+    derived_text = ('\\PassOptionsToPackage{normalem}{ulem}\n' + header + preview_macros + '\\begin{document}' + with_legend(reviewed_body, preview_legend)) if header else reviewed_main
+    if excerpt_files:
+        root_override = r'\TSExcerptRoot{' + '../' * (len(relative.parent.parts) + 1) + '}\n'
+        derived_text = derived_text.replace(r'\begin{document}', root_override + r'\begin{document}', 1)
     write_review_file(derived, derived_text.encode('utf-8'),
                       previous / derived.relative_to(out) if previous else None)
     pdf_dir = out / 'pdf'; pdf_dir.mkdir()
@@ -1088,6 +1113,8 @@ def _render(review, document, id_, version, latexdiff, latexmk, differences, sty
             p = p.resolve()
             if p.is_relative_to(source_dir):
                 included.add(p.relative_to(source_dir))
+            elif p.is_relative_to(snapshot) and p.relative_to(snapshot) in excerpt_files:
+                included.add(p.relative_to(snapshot))
             elif not p.is_relative_to(out) and p.is_file():
                 stat = p.stat()
                 dependencies[str(p)] = [stat.st_mtime_ns, stat.st_size]

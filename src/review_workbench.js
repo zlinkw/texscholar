@@ -79,6 +79,7 @@ header{position:sticky;top:0;z-index:2;background:var(--vscode-editor-background
 #layout{display:grid;grid-template-columns:minmax(0,1fr)}main{min-width:0;padding:.4em .65em}h3,h4,p{margin:var(--space) 0}h3{font-size:1.05em}h4{font-size:1em}small,#status,#pdfStatus{color:var(--vscode-descriptionForeground)}#pdfError{padding:.3em .65em;font-size:var(--control-font-size,13px)}#pdfError,#status.error,#appearanceStatus.error{color:var(--vscode-errorForeground)}#pageFeedback:empty,#status:empty,#translateStatus:empty,#fewer:empty,.zh:empty{display:none}
 section{margin:0 0 var(--section-space)}#options,.questionOptions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.55em}article{min-width:0;padding:var(--space);border-radius:.45em;background:var(--vscode-sideBar-background,var(--vscode-editor-background));box-shadow:0 4px 14px #0002,0 1px 3px #0002}article.selected,.questionOption.selected{background:color-mix(in srgb,var(--vscode-editor-background) 60%,var(--vscode-list-activeSelectionBackground) 40%)}article.focused{grid-column:1/-1}article.focused>.optionHeading{position:sticky;top:var(--toolbar-height,2.5em);z-index:1;background:var(--vscode-editor-background);padding:.2em 0}article.folded .detail,article.folded .reason{display:none}
 .review-text{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}:is(.review-text,.zh) .old{color:var(--removed);text-decoration:var(--strike)}:is(.review-text,.zh) .new{color:var(--added)}:is(.review-text,.zh) .same{color:var(--unchanged,inherit)}
+.excerptViews{margin:.55em 0;padding:.45em .6em;border-left:3px solid var(--vscode-focusBorder);background:var(--vscode-editor-background)}.excerptViews small{display:block;overflow-wrap:anywhere}.excerptViews .excerptError{color:var(--vscode-errorForeground)}
 ::highlight(review-location){background:var(--vscode-editor-findMatchHighlightBackground,#e5c07b66);text-decoration:underline}
 ::highlight(review-selection){background:var(--vscode-editor-selectionBackground);color:var(--vscode-editor-selectionForeground,inherit)}
 .zh{font-size:var(--translation-font-size,15px);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:var(--space);border-left:2px solid var(--vscode-panel-border);padding-left:.5em;color:var(--vscode-descriptionForeground)}
@@ -161,7 +162,7 @@ function createWorkbench(vscode, context, services) {
         const set = new Set(active && services.session && context.workspaceState ? postponed(active) : []);
         return services.directory().filter(item => lastRecords.has(item.id)).map(item => {
             const record = lastRecords.get(item.id), unbound = !(record.data.edit.questions || []).length;
-            return {...item, postponed: set.has(item.id), ...(unbound ? {card:{original:record.data.original,options:options(record.data),fact_evidence:record.data.fact_evidence || [],postponed:set.has(item.id)}} : {})};
+            return {...item, postponed: set.has(item.id), ...(unbound ? {card:{original:record.data.original,options:options(record.data),fact_evidence:record.data.fact_evidence || [],excerpt_views:record.data.excerpt_views || [],excerpt_conflict:record.data.excerpt_conflict,postponed:set.has(item.id)}} : {})};
         });
     };
     async function setPostponed(c, value) {
@@ -285,7 +286,7 @@ function createWorkbench(vscode, context, services) {
             return {...row, entries: row.entries.map(entry => {
                 const record = lastRecords.get(entry.id);
                 return record && record.c.version === entry.version ? {...entry, card: {original:record.data.original,
-                    options:options(record.data), fact_evidence:record.data.fact_evidence || [], postponed:postponed(c).includes(entry.id)}} : entry;
+                    options:options(record.data), fact_evidence:record.data.fact_evidence || [], excerpt_views:record.data.excerpt_views || [], excerpt_conflict:record.data.excerpt_conflict, postponed:postponed(c).includes(entry.id)}} : entry;
             }), checked: equal, recheck: previous !== undefined && !equal};
         });
     }
@@ -297,7 +298,7 @@ function createWorkbench(vscode, context, services) {
         if (noteSelectionScope !== scope) {noteSelectionScope = scope; noteItems = [];}
         const {file, kind, block_id, location: originalLocation, display_location, versions, generation, requests, questions, previous_feedback} = loaded.edit;
         const location = display_location || originalLocation;
-        return {type: 'content', c: active, data: {original: loaded.original, source_match: loaded.source_match, conflict: loaded.conflict, block: loaded.block, edit: {file, kind, block_id, location, versions, generation, requests, questions, previous_feedback}, intent: loaded.intent, fulfillment: loaded.fulfillment || [], fact_evidence: loaded.fact_evidence || [], fewer_options_reason: loaded.fewer_options_reason},
+        return {type: 'content', c: active, data: {original: loaded.original, source_match: loaded.source_match, conflict: loaded.conflict, block: loaded.block, edit: {file, kind, block_id, location, versions, generation, requests, questions, previous_feedback}, intent: loaded.intent, fulfillment: loaded.fulfillment || [], fact_evidence: loaded.fact_evidence || [], excerpt_views: loaded.excerpt_views || [], excerpt_conflict: loaded.excerpt_conflict, fewer_options_reason: loaded.fewer_options_reason},
             options: options(loaded), directory: directory(), session, batchItems, noteItems, feedbackRows: services.feedbackRows?.(active) || [], navigationFilter, style: services.style(), toolbar, stashes: storedDrafts(active), questions: questionTable(active),
             sourceSelection, resume: uiState, reading, mode: context.globalState?.get('reviewMode', 'paragraph') || 'paragraph', questionViewStyle:context.globalState?.get('reviewQuestionViewStyle','snippets') || 'snippets',
             questionPosition: services.session?.(active) && services.session(active) === context.workspaceState?.get('reviewQuestionPosition', {})[JSON.stringify([active.repo,active.owner])]?.session
@@ -534,11 +535,13 @@ function createWorkbench(vscode, context, services) {
         if (next.c.version === active.version) {
             const questionsChanged = JSON.stringify(loaded.edit.questions) !== JSON.stringify(next.data.edit.questions);
             const evidenceChanged = JSON.stringify(loaded.fact_evidence) !== JSON.stringify(next.data.fact_evidence);
+            const excerptsChanged = JSON.stringify(loaded.excerpt_views) !== JSON.stringify(next.data.excerpt_views) || loaded.excerpt_conflict !== next.data.excerpt_conflict;
             const locationChanged = loaded.source_match !== next.data.source_match || loaded.conflict !== next.data.conflict ||
                 JSON.stringify(loaded.block) !== JSON.stringify(next.data.block);
             loaded = next.data;
+            if (excerptsChanged) post({type:'excerptViews', views:loaded.excerpt_views || [], conflict:loaded.excerpt_conflict});
             if (evidenceChanged) post({type:'factEvidence', evidence:loaded.fact_evidence || []});
-            if (locationChanged) post({type:'locationStatus', source_match:loaded.source_match, conflict:loaded.conflict, block:loaded.block});
+            if (locationChanged) post({type:'locationStatus', source_match:loaded.source_match, conflict:loaded.conflict, excerpt_conflict:loaded.excerpt_conflict, block:loaded.block});
             post({type: 'notes', requests: loaded.edit.requests || [], previous_feedback: loaded.edit.previous_feedback, questions: loaded.edit.questions || []});
             if (questionsChanged) autoTranslate();
         } else if (synchronized.has(active.id)) {
