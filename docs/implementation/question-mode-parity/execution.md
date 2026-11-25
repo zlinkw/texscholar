@@ -6,6 +6,8 @@ Y1 隔离探索：`D:/latex-writing-checks/review-efficiency-20261122/Y-tex-prob
 
 Y1 实现与局部验证：最小 `texscholar-excerpt.sty` 读取论文内正文文件和固定块，引用处独立分组，恢复非页码计数器并屏蔽重复 label/目录/锚点；按原生 TeX 源读取，引用嵌套、路径异常、缺源、缺块、重复或损坏标记报错。`review_excerpts.py` 为消费者提供有序解析和当前源解析；运行资源纳入构建清单。首次 `Y-checks1` 的像素对照 exit 1，发现空行段落被合并；修正重扫描末行字符后，最终 `Y-checks4` 实际 pdflatex 禁 shell escape 两遍及 pdftoppm 逐像素对照 exit 0，覆盖正文词间空格、注释后续行、空段、公式、颜色、引用、文献引用、图表、中文及空格来源路径，核计数器恢复、无重复 label 而 citation 保留。`Y-multi3` exit 0 覆盖多源顺序与同源红蓝独立样式；`Y-negative3` 六种缺失、重复、损坏、嵌套及越界错误均以非零和块身份可见失败；`Y-python2` 四项 exit 0。完整实际命令与原日志在 `D:/latex-writing-checks/review-efficiency-20261122/Y-*`；未触真实论文，后续受保护写入、双模式审核和导出尚待完成，不能把 Y1 局部结果当整阶段完成。
 
+Y1 提交 `5fbe80cbe03a9663aa1a171f2206150c36dfa6d3`，普通 push 后 fetch 核 HEAD 与 origin/master 相等。Y2 加入显式来源预览、精确转换批准、MCP 写入/查询、无关联猜配的引用身份状态、解释编辑保护、未决候选锚点维护和支持文件同宿主事务创建；支持嵌套回复入口相对项目根路径。`Y2-mcp1` 首败为夹具把实际 CRLF 当 LF；`Y2-mcp3` 首次暴露转换时丢失标记前换行，已修；`Y-checks5` 新根路径检查使用了不存在的 TeX 变体而失败，已修。最终 `Y2-mcp8` 七项、`Y2-host3` 十项、`Y2-regress2` 九项均 exit 0，MCP 预览与应用经隔离 STDIO 进程及 FakeHost，宿主事务另测真实 JS 边界及脏缓冲/恢复；`Y-tex-nested1` 嵌套目录独立 pdflatex exit 0。最新资源的 `Y-checks6`、`Y-multi4`、`Y-negative4` 均 exit 0。实际命令与完整日志保留在对应 Y 路径；尚未完成真实 Development UI、审核渲染、投稿导出和生命周期。
+
 | 对照入口母集 | 状态与证据 |
 | --- | --- |
 | 问题身份、导航、未绑定、同名跨文件、目录筛选、前后与返回 | 正常：questionTable 按 id/file/quote 定位，questionEntries 含未绑定；目录与前后项保留。Q 总控 controller1 曾核同 ID 不同 file/quote 不串，M-open-ui-green 核精确项及返回入口。 |

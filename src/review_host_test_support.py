@@ -63,6 +63,18 @@ class FakeHostSession:
         for index, rel in enumerate(state['transaction'].get('checks', [])):
             if (self.root / rel).read_bytes() != obj[f'check-{index}']:
                 raise HostError('fixture check changed')
+        resources = []
+        for index, rel in enumerate(state['transaction'].get('created', [])):
+            path, after = self.root / rel, obj[f'resource-{index}-new']
+            if Path(rel).name != 'texscholar-excerpt.sty' or '..' in Path(rel).parts or path.is_symlink():
+                raise HostError('fixture resource path')
+            if path.exists() and not (recover and path.is_file() and path.read_bytes() == after):
+                raise HostError('fixture resource changed')
+            resources.append((path, after))
+        for path, after in resources:
+            if not path.exists():
+                with path.open('xb') as stream:
+                    stream.write(after)
         for path, actual, after in files:
             if actual != after:
                 self.write(path, after)

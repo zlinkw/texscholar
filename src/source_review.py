@@ -70,6 +70,14 @@ class Conflict(ValueError):
     pass
 
 
+def protect_excerpt_slots(text, start, end, replacement):
+    from review_excerpts import protect
+    try:
+        protect(text, start, end, replacement)
+    except ValueError as error:
+        raise Conflict(str(error)) from error
+
+
 class SyncConflict(Conflict):
     """An individual saved item needs author reconciliation."""
 
@@ -377,6 +385,8 @@ class Review:
         else:
             self.interrupted = False
         self.original = {}
+        self.resource_original = {}
+        self.new_resources = {}
         self.question_original = {}
         self.evidence_original = {}
         self._objects = {}
@@ -465,6 +475,167 @@ class Review:
         if text not in self._source_digests:
             self._source_digests[text] = digest(text.encode('utf-8'))
         return self._source_digests[text]
+
+    def prepare_excerpt_support(self, document):
+        """Include the shipped paper source resource in the same host transaction."""
+        path = self.path(document).parent / 'texscholar-excerpt.sty'
+        relative = path.relative_to(self.repo).as_posix()
+        expected = (Path(__file__).resolve().parent / path.name).read_bytes()
+        if path.is_symlink() or path.is_junction():
+            raise Conflict('摘录支持文件不能是链接。')
+        if path.exists():
+            if not path.is_file() or path.read_bytes() != expected:
+                raise Conflict('摘录支持文件已存在但内容不同；请先人工核对。')
+            self.resource_original[relative] = expected
+        else:
+            self.new_resources[relative] = expected
+
+    def prepare_excerpt(self, spec, roles, apply=False):
+        """Preview or write an explicit, version-checked reference in a response block."""
+        from review_excerpts import references, resolve, safe_source
+        self.assert_ready()
+        if not self.sidecar or roles.get('status') != 'confirmed':
+            raise Conflict('动态摘录需要外置审核状态和已确认的论文文件角色。')
+        entries = {item['file']: item for item in roles['files']}
+        target = spec.get('file')
+        entry = entries.get(target, {})
+        document = entry.get('root')
+        if 'response' not in entry.get('roles', []) or 'template' in entry.get('roles', []) or not document:
+            raise Conflict('请先确认回复文件和唯一编译入口。')
+        target_text = self.read(target)
+        root_text = self.read(document)
+        if spec.get('source_revision') != self.source_digest(target_text) or spec.get('root_revision') != self.source_digest(root_text):
+            raise Conflict('回复文件或编译入口已变化；请重新预览。')
+        block_id = spec.get('block_id')
+        registered = self.state.get('blocks', {}).get(block_id)
+        if not registered or registered['file'] != target:
+            raise Conflict('请指定回复文件中已登记的固定块。')
+        row = self.block_row(target_text, target, block_id)
+        if row['kind'] != registered['kind']:
+            raise Conflict('回复块类型与登记不一致。')
+        start, end = spec.get('start'), spec.get('end')
+        if type(start) is not int or type(end) is not int or not row['start'] <= start <= end <= row['end']:
+            raise Conflict('摘录范围必须在指定回复块内。')
+        old = target_text[start:end]
+        if old != spec.get('before') or '% TS-BLOCK-' in old:
+            raise Conflict('摘录选区已变化或跨越固定块；请重新预览。')
+        mode, sources = spec.get('mode'), spec.get('sources')
+        if mode not in ('insert', 'convert', 'update') or not isinstance(sources, list) or not sources:
+            raise Conflict('请明确插入、转换或更新及有序来源。')
+        if mode == 'insert' and start != end or mode == 'convert' and not old:
+            raise Conflict('插入需要空选区；转换需要原有摘录。')
+        slots = references(target_text)
+        overlapping = [slot for slot in slots if max(start, slot['start']) < min(end, slot['end']) or
+                       start == end and slot['start'] < start < slot['end']]
+        if mode == 'update':
+            if not overlapping or old != ''.join(slot['reference'] for slot in overlapping):
+                raise Conflict('更新范围必须精确覆盖完整摘录引用。')
+        elif overlapping:
+            raise Conflict('选区包含既有摘录引用；请使用更新入口。')
+        pending_spans = []
+        for id_, edit in self.state['edits'].items():
+            if edit['file'] != target or edit['status'] not in PENDING:
+                continue
+            a, b = self.locate_edit(target_text, edit)
+            if max(a, start) < min(b, end) or start == end and a <= start <= b or a == b and start <= a <= end:
+                raise Conflict('摘录选区与待审项 ' + id_ + ' 重叠；请先处理该项。')
+            pending_spans.append((edit, a, b))
+        refs, parts = [], []
+        for source in sources:
+            if not isinstance(source, dict):
+                raise Conflict('摘录来源格式无效。')
+            file = safe_source(source.get('file', ''))
+            source_entry = entries.get(file, {})
+            if not {'manuscript', 'chapter'}.intersection(source_entry.get('roles', [])) or 'template' in source_entry.get('roles', []):
+                raise Conflict('摘录来源不是已确认的正文文件：' + file)
+            text = self.read(file)
+            if source.get('source_revision') != self.source_digest(text):
+                raise Conflict('摘录来源已变化：' + file)
+            identity = source.get('block_id')
+            source_block = self.state.get('blocks', {}).get(identity)
+            if not source_block or source_block.get('file') != file:
+                raise Conflict('摘录来源不是已登记的正文块：' + str(identity))
+            block = self.block_row(text, file, identity)
+            if block['kind'] != source_block['kind']:
+                raise Conflict('摘录来源块类型与登记不一致：' + identity)
+            if file == target and (max(start, block['start']) < min(end, block['end']) or
+                                   start == end and block['start'] <= start <= block['end']):
+                raise Conflict('摘录不能引用包含自身的正文块。')
+            ref = r'\TSExcerpt{' + file + '}{' + identity + '}'
+            try:
+                content = resolve(ref, lambda _: text)[0]['content']
+            except ValueError as error:
+                raise Conflict(str(error)) from error
+            refs.append(ref)
+            parts.append({'file': file, 'block_id': identity, 'source_revision': source['source_revision'], 'text': content})
+        if mode == 'convert':
+            def logical_text(value):
+                value = value.replace('\r\n', '\n')
+                return value[:-1] if value.endswith('\n') else value
+            if logical_text(old) != logical_text(''.join(part['text'] for part in parts)):
+                raise Conflict('原有摘录与指定正文不逐字一致；保留原文，请确认具体位置。')
+        replacement = ''.join(refs)
+        if mode == 'convert' and old.endswith('\n'):
+            replacement += '\r\n' if old.endswith('\r\n') else '\n'
+        elif mode == 'insert' and (start == 0 or target_text[start-1] == '\n') and target_text.startswith('% TS-BLOCK-', start):
+            replacement += '\r\n' if '\r\n' in target_text else '\n'
+        updated = {target: target_text[:start] + replacement + target_text[end:]}
+        inserted = [item for item in references(updated[target]) if start <= item['start'] < start + len(replacement)]
+        if [item['reference'] for item in inserted] != refs or not inserted or inserted[0]['start'] != start:
+            raise Conflict('摘录位置处于注释、verbatim 或不可分割的 TeX 命令内。')
+        changed_root = updated.get(document, root_text)
+        masked = list(changed_root)
+        pos = 0
+        while pos < len(changed_root):
+            if changed_root[pos] == '\\':
+                match = re.match(r'\\(?:[A-Za-z@]+|.)', changed_root[pos:])
+                pos += len(match.group()) if match else 1
+            elif changed_root[pos] == '%':
+                stop = changed_root.find('\n', pos)
+                stop = len(changed_root) if stop < 0 else stop
+                masked[pos:stop] = ' ' * (stop-pos)
+                pos = stop
+            else:
+                pos += 1
+        visible = ''.join(masked)
+        begins = list(re.finditer(r'\\begin\s*\{document\}', visible))
+        if len(begins) != 1:
+            raise Conflict('编译入口没有唯一的 document 环境；请人工核对。')
+        preamble, position = visible[:begins[0].start()], begins[0].start()
+        packages = re.findall(r'\\usepackage\s*(?:\[[^\]]*\]\s*)?\{([^{}]+)\}', preamble)
+        installed = any('texscholar-excerpt' in package.split(',') for package in packages)
+        base = '../' * len(Path(document).parent.parts)
+        roots = re.findall(r'\\TSExcerptRoot\s*\{([^{}]*)\}', preamble)
+        if len(roots) > 1 or roots and roots[0] != base:
+            raise Conflict('编译入口的摘录根路径不一致；请人工核对。')
+        additions = ([] if installed else [r'\usepackage{texscholar-excerpt}']) + ([] if roots or not base else [r'\TSExcerptRoot{' + base + '}'])
+        if additions:
+            eol = '\r\n' if '\r\n' in root_text else '\n'
+            preamble_change = eol.join(additions) + eol
+            updated[document] = changed_root[:position] + preamble_change + changed_root[position:]
+        self.prepare_excerpt_support(document)
+        evidence = {'file': target, 'block_id': block_id, 'start': start, 'end': end, 'before': old,
+                    'source_revision': spec['source_revision'], 'document': document,
+                    'root_revision': spec['root_revision'], 'sources': parts, 'replacement': replacement, 'mode': mode}
+        approval = digest(json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8'))
+        if apply and mode == 'convert' and spec.get('approved_preview') != approval:
+            raise Conflict('转换旧摘录需要作者明确确认当前精确来源预览。')
+        for edit, a, b in pending_spans:
+            shift = len(replacement) - (end - start) if a >= end else 0
+            a, b = a + shift, b + shift
+            if additions and document == target and position <= a:
+                a, b = a + len(preamble_change), b + len(preamble_change)
+            self.bind(edit, updated[target], a, b)
+        projection = self.state.get('auto_backup_projection', self.state['accepted'])
+        round_files = self.state['rounds'][-1]['files']
+        changed_files = [file for file in updated if file in round_files]
+        if (not self.state.get('auto_backup_projection_error') and
+                all(self.contents(projection, file) == self.read(file) for file in changed_files)):
+            files = {file: (updated[file] if file in updated else self.contents(projection, file)).encode('utf-8')
+                     for file in round_files}
+            self.state['auto_backup_projection'] = self.snapshot(files, 'accepted projection excerpt reference')
+        return updated, {**evidence, 'preview_id': approval, 'support_added': list(self.new_resources),
+                         'preamble_added': additions, 'accepted': False}
 
     def locate_edit(self, text, edit, item=None):
         started = time.perf_counter()
@@ -620,6 +791,7 @@ class Review:
             raise Conflict('原文不能包含审核标记，且必须保留标记前的换行。')
         if row['kind'] not in ('slot', 'question'):
             validate_review_unit(replacement)
+        protect_excerpt_slots(text, row['start'], row['end'], replacement)
         if text[row['start']:row['end']] == replacement:
             return {}, {'id': id_, 'block_id': block_id, 'changed': False}
         return {edit['file']: text[:row['start']] + replacement + text[row['end']:]}, {
@@ -1309,6 +1481,8 @@ class Review:
             raise Conflict('候选范围和内容不能包含固定审核块标记。')
         if any(marker in value for value in [before, after, *[o['after'] for o in options or []]] for marker in (ROLE_BEGIN, ROLE_END)):
             raise Conflict('不能把文件角色登记混入正文候选。')
+        for replacement in ([o['after'] for o in options] if options else [after]):
+            protect_excerpt_slots(text, a, b, replacement)
         if (not options and (before == after or (rework and old["after"] == after))) or (options and all(o['after'] == original for o in options)):
             raise Conflict("No content change")
         if rework and options and options == old.get('options') and manual_anchor is None and spec.get('fact_evidence', old.get('fact_evidence', [])) == old.get('fact_evidence', []):
@@ -1640,6 +1814,7 @@ class Review:
                     replacement = item['after'] if id_ in accept else item['before']
                     if id_ in accept and ('% TS-BLOCK-' in replacement or '% TS-BLOCK-' in text[a:b]):
                         raise Conflict('候选包含固定审核块标记；未接收。')
+                    protect_excerpt_slots(text, a, b, replacement)
                     if edit.get('deferred', False) or id_ in reject:
                         operations.setdefault(rel, []).append((a, b, replacement, id_))
                     spans[id_] = (a, b)
@@ -2107,6 +2282,8 @@ class Review:
             raise Conflict('Concurrent source/state modification; no source writes')
         if any(self.question_source(p) != raw for p, raw in self.question_original.items()):
             raise Conflict('Concurrent reviewer-question source modification; no source writes')
+        if any((self.repo / p).read_bytes() != raw for p, raw in self.resource_original.items()) or any((self.repo / p).exists() or (self.repo / p).is_symlink() for p in self.new_resources):
+            raise Conflict('摘录支持文件已变化；未写入正文。')
         self.verify_evidence_sources()
         if not targets:
             self.write(self.state_path, self.state_bytes())
@@ -2118,6 +2295,8 @@ class Review:
                 for i, (rel, raw) in enumerate(targets.items()):
                     intent_files[f'{i}-old'] = self.original[rel]
                     intent_files[f'{i}-new'] = raw
+                for i, (_, raw) in enumerate(self.new_resources.items()):
+                    intent_files[f'resource-{i}-new'] = raw
                 target_paths = {os.path.normcase(str(self.path(rel))) for rel in targets}
                 checks = {}
                 for rel, raw in list(self.original.items()) + list(self.question_original.items()):
@@ -2126,17 +2305,23 @@ class Review:
                         if identity in checks and checks[identity][1] != raw:
                             raise Conflict('Concurrent reviewer-question source modification')
                         checks[identity] = (rel, raw)
+                for rel, raw in self.resource_original.items():
+                    checks[os.path.normcase(str(self.repo / rel))] = (rel, raw)
                 for i, (_, raw) in enumerate(checks.values()):
                     intent_files[f'check-{i}'] = raw
                 intent = self.snapshot(intent_files, 'review transaction recovery')
                 final_raw = self.state_bytes()
                 self.state['transaction'] = {'commit': intent, 'files': list(targets),
                                              'checks': [rel for rel, _ in checks.values()], 'owner': False}
+                if self.new_resources:
+                    self.state['transaction']['created'] = list(self.new_resources)
                 intent_raw = self.state_bytes()
                 if (self.state_path.exists() if self.new_sidecar else self.state_path.read_bytes() != self.raw) or any(self.path(p).read_bytes() != raw for p, raw in self.original.items()):
                     raise Conflict('Concurrent source/state modification; no source writes')
                 if any(self.question_source(p) != raw for p, raw in self.question_original.items()):
                     raise Conflict('Concurrent reviewer-question source modification; no source writes')
+                if any((self.repo / p).read_bytes() != raw for p, raw in self.resource_original.items()) or any((self.repo / p).exists() or (self.repo / p).is_symlink() for p in self.new_resources):
+                    raise Conflict('摘录支持文件已变化；未写入正文。')
                 host.check()
                 self.write(self.state_path, intent_raw)
                 host.apply(digest(intent_raw), intent, final_raw)

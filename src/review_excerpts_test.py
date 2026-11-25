@@ -1,6 +1,6 @@
 import unittest
 
-from review_excerpts import references, resolve, safe_source
+from review_excerpts import protect, references, resolve, safe_source
 
 ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 REF = r'\TSExcerpt{正文/one.tex}{' + ID + '}'
@@ -35,6 +35,15 @@ class ExcerptTests(unittest.TestCase):
         self.assertEqual(safe_source('正文/file space.tex'), '正文/file space.tex')
         with self.assertRaisesRegex(ValueError, '嵌套'):
             resolve(REF, lambda _: SOURCE.replace('Saved text.', REF))
+
+    def test_explanation_edits_preserve_reference_slot(self):
+        text = 'Before ' + REF + ' after.'
+        protect(text, 0, len(text), 'Revised ' + REF + ' after.')
+        for replacement in ('Before deleted after.', 'Before ' + REF.replace(ID, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc') + ' after.'):
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                protect(text, 0, len(text), replacement)
+        with self.assertRaises(ValueError):
+            protect(text, text.index(REF) + 1, text.index(REF) + 4, 'changed')
 
 
 if __name__ == '__main__':

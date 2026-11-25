@@ -41,6 +41,11 @@ RULE_MODULES = ['core', 'writing', 'abstract', 'introduction', 'method', 'experi
 MODULES = {'type': 'array', 'items': {'type': 'string', 'enum': RULE_MODULES}}
 RULES = {'modules': MODULES, 'known_rules': schema({'version': STRING, 'modules': MODULES}, ['version', 'modules'])}
 SCOPES = {'type': 'array', 'items': schema({'file': STRING, 'quote': STRING, 'section': STRING, 'left': STRING, 'right': STRING}, ['file'])}
+EXCERPT_SOURCE = schema({'file':STRING, 'block_id':STRING, 'source_revision':STRING}, ['file','block_id','source_revision'])
+EXCERPT_SPEC = schema({'file':STRING, 'block_id':STRING, 'start':{'type':'integer'}, 'end':{'type':'integer'}, 'before':STRING,
+    'source_revision':STRING, 'root_revision':STRING, 'mode':{'type':'string','enum':['insert','convert','update']},
+    'sources':{'type':'array','minItems':1,'items':EXCERPT_SOURCE}, 'approved_preview':STRING},
+    ['file','block_id','start','end','before','source_revision','root_revision','mode','sources'])
 FEEDBACK_RECEIPTS = {'type': 'array', 'items': schema({'id': STRING, 'version': STRING, 'fingerprint': STRING}, ['id', 'version', 'fingerprint'])}
 REFERENCES = {'type': 'array', 'items': schema({'kind': {'type': 'string', 'enum': ['label', 'citation', 'macro']}, 'key': STRING, 'files': STRINGS}, ['kind', 'key', 'files'])}
 FULFILLMENT = schema({'request': STRING, 'request_version': STRING, 'request_text': STRING,
@@ -84,6 +89,8 @@ TOOLS = [
          'start': {'type': 'integer'}, 'end': {'type': 'integer'}, 'source_revision': STRING, 'block_id': STRING,
          'questions': {'type': 'array', 'items': QUESTION}},
          ['file', 'kind', 'start', 'end', 'source_revision'])}, ['project', 'state', 'expected_sha256', 'spec']), False),
+    ('prepare_excerpt', 'Preview explicit ordered source blocks for a reply. Insert or update only with exact current source and state revisions. Converting copied text requires the author to confirm the exact preview_id; never infer a mapping.',
+     schema({**WRITE, 'apply':{'type':'boolean','default':False}, 'spec':EXCERPT_SPEC}, ['project','state','expected_sha256','spec']), False),
     ('reassociate_block', 'Preview explicit repair of missing markers or reassociation of a uniquely moved block. Apply only after author confirmation.',
      schema({**WRITE, 'apply':{'type':'boolean','default':False}, 'spec':schema({'block_id':STRING, 'file':STRING, 'source_revision':STRING, 'restore':{'type':'boolean'},
                                     'start':{'type':'integer'}, 'end':{'type':'integer'}}, ['block_id','file','source_revision'])},
@@ -395,6 +402,7 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
         result['sources'][file] = [{'start': start, 'end': end, 'text': read(file)[start:end]} for start, end in merged]
     if review.sidecar:
         from review_blocks import index
+        from review_excerpts import references, resolve
         result['source_revisions'] = {file: review.source_digest(text) for file, text in texts.items()}
         result['blocks'], result['block_conflicts'] = {}, {}
         for file, text in texts.items():
@@ -416,6 +424,44 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
                 result['blocks'][file] = rows
             except ValueError as error:
                 result['block_conflicts'][file] = str(error)
+        selected_blocks, selected_ranges = set(), {}
+        for id_ in targets:
+            edit = edits[id_]
+            if edit.get('block_id'):
+                selected_blocks.add((edit['file'], edit['block_id']))
+                try:
+                    row = review.block_row(read(edit['file']), edit['file'], edit['block_id'])
+                    selected_ranges.setdefault(edit['file'], []).append((row['start'], row['end']))
+                except Conflict as error:
+                    result['block_conflicts'][edit['file']] = str(error)
+        for selection in selections:
+            selected_ranges.setdefault(selection['file'], []).append((selection['start'], selection['end']))
+            try:
+                for row in index(read(selection['file'])).values():
+                    if max(row['start'], selection['start']) < min(row['end'], selection['end']) or selection['start'] == selection['end'] and row['start'] <= selection['start'] <= row['end']:
+                        selected_blocks.add((selection['file'], row['id']))
+            except ValueError as error:
+                result['block_conflicts'][selection['file']] = str(error)
+        result['excerpt_links'], result['excerpt_conflicts'] = [], {}
+        for entry in roles.get('files', []):
+            if 'response' not in entry.get('roles', []) or 'template' in entry.get('roles', []):
+                continue
+            reply = entry['file']
+            try:
+                for ref in references(read(reply)):
+                    relevant_reply = reply in full_files or any(max(a, ref['start']) < min(b, ref['end']) or a == b and ref['start'] <= a <= ref['end'] for a, b in selected_ranges.get(reply, []))
+                    if not (relevant_reply or ref['file'] in full_files or (ref['file'], ref['block_id']) in selected_blocks):
+                        continue
+                    link = {'reply': reply, 'start': ref['start'], 'end': ref['end'], 'file': ref['file'], 'block_id': ref['block_id']}
+                    try:
+                        resolve(ref['reference'], read)
+                        link['status'] = 'current'
+                    except ValueError as error:
+                        link.update(status='conflict', error=str(error))
+                    result['excerpt_links'].append(link)
+            except ValueError as error:
+                result['excerpt_conflicts'][reply] = str(error)
+        result['source_revisions'] = {file: review.source_digest(text) for file, text in texts.items()}
     result['author_comments'] = comment_context(texts, spans, roles)
     result['author_comments']['global'] = {file: value for file, value in result['author_comments']['global'].items() if file in full_files}
     verify_read(review)
@@ -575,7 +621,7 @@ class Server:
         if name == 'read_feedback':
             packet = feedback_packet(review, args.get('ids'))
             return {**packet, 'plugin_version': VERSION}
-        if name not in {'begin_review', 'prepare_block', 'reassociate_block', 'sync_block', 'propose_options', 'rework_options', 'link_questions', 'relocate_options', 'reject_options'}:
+        if name not in {'begin_review', 'prepare_block', 'prepare_excerpt', 'reassociate_block', 'sync_block', 'propose_options', 'rework_options', 'link_questions', 'relocate_options', 'reject_options'}:
             raise Conflict('Unknown or unavailable AI tool; decisions remain author actions')
         for key in ['expected_sha256', *(['id', 'version'] if name in ('rework_options', 'link_questions', 'relocate_options', 'reject_options', 'sync_block') else []),
                     *(['source_revision'] if name == 'sync_block' else [])]:
@@ -595,7 +641,7 @@ class Server:
                 spec = {**spec, 'questions': [*spec.get('questions', []), *links['questions']]}
             # Preview and locked persistence consume this same normalized spec.
             args = {**args, 'spec': spec}
-        apply = args.get('apply', False if name == 'reassociate_block' else True)
+        apply = args.get('apply', False if name in ('reassociate_block', 'prepare_excerpt') else True)
         if type(apply) is not bool:
             raise Conflict('apply must be boolean')
         def mutate(r):
@@ -617,6 +663,9 @@ class Server:
                 if apply and not args['spec'].get('block_id'):
                     raise Conflict('Apply requires the block ID from the preview')
                 updated, result = r.prepare_block(args['spec'])
+            elif name == 'prepare_excerpt':
+                actual_roles = scan_roles(root, self.registrations.parent)
+                updated, result = r.prepare_excerpt(args['spec'], actual_roles, apply)
             elif name == 'reassociate_block':
                 updated, result = r.reassociate_block(args['spec'])
             elif name == 'sync_block':

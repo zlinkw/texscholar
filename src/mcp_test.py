@@ -15,6 +15,108 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_excerpt_insert_uses_nested_document_root_and_guarded_resource(self):
+        fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
+        state = '.codex-review/state.json'
+        nested = self.root/'response'; nested.mkdir()
+        (nested/'reply.tex').write_text('\\documentclass{article}\n\\begin{document}\nThank you.\n\\end{document}\n', encoding='utf-8')
+        def review(): return fixtures.Review(self.root,state,'missing-git')
+        r=review(); updated,_=r.begin('round-2',['main.tex','response/reply.tex']); r.persist(updated,digest(r.raw))
+        ids={}
+        for name, needle in [('main.tex','The model'),('response/reply.tex','Thank you.')]:
+            r=review(); text=r.read(name); start=text.index(needle); end=text.index('\n',start)+1
+            updated,row=r.prepare_block({'file':name,'kind':'paragraph','start':start,'end':end,'source_revision':r.source_digest(text)})
+            r.persist(updated,digest(r.raw)); ids[name]=row['block_id']
+        r=review(); reply=r.read('response/reply.tex'); main=r.read('main.tex'); position=reply.index('Thank you.')+len('Thank you.')
+        spec={'file':'response/reply.tex','block_id':ids['response/reply.tex'],'start':position,'end':position,'before':'',
+              'source_revision':r.source_digest(reply),'root_revision':r.source_digest(reply),'mode':'insert',
+              'sources':[{'file':'main.tex','block_id':ids['main.tex'],'source_revision':r.source_digest(main)}]}
+        roles={'status':'confirmed','files':[{'file':'main.tex','roles':['manuscript'],'root':'main.tex'},
+            {'file':'response/reply.tex','roles':['response'],'root':'response/reply.tex'}]}
+        server=self.server(); args={'project':str(self.root),'state':state,'expected_sha256':digest(r.raw),'spec':spec}
+        with patch('mcp_server.scan_roles',return_value=roles):
+            preview=server.call('prepare_excerpt',args)
+            self.assertFalse(preview['applied'])
+            result=server.call('prepare_excerpt',{**args,'apply':True})
+        self.assertTrue(result['applied'])
+        saved=(nested/'reply.tex').read_text(encoding='utf-8')
+        self.assertIn('\\TSExcerptRoot{../}',saved)
+        self.assertIn('\\TSExcerpt{main.tex}{'+ids['main.tex']+'}',saved)
+        self.assertTrue((nested/'texscholar-excerpt.sty').is_file())
+
+    def test_explicit_excerpt_conversion_preserves_source_and_requires_exact_preview(self):
+        fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
+        state = '.codex-review/state.json'
+        def review(): return fixtures.Review(self.root, state, 'missing-git')
+        source = review(); text = source.read('main.tex')
+        start = text.index('The model'); end = text.index('\n', start) + 1
+        updated, source_block = source.prepare_block({'file':'main.tex', 'kind':'paragraph', 'start':start, 'end':end,
+            'source_revision':source.source_digest(text)})
+        source.persist(updated, digest(source.raw))
+        reply = self.root / 'reply.tex'
+        reply.write_text(reply.read_text(encoding='utf-8').replace('Thank you.\n', 'Thank you.\nThe model is strong and fast.\n'), encoding='utf-8')
+        r = review(); updated, _ = r.begin('round-2', ['main.tex','reply.tex']); r.persist(updated, digest(r.raw))
+        r = review(); text = r.read('reply.tex'); start = text.index('Thank you.'); end = text.index('\\end{document}', start)
+        updated, reply_block = r.prepare_block({'file':'reply.tex', 'kind':'paragraph', 'start':start, 'end':end,
+            'source_revision':r.source_digest(text)})
+        r.persist(updated, digest(r.raw))
+        r = review(); updated, pending = r.propose({'file':'reply.tex','kind':'response','block_id':reply_block['block_id'],
+            'before':'Thank you.', 'after':'Thank you for the suggestion.'}); r.persist(updated, digest(r.raw))
+        r = review(); reply_text = r.read('reply.tex'); source_text = r.read('main.tex')
+        start = reply_text.index('The model'); end = reply_text.index('\n', start) + 1
+        spec = {'file':'reply.tex','block_id':reply_block['block_id'],'start':start,'end':end,
+                'before':reply_text[start:end], 'source_revision':r.source_digest(reply_text),
+                'root_revision':r.source_digest(reply_text), 'mode':'convert',
+                'sources':[{'file':'main.tex','block_id':source_block['block_id'], 'source_revision':r.source_digest(source_text)}]}
+        args = {'project':str(self.root),'state':state,'expected_sha256':digest(r.raw),'spec':spec}
+        server = self.server(); before = {p:(self.root / p).read_bytes() for p in ('main.tex','reply.tex')}
+        def rpc(arguments, label):
+            env = os.environ.copy()
+            env['PYTHONPATH'] = os.pathsep.join([str(Path(__file__).parent), str(Path(__file__).parent.parent/'scripts'/'test-support')])
+            command = [sys.executable,'-B','-X','utf8',str(Path(__file__).with_name('mcp_server.py')),'--registrations',str(server.registrations)]
+            requests = [{'jsonrpc':'2.0','id':1,'method':'tools/list'}, {'jsonrpc':'2.0','id':2,'method':'tools/call',
+                        'params':{'name':'prepare_excerpt','arguments':arguments}}]
+            run = subprocess.run(command,cwd=self.root,env=env,input=('\n'.join(json.dumps(item,ensure_ascii=False) for item in requests)+'\n').encode('utf-8'),
+                                 stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            (self.root/(label+'.stdout.log')).write_bytes(run.stdout)
+            (self.root/(label+'.stderr.log')).write_bytes(run.stderr)
+            (self.root/(label+'.json')).write_text(json.dumps({'argv':command,'cwd':str(self.root),'exit':run.returncode,'PYTHONPATH':env['PYTHONPATH']},ensure_ascii=False),encoding='utf-8')
+            self.assertEqual(run.returncode,0,run.stderr.decode('utf-8',errors='replace'))
+            rows = [json.loads(line) for line in run.stdout.decode('utf-8').splitlines()]
+            self.assertIn('prepare_excerpt',[tool['name'] for tool in rows[0]['result']['tools']])
+            self.assertFalse(rows[1]['result']['isError'],rows[1]['result'])
+            return rows[1]['result']['structuredContent']
+        preview = rpc(args,'excerpt-preview')
+        self.assertFalse(preview['applied'])
+        self.assertEqual(preview['sources'][0]['text'], next(line for line in source_text.splitlines(keepends=True) if line.startswith('The model')))
+        objects = {path.name for path in (self.root/'.codex-review'/'objects').iterdir()}
+        with self.assertRaisesRegex(Conflict, '明确确认'):
+            server.call('prepare_excerpt', {**args,'apply':True})
+        self.assertEqual({path.name for path in (self.root/'.codex-review'/'objects').iterdir()}, objects)
+        with self.assertRaisesRegex(Conflict, '来源已变化'):
+            server.call('prepare_excerpt', {**args,'spec':{**spec,'sources':[{**spec['sources'][0],'source_revision':'0'*64}]}})
+        self.assertEqual({p:(self.root / p).read_bytes() for p in before}, before)
+        result = rpc({**args,'apply':True,'spec':{**spec,'approved_preview':preview['preview_id']}},'excerpt-apply')
+        self.assertTrue(result['applied']); self.assertFalse(result['accepted'])
+        self.assertEqual((self.root/'main.tex').read_bytes(), before['main.tex'])
+        self.assertIn('\\TSExcerpt{main.tex}{'+source_block['block_id']+'}', reply.read_text(encoding='utf-8'))
+        self.assertTrue((self.root/'texscholar-excerpt.sty').is_file())
+        packet = server.call('read_context', {'project':str(self.root),'state':state,'files':['main.tex']})['context']
+        self.assertEqual([(link['reply'],link['block_id'],link['status']) for link in packet['excerpt_links']],
+                         [('reply.tex',source_block['block_id'],'current')])
+        r = review(); item = r.inspect(pending['id'], source=True)
+        self.assertTrue(item['source_match']); self.assertEqual(item['edit']['status'], 'pending')
+        updated, _ = r.decide([pending['id']], [], {pending['id']:item['version']}); r.persist(updated, digest(r.raw))
+        self.assertIn('\\TSExcerpt{main.tex}{'+source_block['block_id']+'}', reply.read_text(encoding='utf-8'))
+        self.assertNotIn('auto_backup_projection_error', review().state)
+        packet = server.call('read_context', {'project':str(self.root),'state':state,'files':['main.tex']})['context']
+        self.assertEqual(packet['excerpt_links'][0]['status'], 'current')
+        r = review(); text = r.read('reply.tex'); block = r.block_row(text, 'reply.tex', reply_block['block_id'])
+        full = text[block['start']:block['end']]
+        with self.assertRaisesRegex(Conflict, '摘录引用'):
+            r.propose({'file':'reply.tex','kind':'response','block_id':reply_block['block_id'],
+                       'before':full,'after':full.replace('\\TSExcerpt','\\RemovedExcerpt')})
+
     def test_context_returns_structured_question_and_reply_dependencies(self):
         result = self.apply('propose', {'file':'main.tex', 'kind':'manuscript',
                                        'before':'The model is strong and fast.', 'after':'The model is reliable.'})

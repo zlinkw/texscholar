@@ -6,6 +6,7 @@
 \tl_new:N \l__ts_excerpt_body_tl
 \tl_new:N \l__ts_excerpt_begin_tl
 \tl_new:N \l__ts_excerpt_end_tl
+\tl_new:N \l__ts_excerpt_file_tl
 \int_new:N \l__ts_excerpt_state_int
 \int_new:N \l__ts_excerpt_count_int
 \seq_new:N \l__ts_excerpt_stack_seq
@@ -25,7 +26,10 @@
     \regex_match:nnF
       { \A [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12} \Z } {#2}
       { \__ts_excerpt_error:nn {#2} { Invalid~block~identity } }
-    \file_if_exist:nF {#1}
+    \exp_args:Nne \regex_match:nnF { \A (?: \.\./ )* \Z } { \TSExcerptBase }
+      { \__ts_excerpt_error:nn {#2} { Invalid~project~root } }
+    \tl_set:Nx \l__ts_excerpt_file_tl { \TSExcerptBase #1 }
+    \exp_args:NV \file_if_exist:nF \l__ts_excerpt_file_tl
       { \__ts_excerpt_error:nn {#2} { Missing~source~file~#1 } }
     \tl_clear:N \l__ts_excerpt_body_tl
     \int_zero:N \l__ts_excerpt_state_int
@@ -34,7 +38,7 @@
     \seq_clear:N \l__ts_excerpt_seen_seq
     \tl_set:Nx \l__ts_excerpt_end_tl
       { \c_percent_str \c_space_tl TS-BLOCK-END~id=#2 }
-    \ior_open:Nn \l__ts_excerpt_input_ior {#1}
+    \exp_args:NNV \ior_open:Nn \l__ts_excerpt_input_ior \l__ts_excerpt_file_tl
     \ior_str_map_inline:Nn \l__ts_excerpt_input_ior
       {
         \regex_match:nnT { \A \x{25}\x{20}TS-BLOCK- } {##1}
@@ -126,6 +130,8 @@
   }
 \ExplSyntaxOff
 \makeatletter
+\def\TSExcerptBase{}
+\newcommand\TSExcerptRoot[1]{\def\TSExcerptBase{#1}}
 \NewDocumentCommand\TSExcerpt{mm}{%
   \begingroup
   \def\TSrestore{}\def\TSpage{page}%

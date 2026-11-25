@@ -22,6 +22,43 @@ function fixture(names, invalid = -1) {
     return {root,commit,state,vscode,registry};
 }
 
+function resourceFixture(names, relative = 'texscholar-excerpt.sty') {
+    const f = fixture(names), objectPath = path.join(f.root,'.codex-review','objects',f.commit+'.json');
+    const object = JSON.parse(fs.readFileSync(objectPath, 'utf8'));
+    object.files['resource-0-new'] = fs.readFileSync(path.join(__dirname,'texscholar-excerpt.sty')).toString('base64');
+    const raw = Buffer.from(JSON.stringify(object)), commit = sha(raw);
+    fs.writeFileSync(path.join(f.root,'.codex-review','objects',commit+'.json'), raw);
+    const state = Buffer.from(JSON.stringify({schema:3,transaction:{commit,files:names,created:[relative],owner:false}}));
+    fs.writeFileSync(path.join(f.root,'.codex-review','state.json'), state);
+    return {...f, commit, state};
+}
+
+test('excerpt support is created once under host authority and recoverable', async () => {
+    const f = resourceFixture([]), file = path.join(f.root,'texscholar-excerpt.sty');
+    await applyTransaction(f.vscode,f.registry,f.root,1,sha(f.state),f.commit);
+    assert.deepEqual(fs.readFileSync(file),fs.readFileSync(path.join(__dirname,'texscholar-excerpt.sty')));
+    await assert.rejects(applyTransaction(f.vscode,f.registry,f.root,1,sha(f.state),f.commit),/已存在或变化/);
+    await applyTransaction(f.vscode,f.registry,f.root,1,sha(f.state),f.commit,true);
+    finishTransaction(f.root,sha(f.state),f.commit,Buffer.from('{"schema":3}').toString('base64'));
+});
+
+test('dirty source and unsafe resource path block creation', async () => {
+    const dirty = resourceFixture(['paper.tex']);
+    dirty.vscode.workspace.textDocuments.push({uri:{scheme:'file',fsPath:path.join(dirty.root,'paper.tex')},isDirty:true});
+    await assert.rejects(applyTransaction(dirty.vscode,dirty.registry,dirty.root,1,sha(dirty.state),dirty.commit),/未保存编辑/);
+    assert.equal(fs.existsSync(path.join(dirty.root,'texscholar-excerpt.sty')),false);
+    const unsafe = resourceFixture([], '../texscholar-excerpt.sty');
+    await assert.rejects(applyTransaction(unsafe.vscode,unsafe.registry,unsafe.root,1,sha(unsafe.state),unsafe.commit),/路径无效/);
+});
+
+test('excerpt support can be created beside a nested document root', async () => {
+    const f = resourceFixture([], 'response/texscholar-excerpt.sty');
+    fs.mkdirSync(path.join(f.root,'response'));
+    await applyTransaction(f.vscode,f.registry,f.root,1,sha(f.state),f.commit);
+    assert.deepEqual(fs.readFileSync(path.join(f.root,'response','texscholar-excerpt.sty')),
+                     fs.readFileSync(path.join(__dirname,'texscholar-excerpt.sty')));
+});
+
 test('transaction rejects traversal before any source writes', async () => {
     const f = fixture(['paper.tex','../outside.tex']);
     await assert.rejects(applyTransaction(f.vscode,f.registry,f.root,1,sha(f.state),f.commit),/路径无效/);

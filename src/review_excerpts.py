@@ -69,3 +69,21 @@ def resolve(text, read):
             raise ValueError('摘录来源无效 ' + ref['file'] + ' #' + ref['block_id'] + '：' + str(error)) from error
         result.append({**ref, 'content': content, 'kind': block['kind']})
     return result
+
+
+def protect(text, start, end, replacement):
+    """Keep every reference slot unchanged when editing surrounding prose."""
+    from review_blocks import changes
+    slots = references(text)
+    if any(max(start, row['start']) < min(end, row['end']) and
+           not (start <= row['start'] and row['end'] <= end) or
+           start == end and row['start'] < start < row['end'] for row in slots):
+        raise ValueError('编辑范围不能切断摘录引用。')
+    inside = [row for row in slots if start <= row['start'] and row['end'] <= end]
+    if [row['reference'] for row in references(replacement)] != [row['reference'] for row in inside]:
+        raise ValueError('解释编辑不能创建、删除或修改摘录引用；请使用摘录入口。')
+    for a, b, _ in changes(text[start:end], replacement):
+        for row in inside:
+            x, y = row['start'] - start, row['end'] - start
+            if max(a, x) < min(b, y) or a == b and x < a < y:
+                raise ValueError('解释编辑不能改动摘录引用槽。')
