@@ -1,5 +1,9 @@
 # 问题审核能力对照执行记录
 
+AH3发行预核：0.9.78本地及远端tag不存在，远端master仍为ab1b97948ddd4fdacbce5a36afa7cbba78615ef9，输出目录不存在；Release API返回预期404、真实exit 1。实际argv/cwd/环境/stdout/stderr/exit保留于 `D:/latex-writing-checks/review-efficiency-20261122/AH-delivery-preflight`。复用总控已审核的AH1–AH2/R1证据，不重复功能/UI组，不触真实论文或默认pipe，暂不重载或重启。
+
+`AH-delivery-checks` 在AH专属根与非默认endpoint核FakeHost、0.9.78/MCP版本及运行/源码测试入口闭包，资格exit 0；MCP两项与发行工具13项均exit 0。各实际Python子进程加载sitecustomize并记录隔离根、FakeHost、私有endpoint及argv，真实stdio/CLI子进程的registrations和project路径均在隔离根。发行工具组的模拟网络读取重试文字是夹具输出，非真实GitHub请求。完整argv/cwd/env/stdout/stderr/exit保留对应目录。
+
 AH-R1（总控审核返修1，待复审）：总控 `controller-ah-accepted-dependency` 以真实MCP场景为历史已接收依赖补 `accepted_option=A` 后复现原错误，exit 1；真实109/110只读元数据也有该字段。原因是 `ai_context` 在判断旧依赖摘要前先调 `payload`，它会投影已选方案。现先读取并校验不可变span、已选方案身份，再仅对符合原摘要条件的旧依赖给出明确不可用说明；其他情况仍走原payload与proof保护。对于有完整proof的已接收旧单方案，`payload` 的可见after不能再次作为原始候选投影，现从同一经身份校验的不可变span读取原方案，避免重复投影；多方案仍使用原方案数据。
 
 `AH-R1-check1` 在新已接收单方案有效proof回归中暴露重复投影，exit 1；`AH-R1-check2` 首次局部修正仍传入已投影payload，exit 1；两次原始记录保留。`AH-R1-check4` 两项最终定向exit 0：真实MCP/stdin子进程和Server.call覆盖无proof依赖的已选A/B/C、无效选项拒绝、同编号返修保存回读、显式历史／活动项／暂留及坏manifest继续拒绝；有proof的已接收单方案及选择B的三方案正常投影。实际子进程正向FakeHost、专属测试根和非默认endpoint证明与argv/cwd/env/stdout/stderr/exit在 `D:/latex-writing-checks/review-efficiency-20261122/AH-R1-*`，复用AH-check8未受影响17项，不重复UI或功能全组。未运行真稿MCP或修改真实论文／登记，不重载或重启。

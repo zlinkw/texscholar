@@ -2,14 +2,16 @@
 
 ## AH阶段：外置审核状态与候选迁移读取兼容
 
+AH1–AH2最终审核通过，返修1，冻结ab1b97948ddd4fdacbce5a36afa7cbba78615ef9，HEAD==origin/master且clean。总控审初包9文件和R1实际diff及ai_context/payload/option_effect/历史批注消费者：无proof且已决定的隐式旧依赖仅保留身份/决定和明确不可用说明，先核不可变span及已选方案，不先投影；合法已迁移单方案从原span投影一次，完整proof多方案保持。显式历史、活动、暂留及坏manifest仍拒绝，不合成proof/迁移真稿。复用AH-check8有效17项，R1-check4实际MCP stdio/Server.call两项exit0覆盖accepted_option A/B/C、无效D、同编号返修回读、合法单方案/选B三方案；child正向FakeHost/根/私有endpoint及registrations证明已核。总控accepted依赖红例、R1-check1/2双投影首败保留，纯后端无UI变更不截图，不重复功能组。下一步AH3一次构建正式发行同包安装，暂不重载/重启，不进行真实科研返修。
+
 AH最终审核返修1：初包9d397d9a42ec037fa2ae766a8c9351efdb84f254已同步clean。总控审9文件实际diff及AH-check8定向17项有效证据，发现ai_context在旧依赖分类前调用review.payload；accepted_option存在时payload先调用option_effect，仍触发原缺proof错误。真实只读109/110均accepted_option=A，原测试仅直接设status=accepted遗漏该字段。总控独占隔离controller-ah-accepted-dependency给同一实际MCP场景补accepted_option=A，exit1精确复现上述链，原argv/cwd/env/stdout/stderr保留；FakeHost/根/专属endpoint在实际进程正向断言。交原Terra修分类前读取及相关消费者，只补该缺口与必要保护，未通过不发行，不改真稿/旧proof。
 
 2026-11-26用户明确要求先修插件：read_context报“候选的旧注释没有当前版本的精确迁移资料”，迁移预览又报“需要现有内嵌审核状态”，项目已用外置状态，尚未保存R2-Q2/R4-Q1返修。仅修插件及必要交付，本轮不继续科学返修或同步正文/表注/结论，不修改真实论文、批注、候选、依赖及登记。基线0e212f98dba130045e71423bce80d39b7379f77e，HEAD==origin/master、clean，0.9.77已安装。沿既有总控与唯一Terra角色，AH返修0；验证后原流程发行安装，暂不重载/重启。
 
 已只读核：review_migration.preview明确拒绝sidecar，它是内嵌→外置状态迁移；source_review.option_effect按候选精确迁移资料校验并受全局option_migration_complete影响，两种迁移用途不能混淆。真实state schema3、option_migration_complete=true、manifest12项，无transaction；R2-Q2/R4-Q1相关活跃107/108/112/113/114/115/bg/bh当前版本均有对应proof/manifest版本键，历史accepted/rejected项多无当前proof。尚未运行真实MCP/后端，不据这些元数据宣称唯一根因。需在隔离夹具还原真实读取条件，区分缺失/损坏证明、历史或已处理项、正常新候选及误入迁移入口。
 
-- [ ] AH1 原Terra一个完整功能批：在隔离外置项目通过实际read_context消费者复现原错误及迁移预览冲突，确定产生不兼容状态的实际读写链；最小完整修复合法现有状态/精确候选迁移资料及受影响读取、返修与保存调用方。复用已支持的精确proof/manifest/原对象，不全局跳过校验、自动去注释、猜新版本证明或把外置状态退回内嵌。若现有合法资料足够则兼容读取；真实损坏/来源不明明确定位冲突并给适用恢复路径，不能静默丢批注/依赖或返回空候选冒充成功。迁移接口/错误指引须与当前外置状态相符；只有确需显式修复时准备可核预览和原CAS/宿主事务，不自动迁移真稿。补齐必要消费者、源码说明及资源闭包，不新增通用兼容平台/无依据回退。
-- [ ] AH2 Terra必要定向验证：schema3既有迁移完备/携带映射、合法新候选与历史已处理项、旧批注/previous_feedback/依赖按需读取、当前与历史精确proof及manifest不符/缺失拒绝、跨版本及换行语义；实际MCP read_context读取R2-Q2/R4-Q1形态相关项成功，并在隔离项目保存同编号返修后回读、正文/表注/结论关联及未决/暂留/范围外数据保持，原科学内容不重写。原内嵌迁移合法路径与外置入口行为按受影响消费者回归。复用有效旧证据，不跑全仓/性能/删除cleanup/完整备份；每业务Python实际child正向FakeHost/AH根/显式私有endpoint。若修改可见UI/入口则按silent-ui-screenshot必要真实Development私有未切桌面实点；纯后端兼容不机械截图。总控冻结后审实际diff/必要链及有效证据，仅补影响结论的缺口。
+- [x] AH1 原Terra一个完整功能批：在隔离外置项目通过实际read_context消费者复现原错误及迁移预览冲突，确定产生不兼容状态的实际读写链；最小完整修复合法现有状态/精确候选迁移资料及受影响读取、返修与保存调用方。复用已支持的精确proof/manifest/原对象，不全局跳过校验、自动去注释、猜新版本证明或把外置状态退回内嵌。若现有合法资料足够则兼容读取；真实损坏/来源不明明确定位冲突并给适用恢复路径，不能静默丢批注/依赖或返回空候选冒充成功。迁移接口/错误指引须与当前外置状态相符；只有确需显式修复时准备可核预览和原CAS/宿主事务，不自动迁移真稿。补齐必要消费者、源码说明及资源闭包，不新增通用兼容平台/无依据回退。
+- [x] AH2 Terra必要定向验证：schema3既有迁移完备/携带映射、合法新候选与历史已处理项、旧批注/previous_feedback/依赖按需读取、当前与历史精确proof及manifest不符/缺失拒绝、跨版本及换行语义；实际MCP read_context读取R2-Q2/R4-Q1形态相关项成功，并在隔离项目保存同编号返修后回读、正文/表注/结论关联及未决/暂留/范围外数据保持，原科学内容不重写。原内嵌迁移合法路径与外置入口行为按受影响消费者回归。复用有效旧证据，不跑全仓/性能/删除cleanup/完整备份；每业务Python实际child正向FakeHost/AH根/显式私有endpoint。若修改可见UI/入口则按silent-ui-screenshot必要真实Development私有未切桌面实点；纯后端兼容不机械截图。总控冻结后审实际diff/必要链及有效证据，仅补影响结论的缺口。
 - [ ] AH3 总控明确通过后原Terra必要发行检查、一次构建、正式Release及同一VSIX安装；总控独立交付meta并plan/index/execution集中结案，暂不重载/重启，不包后冒烟，不触真实迁移或论文返修。
 
 总控plan/index支持增量随成功完整批提交，随后转Terra产品/测试/UI/隔离配置/execution/Git租约；证据沿D:/latex-writing-checks/review-efficiency-20261122/AH-*保留argv/cwd/env/stdout/stderr/真实exit及首败，唯一execution登记。普通Windows/pwsh7/显式UTF8/Python -B -X utf8、精确stage/commit/push master:master/fetch，远端前移/权限Hook拒绝停止相关动作，不reset/rebase/merge/force/改remote。真实D:/Overleaf/TMI-DA-Marked-up Copy、P/个人资料/state/候选/批注/三稿/依赖/stage及全局host-lifecycle只读；不恢复真实登记或事务、不接收/返修真实项、不触用户窗口/默认pipe/MCP/实网AI、不删除文件对象截图或cleanup、不改全局技能/config/TeX，不新增代理/性能测试或改超时退役。无待用户选择，完整AH1–AH2冻结交包后再派AH3。
