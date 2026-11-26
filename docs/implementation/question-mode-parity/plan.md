@@ -1,5 +1,19 @@
 # 问题审核与段落审核能力对照及优化
 
+## AD阶段：单窗口重启后自动恢复旧宿主登记
+
+2026-11-26用户明确要求自动识别并恢复旧宿主登记，避免只有一个窗口却每次重启都需手动恢复。基线0eaf845792e4d35b1b654ff5161b96fdb8851638，HEAD==origin/master、clean，0.9.73已发布安装。总控local/01a212c7-d736-7503-ab7a-9717a426fefb维护计划/索引及最终审核，唯一Terra local/01a21288-5815-7312-b496-006ade07bede实现与小验收，AD返修0。沿已授权原流程验证通过后发布安装，不自动重载/重启用户窗口或MCP。
+
+真实只读证据：用户贴出“审核宿主事务失败；请核对是否存在待恢复意图：宿主资格已失效或存在多个宿主；未提交正文”，并确认只开一个窗口。真实state当前无transaction、146/147仍rework；本机C:/Users/ZLK/AppData/Local/TeXScholar/host-lifecycle.json仅该项目true、mtime2026-11-25T13:09:19Z，当前Code日志20261126T093813。未连接默认pipe、未恢复登记或真实接收。持久标记不能单独证明当前实时成员数；不得把“失效或多宿主”合并错误当成多个窗口的确证。源码registry将persisted[root]直接变为uncertain，断线亦置uncertain，只有resolve-stale人工清除；bridge已有人工确认入口，main deactivate会close，但异常退出/更新可留下登记。应实证重启路径及必要边界，不能仅删除登记、绕过校验或假定PID消失即安全。
+
+- [ ] AD1 原Terra一个完整功能批：在专属pipe/journal/隔离论文以真实进程生命周期复现单宿主正常重启与非正常旧登记阻断，设计最小自动识别恢复，使可确认只剩当前有效宿主、旧生命周期已结束时无需手动操作恢复登记并可继续精确接收。复用现有registry/bridge/事务契约，不引入无依据超时、重试轮询、TTL或通用恢复平台；必要身份机制须对应已证缺口。保留旧人工入口，不自动接受任何候选/回放未完成事务，不清理真实登记或稿件。
+- [ ] AD2 Terra必要定向回归与正常Development私有未切桌面验证：隔离重启/旧登记后自动恢复、实际鼠标接收所选版本；真实同时多宿主、另一有效宿主仍在线/迟到登记、资格generation变化、未登记连接、未完成事务/损坏记录保持必要阻断或显式恢复路径，不丢正文/草稿/意图。按当前契约覆盖受影响原生及已有旧格式消费者，不猜角色文件。已有安全用例如确需改变预期须说明用户新语义及等价边界覆盖，不自动退役/放宽其他断言或超时。总控冻结后审实际diff/消费者/证据，只补未覆盖且影响结论的组合，不重复同组。
+- [ ] AD3 总控明确通过后另派原Terra预核下一无冲突版本、必要发行检查、一次构建、正式Release及同VSIX安装；总控只核交付元数据并三docs集中结案，不包后冒烟，不重载/重启。
+
+总控plan/index支持增量先写，随后移交产品/测试/UI/隔离配置/execution/Git租约给原Terra，支持docs随完整成功功能批精确普通commit/push/fetch，不为元数据另起微提交。检查每个实际Python子进程正向断言FakeHostSession及AD隔离根/正确endpoint；禁止默认pipe/MCP探测，不用LOCAL_LATEX_PIPE冒充隔离。UI按silent-ui-screenshot正常Development专属profile/pipe、CreateDesktopW私有未切桌面，核Default/前中后前台不变、截图逐张实看。证据D:/latex-writing-checks/review-efficiency-20261122/AD-*，完整argv/cwd/env/stdout/stderr/exit及首败；不机械重跑AC/全套/性能或含删除cleanup的测试。
+
+真实论文D:/Overleaf/TMI-DA-Marked-up Copy、P/个人资料/state/候选/批注/三稿/stage及真实全局host-lifecycle登记仅只读保护；不实际接收146/147、不恢复或修改真实登记/事务、不外网AI、不操作用户窗口、不删除文件/对象/截图、不cleanup、不改全局配置/技能/TeX。程序必要登记原子替换及锁生命周期按既有安全契约审查，不扩清理。pwsh7、UTF8、Python -B -X utf8；普通Windows仓库，远端前移/权限Hook拒绝停止相关动作，不reset/rebase/merge/force/改remote，不新建代理。完成AD1–AD2全部条件才冻结交总控，未通过不发行；无待用户决定。
+
 ## AC阶段：146与147接收无响应
 
 AC已完成，返修0：[0.9.73正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.73)并安装同一VSIX，唯一构建源码f03c5442ef66389be17efa5313f5a53bb7c03df6，build/安装exit0。总控独立核本地/远端附注tag对象61741e5a4f88ec8198d8fc6eeaf4611a082cf9ac及构建目标、SOURCE-COMMIT/双包摘要；controller-ac-release-meta.py实际读正式Release API，三附件digest等于本地文件，manifest及source=vsix/pinned登记0.9.73，exit0。原始API/进程/结果在D:/latex-writing-checks/review-efficiency-20261122/controller-ac-release*，原发行安装记录AC-delivery-*，保留Node DEP0169警告。未重复构建/功能组/包后冒烟；未接收或改动真实146/147，现场具体拒绝原因仍未知，已修并验证长卡错误不可见这一可达缺陷。未自动重载/重启，当前活动宿主加载未知；用户方便时自行重载目标窗口后启用新版。三份支持记录集中结案，无在途。

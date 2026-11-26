@@ -14,7 +14,7 @@ RUNTIME = ('main.js', 'extension.js', 'core.js', 'backup.js', 'navigation.js', '
            'setup.js', 'questions.js', 'writing.js', 'ai_setup.js', 'review_style.js', 'pdf_navigation.js', 'writing-guide.md', 'question-linking-guide.md', 'writing-presets.json',
            'paper.code-snippets', 'document_roles.py', 'document_roles.js', 'source_review.py', 'review_facts.py', 'review_checkpoint.py', 'review_archive.py', 'auto_backup.py',
            'review_blocks.py', 'review_excerpts.py', 'texscholar-excerpt.sty', 'review_migration.py', 'review_option_migration.py', 'review_header_migration.py', 'profile_transition_check.py', 'review_host_client.py', 'review_host_bridge.js', 'review_host_registry.js',
-           'review_host_transaction.js', 'review_host_legacy.js', 'review_host_migration.js', 'review_host_edit.js',
+           'review_host_lifetime.js', 'review_host_transaction.js', 'review_host_legacy.js', 'review_host_migration.js', 'review_host_edit.js',
            'review.svg', 'review_math.js', 'review_workbench.js', 'review_workbench_client.js', 'collaboration-guide.md', 'mcp_server.py', 'mcp_config.py', 'mcp_setup.js',
            'mcp_runtime.py', 'mcp_clients.py', 'mcp_version.js', 'updates.js', 'update_check.py', 'ai_context.py', 'reference_context.py', 'paper_background.py')
 

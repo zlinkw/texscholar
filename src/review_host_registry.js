@@ -7,6 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const {EventEmitter} = require('node:events');
 const {finishTransaction} = require('./review_host_transaction');
+const {openLifetime, isLive} = require('./review_host_lifetime');
 
 function endpoint() {
     return process.platform === 'win32'
@@ -39,56 +40,97 @@ const send = (socket, value) => socket.write(JSON.stringify(value) + '\n');
 
 async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
     const projects = new Map(), sockets = new Set(), transactions = new Map();
-    let unregistered = 0, ownedServer, persisted;
-    function record(root, active) {
+    let unregistered = 0, ownedServer, persisted, queue = Promise.resolve();
+    function record(root, value) {
         const next = Object.assign(Object.create(null), persisted);
-        if (active) next[root] = true;
+        if (value) next[root] = value;
         else delete next[root];
         const temporary = journal + '.write-' + crypto.randomUUID();
         fs.writeFileSync(temporary, JSON.stringify(next), {encoding:'utf8', flag:'wx'});
         fs.renameSync(temporary, journal);
         persisted = next;
     }
+    function saved(entry) {
+        return entry.legacy ? true : entry.leases.length || entry.unknown ? {leases:entry.leases, unknown:entry.unknown} : false;
+    }
+    async function refresh(root, entry) {
+        if (entry.legacy) return;
+        const generation = entry.generation;
+        const connected = new Set(entry.connections.values());
+        const leases = [];
+        let staleLive = false;
+        for (const lease of entry.leases) {
+            if (connected.has(lease)) leases.push(lease);
+            else if (await isLive(lease)) {leases.push(lease); staleLive = true;}
+        }
+        if (leases.length !== entry.leases.length) {entry.leases = leases; record(root, saved(entry));}
+        const uncertain = entry.unknown || staleLive || entry.generation !== generation;
+        if (entry.uncertain !== uncertain) {entry.uncertain = uncertain; entry.generation++;}
+    }
     const server = net.createServer(socket => {
         sockets.add(socket); unregistered++;
         for (const entry of projects.values()) entry.generation++;
         let joined = false, orderly = false, operationRoot, operationGeneration, completed;
-        const roots = new Set();
+        const roots = new Set(), published = new Set();
+        let lifetime;
         function state(root) {
             const entry = projects.get(root);
-            return {eligible: !!entry && !entry.uncertain && unregistered === 0 && entry.members.size === 1,
+            return {eligible: !!entry && !entry.uncertain && !entry.pending.size && unregistered === 0 && entry.members.size === 1,
                     uncertain: entry?.uncertain, generation: entry?.generation};
         }
         function broadcast(root) {
             const entry = projects.get(root);
             if (entry) for (const peer of entry.members) send(peer, {type:'state', root, ...state(root)});
         }
-        lines(socket, message => {
+        lines(socket, message => {queue = queue.then(async () => {
+            if (socket.destroyed) return;
             try {
-                if (message.type === 'join') {
+                if (message.type === 'publish') {
+                    if (operationRoot || !Array.isArray(message.roots) || !Number.isSafeInteger(message.pid) || message.pid <= 0 || !Number.isInteger(message.port) || message.port < 1 || message.port > 65535) throw new Error('宿主身份登记请求无效。');
+                    if (lifetime && (lifetime.pid !== message.pid || lifetime.port !== message.port)) throw new Error('宿主身份已变化。');
+                    if (!lifetime) lifetime = {pid:message.pid, port:message.port};
+                    const requested = [...new Set(message.roots.map(canonical))];
+                    for (const root of requested) {
+                        let entry = projects.get(root);
+                        if (!entry) {
+                            const previous = persisted[root];
+                            const legacy = previous === true;
+                            const stale = legacy || !previous ? [] : previous.leases;
+                            const alive = [];
+                            for (const lease of stale) if (await isLive(lease)) alive.push(lease);
+                            if (socket.destroyed) return;
+                            const unknown = !legacy && !!previous?.unknown;
+                            entry = {members:new Set(), pending:new Set(), connections:new Map(), leases:alive, generation:0, legacy, unknown, uncertain:legacy || unknown || alive.length > 0, marked:true};
+                            projects.set(root, entry);
+                        } else await refresh(root, entry);
+                        if (socket.destroyed) return;
+                        if (!published.has(root)) {
+                            entry.leases.push(lifetime); entry.connections.set(socket, lifetime); entry.pending.add(socket); entry.generation++; published.add(root);
+                            record(root, saved(entry));
+                        }
+                    }
+                    for (const root of projects.keys()) broadcast(root);
+                    send(socket, {id:message.id, ok:true});
+                } else if (message.type === 'join') {
                     if (operationRoot || !Array.isArray(message.roots)) throw new Error('宿主登记请求无效。');
                     const requested = [...new Set(message.roots.map(canonical))];
                     const requestedSet = new Set(requested);
                     const staged = new Map();
                     for (const root of requested) {
-                        let entry = projects.get(root);
-                        if (!entry) {
-                            const uncertain = persisted[root] === true;
-                            if (!uncertain) record(root, true);
-                            entry = {members:new Set(), generation:0, uncertain, marked:true};
-                        } else if (!entry.members.size && !entry.uncertain) record(root, true);
+                        const entry = projects.get(root);
+                        if (!entry || !published.has(root)) throw new Error('宿主身份尚未登记。');
                         staged.set(root, entry);
                     }
                     for (const root of roots) {
                         if (requestedSet.has(root)) continue;
                         const entry = projects.get(root);
-                        entry.members.delete(socket); entry.generation++; roots.delete(root);
-                        if (!entry.members.size && !entry.uncertain && entry.marked) {
-                            try {record(root, false);} catch (error) {entry.uncertain = true; throw error;}
-                        }
+                        entry.members.delete(socket); entry.pending.delete(socket); entry.connections.delete(socket); entry.generation++; roots.delete(root); published.delete(root);
+                        entry.leases = entry.leases.filter(lease => lease !== lifetime);
+                        try {record(root, saved(entry));} catch (error) {entry.uncertain = true; throw error;}
                     }
                     for (const [root, entry] of staged) {
                         projects.set(root, entry);
+                        entry.pending.delete(socket);
                         if (!roots.has(root)) {entry.members.add(socket); entry.generation++; roots.add(root);}
                     }
                     if (!joined) {joined = true; unregistered--;}
@@ -97,7 +139,9 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                 } else if (message.type === 'reserve-review-transaction') {
                     if (joined || unregistered !== 1) throw new Error('审核事务请求无效或宿主资格不明。');
                     const root = canonical(message.root), entry = projects.get(root);
-                    if (!entry || entry.uncertain || entry.members.size !== 1) throw new Error('宿主资格已失效或存在多个宿主；未提交正文。');
+                    if (entry) await refresh(root, entry);
+                    if (socket.destroyed || unregistered !== 1) throw new Error('宿主资格已变化；未提交正文。');
+                    if (!entry || entry.uncertain || entry.pending.size || entry.members.size !== 1) throw new Error('宿主资格已失效或存在多个宿主；未提交正文。');
                     joined = true; operationRoot = root; operationGeneration = entry.generation; unregistered--;
                     for (const project of projects.keys()) broadcast(project);
                     send(socket, {id:message.id, ok:true, generation:operationGeneration});
@@ -106,9 +150,11 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                     if ((!legacy && !migration && !role && !/^[a-f0-9]{64}$/.test(message.state_sha || '')) || (!role && !/^[a-f0-9]{64}$/.test(message.commit || '')) || (role && (!message.role_plan || typeof message.role_plan !== 'object')) || (message.recover !== undefined && typeof message.recover !== 'boolean'))
                         throw new Error('审核事务请求无效或宿主资格不明。');
                     const root = canonical(message.root), entry = projects.get(root);
+                    if (entry && !joined) await refresh(root, entry);
+                    if (socket.destroyed) throw new Error('宿主资格已变化；未提交正文。');
                     if (joined ? operationRoot !== root || operationGeneration !== entry?.generation || unregistered !== 0 : unregistered !== 1)
                         throw new Error('宿主资格已变化；未提交正文。');
-                    if (!entry || entry.uncertain || entry.members.size !== 1) throw new Error('宿主资格已失效或存在多个宿主；未提交正文。');
+                    if (!entry || entry.uncertain || entry.pending.size || entry.members.size !== 1) throw new Error('宿主资格已失效或存在多个宿主；未提交正文。');
                     if (!joined) {joined = true; operationRoot = root; operationGeneration = entry.generation; unregistered--;}
                     for (const project of projects.keys()) broadcast(project);
                     const host = [...entry.members][0], request = crypto.randomUUID();
@@ -143,38 +189,47 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                     delete socket.completedReview;
                     send(socket, {id:message.id, ok:true, result});
                 } else if (message.type === 'acquire' || message.type === 'check') {
-                    const root = canonical(message.root), entry = projects.get(root), current = state(root);
+                    const root = canonical(message.root), entry = projects.get(root);
+                    if (entry && message.type === 'acquire') await refresh(root, entry);
+                    const current = state(root);
                     if (!joined || !roots.has(root) || !current.eligible || (message.type === 'check' && message.generation !== current.generation))
                         throw new Error('宿主资格已失效或存在多个宿主；未提交正文。');
-                    if (message.type === 'acquire' && !entry.marked) {record(root, true); entry.marked = true;}
                     send(socket, {id:message.id, ok:true, generation:entry.generation});
                 } else if (message.type === 'resolve-stale') {
                     const root = canonical(message.root), entry = projects.get(root);
-                    if (!joined || !roots.has(root) || !entry?.uncertain || unregistered !== 0 || entry.members.size !== 1)
+                    if (entry && !entry.legacy) await refresh(root, entry);
+                    if (entry?.legacy) {
+                        const connected = new Set(entry.connections.values());
+                        for (const lease of entry.leases) {
+                            if (!connected.has(lease) && await isLive(lease)) throw new Error('仍有存活宿主；未恢复写入。');
+                        }
+                    }
+                    if (socket.destroyed) throw new Error('宿主资格已变化；未恢复写入。');
+                    if (!joined || !roots.has(root) || !entry?.uncertain || (!entry.legacy && (!entry.unknown || entry.leases.length !== entry.connections.size)) || entry.pending.size || unregistered !== 0 || entry.members.size !== 1)
                         throw new Error('宿主状态不满足人工核对条件；未恢复写入。');
+                    entry.legacy = false; entry.unknown = false; entry.leases = [lifetime]; record(root, saved(entry));
                     entry.uncertain = false; entry.generation++; broadcast(root);
                     send(socket, {id:message.id, ok:true, generation:entry.generation});
                 } else if (message.type === 'leave') {
                     let failure;
-                    for (const root of roots) {
-                        const entry = projects.get(root); entry.members.delete(socket); entry.generation++;
-                        if (!entry.members.size && !entry.uncertain && entry.marked) {
-                            try {record(root, false);} catch (error) {entry.uncertain = true; failure = error;}
-                        }
+                    for (const root of published) {
+                        const entry = projects.get(root); entry.members.delete(socket); entry.pending.delete(socket); entry.connections.delete(socket); entry.generation++;
+                        entry.leases = entry.leases.filter(lease => lease !== lifetime);
+                        try {record(root, saved(entry));} catch (error) {entry.uncertain = true; failure = error;}
                         broadcast(root);
                     }
-                    roots.clear(); orderly = true;
+                    roots.clear(); published.clear(); orderly = true;
                     send(socket, failure ? {id:message.id, ok:false, error:failure.message} : {id:message.id, ok:true});
                     socket.end();
                 } else throw new Error('未知宿主登记请求。');
             } catch (error) {
                 if (message.type === 'join') {
-                    for (const root of roots) {const entry = projects.get(root); entry.uncertain = true; entry.generation++;}
+                    for (const root of roots) {const entry = projects.get(root); entry.unknown = true; entry.uncertain = true; entry.generation++; try {record(root, saved(entry));} catch (failure) {console.error('宿主状态持久化失败：', failure);}}
                     for (const root of projects.keys()) broadcast(root);
                 }
                 send(socket, {id:message.id, ok:false, error:error.message});
             }
-        });
+        });});
         socket.on('error', () => {});
         socket.on('close', () => {
             sockets.delete(socket);
@@ -193,10 +248,14 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
             }
             if (!joined) {
                 unregistered--;
-                for (const entry of projects.values()) entry.uncertain = true;
+                for (const [root, entry] of projects) {
+                    if (!entry.legacy && !entry.leases.length && !entry.unknown) continue;
+                    entry.unknown = true; entry.uncertain = true;
+                    try {record(root, saved(entry));} catch (failure) {console.error('宿主状态持久化失败：', failure);}
+                }
             }
-            for (const root of roots) {
-                const entry = projects.get(root); entry.members.delete(socket); entry.generation++;
+            for (const root of published) {
+                const entry = projects.get(root); entry.members.delete(socket); entry.pending.delete(socket); entry.connections.delete(socket); entry.generation++;
                 if (!orderly) entry.uncertain = true;
                 broadcast(root);
             }
@@ -217,7 +276,7 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                 const file = fs.lstatSync(journal);
                 if (!file.isFile() || file.isSymbolicLink()) throw new Error('宿主登记不是普通文件。');
                 const value = JSON.parse(fs.readFileSync(journal, 'utf8'));
-                if (!value || typeof value !== 'object' || Array.isArray(value) || Object.values(value).some(value => value !== true))
+                if (!value || typeof value !== 'object' || Array.isArray(value) || Object.values(value).some(item => item !== true && (!item || typeof item !== 'object' || Array.isArray(item) || (item.unknown !== undefined && typeof item.unknown !== 'boolean') || !Array.isArray(item.leases) || item.leases.some(lease => !lease || !Number.isSafeInteger(lease.pid) || lease.pid <= 0 || !Number.isInteger(lease.port) || lease.port < 1 || lease.port > 65535))))
                     throw new Error('宿主登记损坏，请先核对。');
                 persisted = Object.assign(Object.create(null), value);
             } catch (error) {
@@ -227,8 +286,12 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
             }
         } catch (error) {await new Promise(resolve => ownedServer.close(resolve)); throw error;}
     }
+    let identity;
+    try {identity = await openLifetime();}
+    catch (error) {if (ownedServer) await new Promise(resolve => ownedServer.close(resolve)); throw error;}
     const socket = net.createConnection(pipe);
-    await new Promise((resolve, reject) => {socket.once('connect', resolve); socket.once('error', reject);});
+    try {await new Promise((resolve, reject) => {socket.once('connect', resolve); socket.once('error', reject);});}
+    catch (error) {await identity.close(); if (ownedServer) await new Promise(resolve => ownedServer.close(resolve)); throw error;}
     let serial = 0, closed = false;
     const waiting = new Map(), states = new Map(), events = new EventEmitter();
     lines(socket, message => {
@@ -257,7 +320,10 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
         return new Promise((resolve, reject) => {waiting.set(id, {resolve,reject}); send(socket, {id,type,...data});});
     }
     return {
-        join: roots => request('join', {roots}),
+        async join(roots) {
+            await request('publish', {roots, pid:identity.pid, port:identity.port});
+            return request('join', {roots});
+        },
         acquire: root => request('acquire', {root}),
         check: (root, generation) => request('check', {root,generation}),
         resolveStale: root => request('resolve-stale', {root}),
@@ -274,6 +340,7 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
         async disconnect() {
             if (!closed) await new Promise(resolve => {socket.once('close', resolve); socket.destroy();});
             if (ownedServer) await new Promise(resolve => ownedServer.close(resolve));
+            await identity.close();
         },
         async close() {
             try {if (!closed) await request('leave');}
@@ -282,6 +349,7 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                     for (const peer of sockets) peer.destroy();
                     await new Promise(resolve => ownedServer.close(resolve));
                 }
+                await identity.close();
             }
         }
     };
