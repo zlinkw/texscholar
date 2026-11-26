@@ -328,6 +328,11 @@
         "icon": "$(location)"
       },
       {
+        "command": "localLatex.adaptOldFeedback",
+        "title": "适配旧批注",
+        "category": "TeXScholar"
+      },
+      {
         "command": "localLatex.reviewWorkbench",
         "title": "打开论文审核工作台（三方案对照）",
         "category": "TeXScholar",

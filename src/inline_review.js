@@ -1308,6 +1308,35 @@ function createInlineReview(vscode, context, execute = run) {
         }));
     }
     command('localLatex.inlineReview', () => select());
+    command('localLatex.adaptOldFeedback', async () => {
+        const navigation = workbench.navigationEpoch;
+        const folders = (vscode.workspace.workspaceFolders || []).filter(folder => folder.uri.scheme === 'file');
+        if (!folders.length) return vscode.window.showInformationMessage('请先打开论文文件夹，再选择要适配的批注。');
+        const folder = folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick({placeHolder:'选择论文项目'});
+        if (!folder) return;
+        const scope = await discover(false, folder);
+        const state = await backend(scope, ['status']);
+        const choices = Object.entries(state.edits).filter(([, edit]) => OPEN.has(edit.status) && edit.versions.length)
+            .map(([id, edit]) => ({label:`${id} · ${edit.file}`, description:edit.location, id, version:edit.versions.at(-1)}));
+        if (!choices.length) return vscode.window.showInformationMessage('该论文没有待审核项，也没有可适配的批注。');
+        const picked = await vscode.window.showQuickPick(choices, {title:'适配旧批注', placeHolder:'选择要核对批注的审核项'});
+        if (!picked) return;
+        const fresh = await backend(scope, ['status']);
+        if (workbench.navigationEpoch !== navigation || fresh.session !== state.session || fresh.sha256 !== state.sha256 ||
+            !OPEN.has(fresh.edits[picked.id]?.status) || fresh.edits[picked.id].versions.at(-1) !== picked.version)
+            throw new Error('审核状态已变化，请重新选择；未交接批注。');
+        if (workbench.active && (workbench.active.repo !== scope.repo || workbench.active.owner !== scope.owner)) workbench.assertReloadSafe();
+        activeScope = scope;
+        await refresh(scope);
+        const record = records.get(picked.id);
+        if (workbench.navigationEpoch !== navigation || batch !== state.session || !record || record.c.repo !== scope.repo || record.c.owner !== scope.owner || record.c.version !== picked.version)
+            throw new Error('审核项或批次已变化，请重新选择批注。');
+        workbench.setRecords(new Map(orderedRecords().map(r => [r.c.id, r])));
+        const switchItem = !workbench.active || ['repo','owner','id','version'].some(k => workbench.active[k] !== record.c[k]);
+        if (switchItem) await workbench.show(record.c);
+        if (workbench.navigationEpoch !== navigation + Number(switchItem)) throw new Error('审核导航已变化，请重新选择批注。');
+        workbench.focusAdaptation({...record.c, session:state.session});
+    }, true);
     command('localLatex.manageReviewNotes', async () => {
         const folders = (vscode.workspace.workspaceFolders || []).filter(folder => folder.uri.scheme === 'file');
         const folder = folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick({placeHolder:'选择要管理批注的论文项目'});

@@ -79,7 +79,7 @@ function hostFixture({tex = true, state = true, autoPDF = true, questionStore = 
     };
     const allCards = {'1': data};
     const backend = async (_, args, cwd, input) => {
-        backendCalls.push({args, input});
+        backendCalls.push({args, input, cwd});
         if (args.includes('migrate-state') || args.includes('recover-migration')) return JSON.stringify(await migrationHook(args,input));
         if (args.includes('manual-rebase')) return JSON.stringify(await manualHook(args,input));
         if (args.includes('save-block-source')) return JSON.stringify(await saveSourceHook(args,input));
@@ -155,6 +155,80 @@ test('selected earlier feedback is handed off for current-source adaptation with
     f.statusHook=()=>{if (++observed===1) f.statusSession='new-batch';};
     await assert.rejects(f.ui.addRequests(current,[row],'batch'),/候选已更新或批次已变化/);
     assert.equal(f.calls.filter(call=>call[0]==='chatgpt.addFileToThread').length,sent);
+});
+
+test('adaptation command opens the selected item and rejects changed batches', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    f.edit.versions = ['old', 'v1'];
+    f.edit.previous_feedback = {requests:[{id:'old-note',version:'old',side:'original',quote:'First',text:'旧要求',status:'open'}]};
+    f.vscode.window.showQuickPick = async choices => choices[0];
+    assert(require('../package.json').contributes.commands.some(c => c.command === 'localLatex.adaptOldFeedback'));
+    await f.handlers.get('localLatex.adaptOldFeedback')();
+    assert.equal(f.panels, 1);
+    await f.receive({type:'ready',instance:'adapt'});
+    assert(f.packets.some(p => p.type === 'openAdaptation' && p.c.id === '1' && p.c.version === 'v1' && p.session === 'batch'));
+    const contentCount=f.packets.filter(p=>p.type==='content').length;
+    await f.handlers.get('localLatex.adaptOldFeedback')();
+    assert.equal(f.packets.filter(p=>p.type==='content').length,contentCount,'opening the current picker must not replace unsaved page state');
+    const before = f.packets.filter(p => p.type === 'openAdaptation').length;
+    let count = 0; f.statusHook = () => {if (++count === 1) f.statusSession = 'new-batch';};
+    await f.handlers.get('localLatex.adaptOldFeedback')();
+    assert.equal(f.packets.filter(p => p.type === 'openAdaptation').length, before);
+    assert(f.notices.some(message => message.includes('审核状态已变化')));
+});
+
+test('adaptation command cancellation leaves the existing page unchanged', async () => {
+    const f=hostFixture(); await f.ui.ready;
+    const original=f.rows()[0].children[0].command.arguments[0];
+    await f.ui.open(original); await f.receive({type:'ready',instance:'existing'});
+    const before=structuredClone(f.edit), packets=f.packets.filter(p=>p.type==='openAdaptation').length;
+    f.vscode.window.showQuickPick=async()=>undefined;
+    await f.handlers.get('localLatex.adaptOldFeedback')();
+    assert.equal(f.ui.workbench.active.id,original.id); assert.deepEqual(f.edit,before);
+    assert.equal(f.packets.filter(p=>p.type==='openAdaptation').length,packets);
+});
+
+test('adaptation command uses the chosen project instead of the active editor', async () => {
+    const f=hostFixture(); await f.ui.ready;
+    const other=fs.mkdtempSync(path.join(process.env.LOCAL_LATEX_TEST_ROOT,'other-paper-'));
+    fs.copyFileSync(f.file,path.join(other,'paper.tex')); fs.copyFileSync(path.join(f.root,'reply.tex'),path.join(other,'reply.tex'));
+    const folder={uri:{scheme:'file',fsPath:other}};
+    f.vscode.workspace.workspaceFolders.push(folder);
+    f.vscode.window.showWorkspaceFolderPick=async()=>folder;
+    f.vscode.window.showQuickPick=async choices=>choices[0];
+    f.vscode.RelativePattern=class {constructor(base){this.base=base;}};
+    f.vscode.workspace.findFiles=async pattern=>[path.join(pattern.base,'paper.tex'),path.join(pattern.base,'reply.tex')].map(fsPath=>({scheme:'file',fsPath}));
+    await f.handlers.get('localLatex.adaptOldFeedback')();
+    assert.equal(f.ui.workbench.active.repo,other); assert.equal(f.ui.workbench.active.owner,'reply.tex');
+    assert(f.backendCalls.some(call=>call.args.at(-1)==='status' && call.cwd===other));
+    assert.equal(f.vscode.window.activeTextEditor.document.uri.fsPath,f.file);
+});
+
+test('a newer navigation cancels a queued adaptation request', async () => {
+    const f = hostFixture(); await f.ui.ready;
+    f.allCards['2'] = {...structuredClone(f.data), version:'v2', edit:{...structuredClone(f.edit),versions:['v2']}};
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const first=f.rows()[0].children.find(item=>item.command.arguments[0].id==='1').command.arguments[0];
+    const second=f.rows()[0].children.find(item=>item.command.arguments[0].id==='2').command.arguments[0];
+    await f.ui.open(first); f.ui.workbench.focusAdaptation({...first,session:'batch'});
+    await f.ui.open(second); await f.receive({type:'ready',instance:'newer'});
+    assert.equal(f.ui.workbench.active.id,'2');
+    assert(!f.packets.some(p=>p.type==='openAdaptation'));
+});
+
+test('a newer explicit navigation wins while the adaptation picker is preparing', async () => {
+    const f=hostFixture(); await f.ui.ready;
+    f.allCards['2']={...structuredClone(f.data),version:'v2',edit:{...structuredClone(f.edit),versions:['v2']}};
+    await f.ui.refresh({repo:f.root,owner:'reply.tex'});
+    const items=f.rows()[0].children, first=items.find(item=>item.command.arguments[0].id==='1').command.arguments[0];
+    const second=items.find(item=>item.command.arguments[0].id==='2').command.arguments[0];
+    await f.ui.open(first); await f.receive({type:'ready',instance:'current'});
+    f.vscode.window.showQuickPick=async choices=>choices.find(item=>item.id==='1');
+    let count=0; f.statusHook=async()=>{if (++count===1) await f.ui.open(second);};
+    await f.handlers.get('localLatex.adaptOldFeedback')();
+    assert.equal(f.ui.workbench.active.id,'2');
+    assert(!f.packets.some(packet=>packet.type==='openAdaptation'));
+    assert(f.notices.some(message=>message.includes('审核状态已变化')));
 });
 
 test('question directory opens a cold workbench before focusing its exact item', async () => {

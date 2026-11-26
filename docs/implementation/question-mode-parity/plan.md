@@ -1,5 +1,17 @@
 # 问题审核与段落审核能力对照及优化
 
+## AG阶段：旧批注适配入口可发现
+
+2026-11-26用户在146长表格审核页截图报告“还是没按钮，也没有对应的命令”。基线1d718df494c29e14d56d09e081b6d0f620e9af49，HEAD==origin/master、clean，0.9.76已安装。只读核源码：AF单条按钮仅在长原文/方案下方的批注区且按状态显示，package没有适配独立命令，用户在顶部找不到。最新Code日志20261126T113428含0.9.76 chktex_filter路径及扩展激活，不能未经核实归咎未重载；不操作用户窗口补证。沿既有总控与唯一Terra角色，AG返修0，验证后发布同包安装，暂不重载/重启。
+
+- [ ] AG1 原Terra一个完整功能批：审核页顶部直接可见“适配旧批注”入口，段落/问题模式均可发现，长表格或候选不需滚到底；注册同名可搜索的命令面板命令，可沿现有常用侧栏复用。入口打开明确的批注选择/适配管理界面，保留当前内容状态、原要求、适配结果待审与单条入口；没有需要适配的要求时给明确结果而不是无反应。顶部从当前精确审核项进入；命令从实际项目及审核状态选择，不能误绑当前非论文编辑器、另一仓库/owner/批次或隐式交接全部。复用原精确选择与按现稿提示链，只有用户明确选中并确认准备时加入Codex输入区，不自动发送AI、接收、关闭或改登记。AF原底部入口、已关联状态和内部来源/草稿/写入保护保留，补必要说明及调用方，不新增重复批注状态或恢复机制。
+- [ ] AG2 Terra先复现长内容首屏无入口/命令缺失，再集中定向核顶部与命令声明/真实注册路由、已有页和冷打开、当前项目选择、无旧要求提示、取消/范围与版本批次变化保护；复用AF状态语义与R1有效证据，不重跑同组。正常Development专属profile/pipe、私有未切桌面实际鼠标验证长内容顶部点击和命令面板键盘搜索选择，核精确批注选择及附件准备，源码/state/草稿保持；截图实看，Default及前中后前台不变，真实host/observer/outer退出保留。命令验证须来自实际贡献声明和真实注册链，不能只在最小夹具另造命令后宣称产品可搜索。总控冻结后审真实diff/调用链和有效证据，只补影响结论的缺口。
+- [ ] AG3 总控明确通过后原Terra必要发行检查、一次构建、正式Release及同一VSIX安装；总控独立交付meta并三docs集中结案，不包后冒烟，暂不重载/重启。
+
+总控维护plan/index，先支持增量后交Terra产品/测试/UI/隔离配置/execution/Git租约，支持docs随成功完整批提交；普通精确stage/commit/push master:master/fetch，远端前移或权限/Hook拒绝停止相关动作，不reset/rebase/merge/force/改remote。证据D:/latex-writing-checks/review-efficiency-20261122/AG-*，argv/cwd/env/stdout/stderr/真实exit和首败保留。Python业务每实际child正向FakeHost/AG根/非默认endpoint；真实协议测试child明确专属pipe及根。不新增性能或改超时/退役，不含删除cleanup/完整备份组，不重复AF功能/UI。实际AI添加/翻译/备份用隔离桩须说明，不冒称AI已执行。
+
+真实D:/Overleaf/TMI-DA-Marked-up Copy及P/个人资料/state/候选/批注/三稿/stage、全局host-lifecycle只读；不恢复真实登记、不操作146/147、不触用户窗口/默认pipe/MCP、不外发AI、不删除文件对象截图或cleanup、不改全局技能/config/TeX，不新增代理。普通Windows/pwsh7/UTF8/Python -B -X utf8，无待用户选择。先完整AG1–AG2交总控，不提前发行。
+
 ## AF阶段：旧批注适配状态与界面直接入口
 
 AF已完成，返修1：[0.9.76正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.76)并安装同一VSIX，唯一构建源码33ded3f15048c5ed4688660029f53bf5f7da611d，build/安装exit0。总控独立核本地/远端附注tag对象b7f368c44ccbeb085c35bbac10ac22fb7bc50859、目标及SOURCE-COMMIT/双包摘要；controller-af-release-meta.py实际读正式Release API，三附件digest与同一本地产物一致，manifest及source=vsix/pinned登记0.9.76，exit0。原记录在D:/latex-writing-checks/review-efficiency-20261122/controller-af-release*与AF-delivery-*，发行资格夹具首败及修正、Node DEP0169警告保留。复用有效功能/界面验证，未重复构建/安装/包后冒烟。未操作真实登记/论文/批注，不自动发送AI或接收/关闭要求；暂不重载/重启，活动宿主加载未知。三docs集中结案，无在途。

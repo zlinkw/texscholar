@@ -180,6 +180,16 @@ function renderFeedbackManager() {
     }
     $('notesCount').textContent = ` 已选 ${noteSelection.size} 条`;
 }
+function openAdaptation() {
+    if (!current) {status('审核项正在载入，请稍后再试。'); return;}
+    noteSelection.clear(); saveNoteSelection(); $('notesScope').value = 'current';
+    renderFeedbackManager();
+    const rows = feedbackRows.filter(noteInScope);
+    $('notesStatus').textContent = !rows.length ? '当前审核项没有待处理批注。' :
+        rows.some(row => adaptationState(row.note) === '需要重新适配') ? '请选择需要按现稿适配的具体批注。' :
+        '当前审核项没有需要重新适配的批注；可查看已有状态。';
+    if (!$('notesDialog').open) $('notesDialog').showModal();
+}
 function send(type, extra = {}, blocks = true) {
     if (!current) return;
     if (actionNames[type] || passiveActions.has(type)) feedbackTargets.set(type, localFeedback);
@@ -1181,6 +1191,7 @@ document.addEventListener('click', event => {
     if (type === 'toolbarCancel') {$('toolbarDialog').close(); return;}
     if (type === 'toolbarReset') {toolbarDraft={order:[...toolbarDefault.order],visible:[...toolbarDefault.visible]}; renderToolbarChoices(); return;}
     if (type === 'toolbarSave') {$('toolbarStatus').textContent='正在保存…'; send(type,{toolbar:toolbarDraft},false); return;}
+    if (type === 'adaptOldFeedback') {openAdaptation(); return;}
     if (type === 'manageNotes' || type === 'handoff' || type === 'handoffSelected') {
         if (type !== 'manageNotes') {noteSelection.clear(); saveNoteSelection(); $('notesScope').value=type==='handoffSelected' ? 'selected' : 'all'; if (type==='handoffSelected') $('directoryDialog').close();}
         renderFeedbackManager(); $('notesDialog').showModal(); return;
@@ -1321,6 +1332,10 @@ window.addEventListener('message', ({data: message}) => {
             if (target?.isConnected) window.scrollBy(0,target.getBoundingClientRect().top-top);
         }
         if (reviewMode==='question' && selectedQuestion!==before) send('reviewMode',{mode:reviewMode,questionKey:selectedQuestion,viewStyle:$('questionViewStyle').value},false);
+        return;
+    }
+    if (message.type === 'openAdaptation') {
+        if (message.session === currentSession && current && ['repo','owner','id','version'].every(k => message.c[k] === current[k])) openAdaptation();
         return;
     }
     if (message.type === 'focusQuestion') {

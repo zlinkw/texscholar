@@ -2,6 +2,21 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html, filterItems, staleBatchSelections} = require('./review_workbench');
 
+test('adaptation picker starts empty and explains when no request needs adaptation', () => {
+    const vm=require('node:vm'), fs=require('node:fs'), source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
+    const elements={notesScope:{value:'all'},notesStatus:{},notesDialog:{open:false,showModal(){this.open=true;}}};
+    const selected=new Map([['other',{}]]), context={current:{id:'1'},noteSelection:selected,saveNoteSelection(){},renderFeedbackManager(){},
+        feedbackRows:[],noteInScope:()=>true,adaptationState:n=>n.state,$:id=>elements[id]};
+    const start=source.indexOf('function openAdaptation()'),end=source.indexOf('\nfunction send(',start);
+    vm.runInNewContext(source.slice(start,end),context); context.openAdaptation();
+    assert.equal(selected.size,0); assert.equal(elements.notesScope.value,'current');
+    assert.match(elements.notesStatus.textContent,/没有待处理批注/); assert(elements.notesDialog.open);
+    context.feedbackRows=[{note:{state:'适配结果待审核'}}]; context.openAdaptation();
+    assert.match(elements.notesStatus.textContent,/没有需要重新适配/);
+    context.feedbackRows=[{note:{state:'需要重新适配'}}]; context.openAdaptation();
+    assert.match(elements.notesStatus.textContent,/请选择/);
+});
+
 test('adaptation status tracks exact saved ranges, source changes and held purposes', () => {
     const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
     const note={id:'n',version:'old',text:'request',side:'original'}, option={label:'A',after:'same text'};
