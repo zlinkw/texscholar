@@ -2,17 +2,23 @@
 
 ## AD阶段：单窗口重启后自动恢复旧宿主登记
 
-2026-11-26用户明确要求自动识别并恢复旧宿主登记，避免只有一个窗口却每次重启都需手动恢复。基线0eaf845792e4d35b1b654ff5161b96fdb8851638，HEAD==origin/master、clean，0.9.73已发布安装。总控local/01a212c7-d736-7503-ab7a-9717a426fefb维护计划/索引及最终审核，唯一Terra local/01a21288-5815-7312-b496-006ade07bede实现与小验收，AD返修0。沿已授权原流程验证通过后发布安装，不自动重载/重启用户窗口或MCP。
+2026-11-26用户明确要求自动识别并恢复旧宿主登记，避免只有一个窗口却每次重启都需手动恢复。基线0eaf845792e4d35b1b654ff5161b96fdb8851638，HEAD==origin/master、clean，0.9.73已发布安装。总控local/01a212c7-d736-7503-ab7a-9717a426fefb维护计划/索引及最终审核，唯一Terra local/01a21288-5815-7312-b496-006ade07bede实现与小验收，AD返修1。沿已授权原流程验证通过后发布安装，不自动重载/重启用户窗口或MCP。
 
 真实只读证据：用户贴出“审核宿主事务失败；请核对是否存在待恢复意图：宿主资格已失效或存在多个宿主；未提交正文”，并确认只开一个窗口。真实state当前无transaction、146/147仍rework；本机C:/Users/ZLK/AppData/Local/TeXScholar/host-lifecycle.json仅该项目true、mtime2026-11-25T13:09:19Z，当前Code日志20261126T093813。未连接默认pipe、未恢复登记或真实接收。持久标记不能单独证明当前实时成员数；不得把“失效或多宿主”合并错误当成多个窗口的确证。源码registry将persisted[root]直接变为uncertain，断线亦置uncertain，只有resolve-stale人工清除；bridge已有人工确认入口，main deactivate会close，但异常退出/更新可留下登记。应实证重启路径及必要边界，不能仅删除登记、绕过校验或假定PID消失即安全。
 
-- [ ] AD1 原Terra一个完整功能批：在专属pipe/journal/隔离论文以真实进程生命周期复现单宿主正常重启与非正常旧登记阻断，设计最小自动识别恢复，使可确认只剩当前有效宿主、旧生命周期已结束时无需手动操作恢复登记并可继续精确接收。复用现有registry/bridge/事务契约，不引入无依据超时、重试轮询、TTL或通用恢复平台；必要身份机制须对应已证缺口。保留旧人工入口，不自动接受任何候选/回放未完成事务，不清理真实登记或稿件。
-- [ ] AD2 Terra必要定向回归与正常Development私有未切桌面验证：隔离重启/旧登记后自动恢复、实际鼠标接收所选版本；真实同时多宿主、另一有效宿主仍在线/迟到登记、资格generation变化、未登记连接、未完成事务/损坏记录保持必要阻断或显式恢复路径，不丢正文/草稿/意图。按当前契约覆盖受影响原生及已有旧格式消费者，不猜角色文件。已有安全用例如确需改变预期须说明用户新语义及等价边界覆盖，不自动退役/放宽其他断言或超时。总控冻结后审实际diff/消费者/证据，只补未覆盖且影响结论的组合，不重复同组。
+- [x] AD1 原Terra一个完整功能批：在专属pipe/journal/隔离论文以真实进程生命周期复现单宿主正常重启与非正常旧登记阻断，设计最小自动识别恢复，使可确认只剩当前有效宿主、旧生命周期已结束时无需手动操作恢复登记并可继续精确接收。复用现有registry/bridge/事务契约，不引入无依据超时、重试轮询、TTL或通用恢复平台；必要身份机制须对应已证缺口。保留旧人工入口，不自动接受任何候选/回放未完成事务，不清理真实登记或稿件。
+- [x] AD2 Terra必要定向回归与正常Development私有未切桌面验证：隔离重启/旧登记后自动恢复、实际鼠标接收所选版本；真实同时多宿主、另一有效宿主仍在线/迟到登记、资格generation变化、未登记连接、未完成事务/损坏记录保持必要阻断或显式恢复路径，不丢正文/草稿/意图。按当前契约覆盖受影响原生及已有旧格式消费者，不猜角色文件。已有安全用例如确需改变预期须说明用户新语义及等价边界覆盖，不自动退役/放宽其他断言或超时。总控冻结后审实际diff/消费者/证据，只补未覆盖且影响结论的组合，不重复同组。
 - [ ] AD3 总控明确通过后另派原Terra预核下一无冲突版本、必要发行检查、一次构建、正式Release及同VSIX安装；总控只核交付元数据并三docs集中结案，不包后冒烟，不重载/重启。
 
 总控plan/index支持增量先写，随后移交产品/测试/UI/隔离配置/execution/Git租约给原Terra，支持docs随完整成功功能批精确普通commit/push/fetch，不为元数据另起微提交。检查每个实际Python子进程正向断言FakeHostSession及AD隔离根/正确endpoint；禁止默认pipe/MCP探测，不用LOCAL_LATEX_PIPE冒充隔离。UI按silent-ui-screenshot正常Development专属profile/pipe、CreateDesktopW私有未切桌面，核Default/前中后前台不变、截图逐张实看。证据D:/latex-writing-checks/review-efficiency-20261122/AD-*，完整argv/cwd/env/stdout/stderr/exit及首败；不机械重跑AC/全套/性能或含删除cleanup的测试。
 
 真实论文D:/Overleaf/TMI-DA-Marked-up Copy、P/个人资料/state/候选/批注/三稿/stage及真实全局host-lifecycle登记仅只读保护；不实际接收146/147、不恢复或修改真实登记/事务、不外网AI、不操作用户窗口、不删除文件/对象/截图、不cleanup、不改全局配置/技能/TeX。程序必要登记原子替换及锁生命周期按既有安全契约审查，不扩清理。pwsh7、UTF8、Python -B -X utf8；普通Windows仓库，远端前移/权限Hook拒绝停止相关动作，不reset/rebase/merge/force/改remote，不新建代理。完成AD1–AD2全部条件才冻结交总控，未通过不发行；无待用户决定。
+
+AD1–AD2最终审核通过，冻结1655dad469b291355e94746d53454ac6b2fac8d9，HEAD==origin/master且clean，返修1。总控审初包8文件及R1完整diff、运行资源和真实协议调用链；寿命由PID与进程持有端口共同保守判断，publish/persist/join顺序及pending/generation保护保留，旧true仅首次人工核对后迁移。业务FakeHost子进程须正向断言；专门协议集成保留真实HostSession并在实际child核AD隔离root和显式非默认pipe，不能用FakeHost替代其覆盖。
+
+总控controller-ad-reserve-recovery真实专属pipe组合首败exit1：多宿主下合法reserve拒绝关闭被误记unknown，第二宿主结束后仍阻断。R1限定单条完整有效且未获写权的已识别请求、已发布寿命身份的连接分类，真正未知/损坏/半帧仍阻断。AD-R1-check4十项exit0含真实Python reserve拒绝、源码/state保持、冲突解除后真实HostSession完整事务、发布未join寿命结束恢复、存活旧宿主及unknown/generation/finalize保护；复用原局部与AD-transaction1/资源闭包，不重复原红例或全组。AD-check2的19过1夹具失败及AD-check4定向补验、dev4意外纳入未做child断言和dev6补验均保留。
+
+总控核AD-ui3-seed及AD-ui3两次正常Development私有未切桌面原run/host/done、专属共用journal及Python委托真实专属pipe证明，宿主/观察器/外层均exit0，Default与前中后HWND6424344一致；逐张实看ui-e427c19e9707452fa419f626d348233b.png、ui-d2eae2c20a9d4244999a1f236524434b.png、ui-23527a7298224749908930cb62a3c385.png。旧格式核对迁移后异常连接结束，新Development自动恢复，真实鼠标脏稿拒绝可见、保存后精确版本A接收。R1未改变该有效正常路径，复用UI；macOS未实机测，不操作真实146/147或全局登记。证据根AD-*及controller-ad-reserve-recovery。无未解产品阻断，下一步原Terra执行AD3必要发行检查、一次构建及同包发行安装，仍不自动重载/重启。
 
 ## AC阶段：146与147接收无响应
 
