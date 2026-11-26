@@ -2,13 +2,15 @@
 
 ## AC阶段：146与147接收无响应
 
+AC已完成，返修0：[0.9.73正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.73)并安装同一VSIX，唯一构建源码f03c5442ef66389be17efa5313f5a53bb7c03df6，build/安装exit0。总控独立核本地/远端附注tag对象61741e5a4f88ec8198d8fc6eeaf4611a082cf9ac及构建目标、SOURCE-COMMIT/双包摘要；controller-ac-release-meta.py实际读正式Release API，三附件digest等于本地文件，manifest及source=vsix/pinned登记0.9.73，exit0。原始API/进程/结果在D:/latex-writing-checks/review-efficiency-20261122/controller-ac-release*，原发行安装记录AC-delivery-*，保留Node DEP0169警告。未重复构建/功能组/包后冒烟；未接收或改动真实146/147，现场具体拒绝原因仍未知，已修并验证长卡错误不可见这一可达缺陷。未自动重载/重启，当前活动宿主加载未知；用户方便时自行重载目标窗口后启用新版。三份支持记录集中结案，无在途。
+
 2026-11-26用户报告“146 147两个批注点击接收无反应”。基线8fc2a5604430a0f1fa4afa22f81b8a6c0815bbcc，master==origin/master、clean，0.9.72已安装但活动宿主加载版本未知。总控local/01a212c7-d736-7503-ab7a-9717a426fefb维护计划/索引及最终审核；唯一Terra local/01a21288-5815-7312-b496-006ade07bede连续复现、实现、小验收，AC返修0，不新增角色。
 
 只读现场：真实state session e74dbc117a5f4cf4991bfb17187ca9c9，146/147均rework、无待提交事务；146最新版本81218ab73af0d899391cf20bf053a6102f0cff79b0f6f716ea968bb4649201af、generation3，147最新bb20a18b7de37e5083dc243eb6e7b54b5c4e3051d1d42e50b31b399215d82570、generation2。Code日志20261125T224400/window1/exthost/output_logging_20261125T224403/6-TeXScholar 接收与备份.log第21/28/32/36/40行有匹配显示id/version的webview_request，所读40行未见decide；该trace未含消息type，不能据此确定后端原因或宣称接收已完成。源码当前可达检查包括工作台dirty/noteDirty、inline currentFromRecords/cleanBuffers、状态/源码一致性及正文定位；需区分真实拒绝、请求未入写入与提示不可见，不能先放松保护。
 
 - [x] AC1 原Terra在隔离数据及真实客户端/宿主seam建立同症状确定性复现，区分接收前检查、消息/卡片路由及反馈呈现；保留首败和可证伪根因，完成最小完整修复与受影响调用方。合法点击最终接收所选精确版本并反馈；未保存正文/候选/批注、旧版本或真实冲突明确提示并保留内容，不自动保存、接收或猜配146/147。仅按需读取真稿相关元数据/对应块，禁止对真实146/147执行接收、重试或任何写入。
 - [x] AC2 Terra集中必要定向回归及真实隔离UI实点，覆盖实际复现路径的成功和当前拒绝原因可见性；按silent-ui-screenshot使用正常Development专属profile/pipe、私有未切桌面，实看截图并核Default/前台不变。测试每个实际Python子进程先正向断言FakeHostSession及隔离根/有效endpoint，不能把LOCAL_LATEX_PIPE当隔离证明；不无选择运行含旧性能/删除/cleanup的整组套件，不新增或改性能测试。总控冻结后审核真实diff/证据，仅补具体未覆盖且影响结论的组合，不重复相同验证。
-- [ ] AC3 总控明确通过后另派原Terra按既有授权预核下一无冲突版本、必要发行检查、一次构建、正式Release和同VSIX安装；总控核交付元数据并集中结案，不自动重载/重启，不包后冒烟。
+- [x] AC3 总控明确通过后另派原Terra按既有授权预核下一无冲突版本、必要发行检查、一次构建、正式Release和同VSIX安装；总控核交付元数据并集中结案，不自动重载/重启，不包后冒烟。
 
 总控先集中写本plan/index支持增量，随后通过受支持消息移交产品/测试/UI/隔离配置/execution/Git租约，停止重叠写测；支持docs随成功完整功能批精确提交推送。沿既有权限保护真实论文D:/Overleaf/TMI-DA-Marked-up Copy、个人资料、state/候选/批注/三稿及范围外stage；不操作用户窗口、默认pipe/MCP、不外发AI、不改全局配置/技能/TeX，不删除文件/对象/截图、不cleanup。普通精确Git，远端前移/权限或Hook拒绝停止相关动作，不reset/rebase/merge/force/改remote。pwsh7、显式UTF8、Python -B -X utf8；完整argv/cwd/env/stdout/stderr/exit与失败记在既有execution及D:/latex-writing-checks/review-efficiency-20261122/AC-*。无待用户决定；修复完整交包后总控审核，未通过不发行。
 
