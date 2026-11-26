@@ -2,6 +2,8 @@
 
 ## AE阶段：恢复入口可见与旧批注按现稿适配
 
+AE已完成，返修0：[0.9.75正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.75)并安装同一VSIX，唯一构建源码3503fdd2d822aae3f8c83df55ab9498beabaafe5，build/安装exit0。总控独立核本地/远端附注tag对象72cd154dd307a2d1cfc8b91694e216fba1d173a0、构建目标及SOURCE-COMMIT/双包摘要；controller-ae-release-meta.py实际读正式Release API，三附件digest与同一本地产物一致，manifest及source=vsix/pinned登记0.9.75，exit0。原始API/argv/cwd/退出/结果在D:/latex-writing-checks/review-efficiency-20261122/controller-ae-release*，原发行安装记录AE-delivery-*，Node DEP0169警告保留。未重复构建/功能组/包后冒烟，未操作真实登记、稿件或批注；未重载/重启，活动宿主加载未知。用户方便时重载目标窗口后可直接搜索恢复命令，旧true仍需首次核对；旧批注交接只准备按现稿适配的提示，不代表AI已实际执行或作者已接收。三份支持记录集中结案，无在途。
+
 2026-11-26用户截图显示命令面板搜不到恢复功能，并提出批注无需让用户携带版本号，正文更新后提供提示词由AI重新适配。基线014d5c396f70b4b2396e08fa4bbbd564a469e78b，HEAD==origin/master、clean，0.9.74已发布安装。总控local/01a212c7-d736-7503-ab7a-9717a426fefb维护计划/索引及最终审核；唯一Terra local/01a21288-5815-7312-b496-006ade07bede实现与小验收，AE返修0。沿原已授权流程验证通过后发布安装，暂不重载/重启。
 
 已核仓库与实际0.9.74安装package：localLatex.resolveReviewHost标题“核对并恢复审核宿主登记”、category“ LaTeX 审核”，commandPalette.when=false，故用户搜不到；已有编辑器右键原文审核与批注→审核高级操作入口。此前总控错误指引用户从命令面板搜索，已向用户更正。真实host-lifecycle仍该项目旧true，未操作登记或真实稿件。宿主资格检查与批注版本检查互相独立，不得把所贴宿主报错误归因于批注版本或为消错误删保护。
@@ -10,7 +12,7 @@
 
 - [x] AE1 原Terra一个完整功能批：让现有恢复命令可在命令面板发现，保留右键与原确认语义；复用已有注册命令，不增加与当前缺口无关的管理平台。批注常用显示/选择不默认堆哈希版本号，改用可理解的当前/此前内容状态，必要原始来源身份留内部。沿既有明确选中批注→Codex交接入口，在当前内容已变化时准备按现稿适配的提示词，强调先按需读取现稿/当前审核状态与相关稳定块、保留原意见、旧选区不得直接套新偏移、同ID返修及原范围/接受约束；不得默认载入全论文/全部批注或自动发送AI。补齐必要调用方/说明与收包资源，不另造重复上下文快照或缓存。
 - [x] AE2 Terra定向验证恢复入口实际声明/注册与现有确认保护、跨版本批注明确选中后交接的提示与精确身份、当前批注正常路径、交接期间版本/批次变化拒绝、范围外批注/草稿保持；不放松原写入保护。按silent-ui-screenshot在正常Development专属profile/pipe、私有未切桌面实搜命令并核可见入口，以及旧批注交接/提示呈现；不确认真实恢复、不启动真实AI，观察器不能用API调用冒充鼠标/键盘入口。总控冻结后审diff和有效证据，仅补影响结论的未覆盖组合。
-- [ ] AE3 总控明确通过后原Terra按既有流程必要发行检查、一次构建、正式Release及同VSIX安装；总控独立核交付meta并三docs集中结案，不包后冒烟、不重载/重启。
+- [x] AE3 总控明确通过后原Terra按既有流程必要发行检查、一次构建、正式Release及同VSIX安装；总控独立核交付meta并三docs集中结案，不包后冒烟、不重载/重启。
 
 总控先写plan/index支持增量，随后将产品/测试/UI/隔离配置/execution/Git租约交原Terra，支持docs随成功完整功能批精确普通commit/push/fetch；不另起微提交。证据D:/latex-writing-checks/review-efficiency-20261122/AE-*保留完整argv/cwd/env/stdout/stderr/exit及首败，复用有效已有验证，不机械重跑AD/性能/全套或含删除cleanup的用例，不改超时/退役。Python业务夹具每实际子进程正向核FakeHost/AE根；专门真实协议测试仅显式非默认pipe且child正向核根和端点。UI专属环境、Default/前中后前台不变、截图实看保留。
 
