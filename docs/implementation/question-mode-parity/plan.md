@@ -2,13 +2,15 @@
 
 ## AG阶段：旧批注适配入口可发现
 
+AG已完成，返修0：[0.9.77正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.77)并安装同一VSIX，唯一构建源码88503d18d19934d9e6df5e79418fd2c9c334b40f，build/安装exit0。总控独立核本地/远端附注tag对象9fd00fe48de22ced8703dce4a65d640b579cf2fd、目标及SOURCE-COMMIT/双包摘要；controller-ag-release-meta.py实际读取正式Release API，三附件digest与同一本地产物一致，manifest及source=vsix/pinned登记0.9.77，exit0。原记录D:/latex-writing-checks/review-efficiency-20261122/controller-ag-release*及AG-delivery-*，预期404与Node DEP0169警告保留。用户指定的首屏顶部按钮、命令面板搜索及选择具体旧批注准备适配均已在AG-ui12实际键鼠通过并逐张实看截图；未发送真实AI或操作真实稿件/登记，未重复功能/UI或包后冒烟。暂不重载/重启，活动宿主加载未知，三docs集中结案，无在途。
+
 AG1–AG2最终审核通过，返修0，实际冻结ac58e6a3319a8d0fd0cf65295502cc3d12ccdf70，HEAD==origin/master且clean；以实际Git为准，交包消息中不同提交号不作基线。总控审10文件真实diff、顶部/命令贡献及注册、冷打开/同项草稿/导航次序、精确选择与交接链；复用AG-check7十项exit0、AF状态及R1有效覆盖。总控核AG-ui12原始run/host/done、实际键鼠观察器、后端root/FakeHost/专属endpoint证明及附件；当前三份界面实现与被测副本逐一一致。正常Development实际package/main激活，长候选首屏按钮可见可点、命令面板可搜“TeXScholar: 适配旧批注”并选择审核项、勾选一条此前要求生成仅该要求的适配附件，未发送AI；同项命令保持未保存草稿，state/正文保持。host/observer/outer exit0，Default/前中后HWND855866不变。三张ui-dfb09d9b7fa74dd0b6ee0e83b38834dc.png、ui-aae4dfe90e094dbca9ae232b18e42450.png、ui-1e92eb3d302248f68ae53bfc84e08f97.png逐张实看。AG-ui9仅构造HostSession时核根的证明不足由ui12每实际child实核补齐，原失败/限制保留。下一步AG3一次构建正式发行同包安装，暂不重载/重启，不重复功能/UI组。
 
 2026-11-26用户在146长表格审核页截图报告“还是没按钮，也没有对应的命令”。基线1d718df494c29e14d56d09e081b6d0f620e9af49，HEAD==origin/master、clean，0.9.76已安装。只读核源码：AF单条按钮仅在长原文/方案下方的批注区且按状态显示，package没有适配独立命令，用户在顶部找不到。最新Code日志20261126T113428含0.9.76 chktex_filter路径及扩展激活，不能未经核实归咎未重载；不操作用户窗口补证。沿既有总控与唯一Terra角色，AG返修0，验证后发布同包安装，暂不重载/重启。
 
 - [x] AG1 原Terra一个完整功能批：审核页顶部直接可见“适配旧批注”入口，段落/问题模式均可发现，长表格或候选不需滚到底；注册同名可搜索的命令面板命令，可沿现有常用侧栏复用。入口打开明确的批注选择/适配管理界面，保留当前内容状态、原要求、适配结果待审与单条入口；没有需要适配的要求时给明确结果而不是无反应。顶部从当前精确审核项进入；命令从实际项目及审核状态选择，不能误绑当前非论文编辑器、另一仓库/owner/批次或隐式交接全部。复用原精确选择与按现稿提示链，只有用户明确选中并确认准备时加入Codex输入区，不自动发送AI、接收、关闭或改登记。AF原底部入口、已关联状态和内部来源/草稿/写入保护保留，补必要说明及调用方，不新增重复批注状态或恢复机制。
 - [x] AG2 Terra先复现长内容首屏无入口/命令缺失，再集中定向核顶部与命令声明/真实注册路由、已有页和冷打开、当前项目选择、无旧要求提示、取消/范围与版本批次变化保护；复用AF状态语义与R1有效证据，不重跑同组。正常Development专属profile/pipe、私有未切桌面实际鼠标验证长内容顶部点击和命令面板键盘搜索选择，核精确批注选择及附件准备，源码/state/草稿保持；截图实看，Default及前中后前台不变，真实host/observer/outer退出保留。命令验证须来自实际贡献声明和真实注册链，不能只在最小夹具另造命令后宣称产品可搜索。总控冻结后审真实diff/调用链和有效证据，只补影响结论的缺口。
-- [ ] AG3 总控明确通过后原Terra必要发行检查、一次构建、正式Release及同一VSIX安装；总控独立交付meta并三docs集中结案，不包后冒烟，暂不重载/重启。
+- [x] AG3 总控明确通过后原Terra必要发行检查、一次构建、正式Release及同一VSIX安装；总控独立交付meta并三docs集中结案，不包后冒烟，暂不重载/重启。
 
 总控维护plan/index，先支持增量后交Terra产品/测试/UI/隔离配置/execution/Git租约，支持docs随成功完整批提交；普通精确stage/commit/push master:master/fetch，远端前移或权限/Hook拒绝停止相关动作，不reset/rebase/merge/force/改remote。证据D:/latex-writing-checks/review-efficiency-20261122/AG-*，argv/cwd/env/stdout/stderr/真实exit和首败保留。Python业务每实际child正向FakeHost/AG根/非默认endpoint；真实协议测试child明确专属pipe及根。不新增性能或改超时/退役，不含删除cleanup/完整备份组，不重复AF功能/UI。实际AI添加/翻译/备份用隔离桩须说明，不冒称AI已执行。
 
