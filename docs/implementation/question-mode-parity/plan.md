@@ -2,6 +2,8 @@
 
 ## AH阶段：外置审核状态与候选迁移读取兼容
 
+AH最终审核返修1：初包9d397d9a42ec037fa2ae766a8c9351efdb84f254已同步clean。总控审9文件实际diff及AH-check8定向17项有效证据，发现ai_context在旧依赖分类前调用review.payload；accepted_option存在时payload先调用option_effect，仍触发原缺proof错误。真实只读109/110均accepted_option=A，原测试仅直接设status=accepted遗漏该字段。总控独占隔离controller-ah-accepted-dependency给同一实际MCP场景补accepted_option=A，exit1精确复现上述链，原argv/cwd/env/stdout/stderr保留；FakeHost/根/专属endpoint在实际进程正向断言。交原Terra修分类前读取及相关消费者，只补该缺口与必要保护，未通过不发行，不改真稿/旧proof。
+
 2026-11-26用户明确要求先修插件：read_context报“候选的旧注释没有当前版本的精确迁移资料”，迁移预览又报“需要现有内嵌审核状态”，项目已用外置状态，尚未保存R2-Q2/R4-Q1返修。仅修插件及必要交付，本轮不继续科学返修或同步正文/表注/结论，不修改真实论文、批注、候选、依赖及登记。基线0e212f98dba130045e71423bce80d39b7379f77e，HEAD==origin/master、clean，0.9.77已安装。沿既有总控与唯一Terra角色，AH返修0；验证后原流程发行安装，暂不重载/重启。
 
 已只读核：review_migration.preview明确拒绝sidecar，它是内嵌→外置状态迁移；source_review.option_effect按候选精确迁移资料校验并受全局option_migration_complete影响，两种迁移用途不能混淆。真实state schema3、option_migration_complete=true、manifest12项，无transaction；R2-Q2/R4-Q1相关活跃107/108/112/113/114/115/bg/bh当前版本均有对应proof/manifest版本键，历史accepted/rejected项多无当前proof。尚未运行真实MCP/后端，不据这些元数据宣称唯一根因。需在隔离夹具还原真实读取条件，区分缺失/损坏证明、历史或已处理项、正常新候选及误入迁移入口。

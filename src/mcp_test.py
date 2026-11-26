@@ -39,6 +39,13 @@ class MCP(unittest.TestCase):
         server = self.server(); args = {'project':str(self.root), 'state':'.codex-review/state.json', 'ids':[id_]}
         context = server.call('read_context', args)['context']
         self.assertEqual(context['items'][id_]['options'][0]['after'], 'The model is reliable.')
+        r = review(); r.state['edits'][id_].update(status='accepted', accepted_option='A'); r.persist({}, digest(r.raw))
+        accepted = server.call('read_context', args)['context']['items'][id_]
+        self.assertEqual(accepted['accepted_option'], 'A')
+        self.assertEqual(accepted['options'][0]['after'], 'The model is reliable.')
+        self.assertNotIn('historical_candidate_unavailable', accepted)
+        r = review(); r.state['edits'][id_]['status'] = 'pending'; r.state['edits'][id_].pop('accepted_option'); r.persist({}, digest(r.raw))
+        context = server.call('read_context', args)['context']
         before = (self.root/'main.tex').read_bytes()
         saved = server.call('rework_options', {'project':str(self.root), 'state':args['state'], 'id':id_, 'version':version,
             'expected_sha256':context['sha256'], 'spec':{'options':[{'label':'A', 'after':'The model is reliable here.',
@@ -48,6 +55,21 @@ class MCP(unittest.TestCase):
         self.assertEqual(latest['options'][0]['after'], 'The model is reliable here.')
         self.assertEqual(review().state['edits'][id_]['option_migration'][version]['A'], proof)
         self.assertEqual((self.root/'main.tex').read_bytes(), before)
+        r = review(); edit = r.state['edits'][id_]; payload = r.payload(edit)
+        choices = [{'label':label, 'after':raw.replace('reliable.', f'reliable {label}.'), 'reason':label} for label in 'ABC']
+        payload.update(after=choices[0]['after'], options=choices)
+        current = r.snapshot({'original.tex':payload['before'].encode('utf-8'),
+            'candidate.tex':payload['after'].encode('utf-8'),
+            'span.json':json.dumps(payload, ensure_ascii=False).encode('utf-8')}, 'fixture mapped options')
+        edit['versions'].append(current); edit['status'] = 'accepted'; edit['accepted_option'] = 'B'
+        edit['option_migration'][current] = {o['label']:{**prepare(o['after']),
+            'rule_source':f"candidate:{r.state['session']}:{id_}:{current}:{o['label']}"} for o in choices}
+        r.state['option_migration_manifest'][id_][current] = ['A','B','C']
+        r.persist({}, digest(r.raw))
+        selected = server.call('read_context', args)['context']['items'][id_]
+        self.assertEqual(selected['accepted_option'], 'B')
+        self.assertEqual([o['after'] for o in selected['options']], [f'The model is reliable {label}.' for label in 'ABC'])
+        self.assertNotIn('historical_candidate_unavailable', selected)
 
     def test_sidecar_related_questions_keep_exact_dependencies_and_unselected_work(self):
         path = self.root / 'reply.tex'
@@ -91,9 +113,10 @@ class MCP(unittest.TestCase):
     def test_context_with_unmapped_decided_legacy_dependency(self):
         legacy = '% CODEX-PARAGRAPH-PLAN-BEGIN\n% old intent\n% CODEX-PARAGRAPH-PLAN-END\nAccepted text.'
         first = self.apply('propose', {'file':'main.tex', 'kind':'manuscript',
-            'before':'The model is strong and fast.', 'after':legacy})['id']
+            'before':'The model is strong and fast.', 'options':[
+                {'label':label, 'after':legacy + label, 'reason':label} for label in 'ABC']})['id']
         review = self.review()
-        review.state['edits'][first]['status'] = 'accepted'
+        review.state['edits'][first].update(status='accepted', accepted_option='A')
         review.state['option_migration_complete'] = True
         fixtures.NativeReview.install_sidecar(self, dict(review.state, schema=3))
         def sidecar(): return fixtures.Review(self.root, '.codex-review/state.json', 'missing-git')
@@ -113,6 +136,8 @@ class MCP(unittest.TestCase):
         result = self.server().call('read_context', {'project':str(self.root),
             'state':'.codex-review/state.json', 'ids':[second]})['context']
         self.assertEqual(result['items'][first]['status'], 'accepted')
+        self.assertEqual(result['items'][first]['accepted_option'], 'A')
+        self.assertEqual(result['items'][first]['version'], sidecar().state['edits'][first]['versions'][-1])
         self.assertTrue(result['items'][first]['historical_candidate_unavailable'])
         self.assertNotIn('options', result['items'][first])
         self.assertEqual(result['items'][second]['options'][0]['after'], 'Thank you for the suggestion.')
@@ -157,6 +182,17 @@ class MCP(unittest.TestCase):
         original = state_path.read_bytes()
         state = json.loads(original)
         old = state['edits'][first]
+        for label in ('B', 'C'):
+            old['accepted_option'] = label
+            state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+            data = server.call('read_context', {**args, 'ids':[second]})['context']
+            self.assertEqual(data['items'][first]['accepted_option'], label)
+            self.assertTrue(data['items'][first]['historical_candidate_unavailable'])
+        old['accepted_option'] = 'D'
+        state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+        with self.assertRaisesRegex(Conflict, 'Unknown candidate option'):
+            server.call('read_context', {**args, 'ids':[second]})
+        old['accepted_option'] = 'A'
         for status in ('accepted', 'rejected'):
             old['status'] = status
             state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
