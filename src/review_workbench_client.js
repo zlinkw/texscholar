@@ -174,7 +174,7 @@ function renderFeedbackManager() {
         check.addEventListener('change', () => {if (check.checked) noteSelection.set(key, row); else noteSelection.delete(key); saveNoteSelection(); renderFeedbackManager();});
         const text = document.createElement('span');
         const state = {open:'待处理','addressed-pending-review':'待作者核对','closed-by-author-acceptance':'接收后关闭','closed-by-author-rejection':'拒绝后关闭'}[row.note.status] || row.note.status;
-        text.textContent = ` ${row.id} · ${row.file} · ${row.source === 'previous_feedback' ? '上一版' : '批注'} · ${row.note.option ? '方案 ' + row.note.option : '整项／原文'} · 版本 ${row.note.version?.slice(0,8) || '未知'} · ${state}${row.note.held ? ' · 暂留' : ''}${check.disabled ? ' · 身份不完整，保留待核' : ''}${selected && JSON.stringify(selected) !== JSON.stringify(row) ? ' · 已变化，请清选后重新选择' : ''}\n选区：${row.note.display_context?.quote ?? row.note.quote}\n${row.note.text}`;
+        text.textContent = ` ${row.id} · ${row.file} · ${row.note.version === row.version ? '当前内容' : '此前内容'} · ${row.note.option ? '方案 ' + row.note.option : '整项／原文'} · ${state}${row.note.held ? ' · 暂留' : ''}${check.disabled ? ' · 身份不完整，保留待核' : ''}${selected && JSON.stringify(selected) !== JSON.stringify(row) ? ' · 已变化，请清选后重新选择' : ''}\n选区：${row.note.display_context?.quote ?? row.note.quote}\n${row.note.text}`;
         text.style.whiteSpace = 'pre-wrap'; label.append(check, text); const box = document.createElement('div'); box.className = 'note'; box.append(label); root.append(box);
     }
     $('notesCount').textContent = ` 已选 ${noteSelection.size} 条`;
@@ -787,7 +787,7 @@ function renderQuestions(questions) {
 function noteOrigin(n) {
     const context = n.display_context;
     const origin = context ? (context.question ? context.question.id : n.option ? '方案 ' + n.option : '原文') + (context.kind === 'translation' ? '译文' : '审稿问题') : n.option || '整项';
-    return origin + ' · ' + ({revision:'普通返修',skill:'完善通用 SKILL',personal:'完善我的习惯',paper_requirements:'完善本论文要求',paper_background:'论文背景',discussion:'仅提问或讨论'}[n.purpose || 'revision']) + ' · ' + n.version.slice(0, 8);
+    return origin + ' · ' + ({revision:'普通返修',skill:'完善通用 SKILL',personal:'完善我的习惯',paper_requirements:'完善本论文要求',paper_background:'论文背景',discussion:'仅提问或讨论'}[n.purpose || 'revision']) + ' · ' + (n.version === current.version ? '当前内容' : '此前内容');
 }
 function fulfillmentText(n) {
     if (data.source_match === false || n.source_stale) return '<p>原文或批注基准已变化，请重新核对返修说明。</p>';

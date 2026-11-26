@@ -551,7 +551,7 @@
         { "command": "localLatex.inlineTranslate", "when": "false" },
         { "command": "localLatex.inlineQuestions", "when": "false" },
         { "command": "localLatex.prepareReviewBlock", "when": "false" },
-        { "command": "localLatex.resolveReviewHost", "when": "false" },
+        { "command": "localLatex.resolveReviewHost" },
         { "command": "localLatex.migrateReviewState", "when": "false" },
         { "command": "localLatex.recoverReviewMigration", "when": "false" }
       ],

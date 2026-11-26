@@ -34,7 +34,7 @@ function hostFixture({tex = true, state = true, autoPDF = true, questionStore = 
     fs.writeFileSync(file, value, 'utf8');
     if (state) fs.writeFileSync(owner, '% CODEX-REVIEW-STATE-BEGIN\n% CODEX-REVIEW-DATA fixture\n% CODEX-REVIEW-STATE-END', 'utf8');
     const calls = [], notices = [], backendCalls = [], handlers = new Map(), packets = [], trees = [], reveals = [];
-    let receive, panelDispose, panels = 0, provider, fileChanged, texChanged, saveHandler, configurationChanged, selectionHandler, sourceValue, cardsHook, cardsTransform, pdfHook, migrationHook, manualHook, syncHook, saveSourceHook, batchHook, revealHook;
+    let receive, panelDispose, panels = 0, provider, fileChanged, texChanged, saveHandler, configurationChanged, selectionHandler, sourceValue, cardsHook, cardsTransform, pdfHook, migrationHook, manualHook, syncHook, saveSourceHook, batchHook, revealHook, statusHook, statusSession = 'batch';
     const original = value, edit = {file: path.basename(file), kind: 'manuscript', deferred: true, status: 'pending', versions: ['v1'], requests: [], questions: []};
     const start = Array.from(original.slice(0, original.indexOf('First'))).length;
     const data = {version: 'v1', edit, original: 'First sentence.', candidate: 'Better sentence.', options: [
@@ -94,7 +94,7 @@ function hostFixture({tex = true, state = true, autoPDF = true, questionStore = 
         }
         if (args.includes('inspect')) return JSON.stringify(allCards[args[args.indexOf('--id') + 1]]);
         if (args.includes('feedback')) {const request={...input,id:'note-'+(edit.requests.length+1),version:input.version,status:'open'}; edit.requests.push(request); return JSON.stringify({card: data, request, owner_text: 'fixture owner'});}
-        if (args.at(-1)==='status') return JSON.stringify({session:'batch',sha256:'fixture',edits:Object.fromEntries(Object.entries(allCards).map(([id,item])=>[id,item.edit]))});
+        if (args.at(-1)==='status') {const result=JSON.stringify({session:statusSession,sha256:'fixture',edits:Object.fromEntries(Object.entries(allCards).map(([id,item])=>[id,item.edit]))}); if (statusHook) await statusHook(); return result;}
         if (args.includes('feedback-context')) {
             const ids = args.flatMap((value, i) => value === '--id' ? [args[i + 1]] : []);
             const items = [
@@ -124,11 +124,37 @@ function hostFixture({tex = true, state = true, autoPDF = true, questionStore = 
     if (initialMode) context.globalState.update('reviewMode',initialMode);
     const ui = createInlineReview(vscode, context, backend);
     return {root, file, original, editor, document, vscode, data, edit, allCards, calls, notices, backendCalls, handlers, packets, trees, reveals, ui,
-        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set cardsTransform(fn) {cardsTransform = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;}, set syncHook(fn) {syncHook = fn;}, set saveSourceHook(fn) {saveSourceHook = fn;}, set batchHook(fn) {batchHook = fn;}, set revealHook(fn) {revealHook = fn;},
+        get value() {return value;}, set value(text) {value = text;}, set sourceValue(text) {sourceValue = text;}, set cardsHook(fn) {cardsHook = fn;}, set cardsTransform(fn) {cardsTransform = fn;}, set pdfHook(fn) {pdfHook = fn;}, set migrationHook(fn) {migrationHook = fn;}, set manualHook(fn) {manualHook = fn;}, set syncHook(fn) {syncHook = fn;}, set saveSourceHook(fn) {saveSourceHook = fn;}, set batchHook(fn) {batchHook = fn;}, set revealHook(fn) {revealHook = fn;}, set statusHook(fn) {statusHook = fn;}, set statusSession(value) {statusSession = value;},
         rows: () => provider.getChildren(), receive: m => receive(m), closePanel: () => panelDispose(),
         config: (changed = 'localLatex.reviewStyle.removedColor') => configurationChanged({affectsConfiguration: key => changed === key || changed.startsWith(key + '.')}),
         changed: () => fileChanged(uri(owner)), saved: () => saveHandler(document), savedDocument: doc => saveHandler(doc), texChanged: () => texChanged(uri(file)), get selectionHandler() {return selectionHandler;}, get panels() {return panels;}};
 }
+
+test('selected earlier feedback is handed off for current-source adaptation without rebinding it', async () => {
+    const f=hostFixture(); await f.ui.ready;
+    const current=f.rows()[0].children[0].command.arguments[0];
+    const old={id:'earlier',version:'old-generation',side:'original',start:2,end:7,quote:'First',text:'保留这条要求',status:'open'};
+    const other={id:'other',version:'v1',side:'candidate',option:'B',quote:'other',text:'范围外批注',status:'open'};
+    f.edit.versions=['old-generation','v1']; f.edit.previous_feedback={requests:[old]}; f.edit.requests=[other];
+    const row={id:'1',version:'v1',file:f.edit.file,kind:f.edit.kind,source:'previous_feedback',note:old};
+    const before=structuredClone(f.edit);
+    await f.ui.addRequests(current,[row],'batch');
+    const file=f.calls.findLast(call=>call[0]==='chatgpt.addFileToThread')[1].fsPath;
+    const text=fs.readFileSync(file,'utf8');
+    assert.match(text,/此前内容，需结合现稿重新定位/); assert.match(text,/read_context/);
+    assert.match(text,/旧内容，不能直接套用于新文字/); assert.match(text,/无法唯一对应时保留要求/);
+    assert.match(text,/不自动接收、关闭批注或覆盖现稿/); assert.match(text,/"version":"old-generation"/);
+    assert(text.includes('保留这条要求')); assert(!text.includes('范围外批注')); assert.deepEqual(f.edit,before);
+    const sent=f.calls.filter(call=>call[0]==='chatgpt.addFileToThread').length;
+    let observed=0; f.statusHook=()=>{if (++observed===1) f.edit.versions.push('new-generation');};
+    await assert.rejects(f.ui.addRequests(current,[row],'batch'),/候选已更新或批次已变化/);
+    assert.equal(f.calls.filter(call=>call[0]==='chatgpt.addFileToThread').length,sent);
+    assert.equal(old.version,'old-generation'); assert.equal(other.text,'范围外批注');
+    f.edit.versions=['old-generation','v1']; observed=0;
+    f.statusHook=()=>{if (++observed===1) f.statusSession='new-batch';};
+    await assert.rejects(f.ui.addRequests(current,[row],'batch'),/候选已更新或批次已变化/);
+    assert.equal(f.calls.filter(call=>call[0]==='chatgpt.addFileToThread').length,sent);
+});
 
 test('question directory opens a cold workbench before focusing its exact item', async () => {
     const f=hostFixture({questionStore:true,initialMode:'question'});

@@ -1249,7 +1249,7 @@ function createInlineReview(vscode, context, execute = run) {
         const status = await backend(c, ['status']);
         const available = feedbackRows(status).filter(row => row.note.id && row.note.version);
         if (!selected) {
-            const picks = await vscode.window.showQuickPick(available.filter(row => !target || row.id === target.id).map(row => ({label:`${row.id} · ${row.file} · ${row.note.held ? '暂留' : '待处理'}`, description:row.note.text, detail:`版本 ${row.note.version} · ${row.note.display_context?.quote ?? row.note.quote}`, row})), {canPickMany:true, title:'选择要交接的具体批注', placeHolder:'仅发送明确选择的批注'});
+            const picks = await vscode.window.showQuickPick(available.filter(row => !target || row.id === target.id).map(row => ({label:`${row.id} · ${row.file} · ${row.note.held ? '暂留' : '待处理'}`, description:row.note.text, detail:`${row.note.version === row.version ? '当前内容' : '此前内容'} · ${row.note.display_context?.quote ?? row.note.quote}`, row})), {canPickMany:true, title:'选择要交接的具体批注', placeHolder:'仅交接明确选择的批注'});
             if (!picks || !picks.length) return;
             selected = picks.map(pick => pick.row);
             session = status.session;
@@ -1269,7 +1269,7 @@ function createInlineReview(vscode, context, execute = run) {
             if (generations.has(key)) generations.get(key).requests.push(...item.requests);
             else generations.set(key, {...item, requests: [...item.requests]});
         }
-        const notes = [...generations.values()].map(item => `审阅框编号：${item.id}\n方案：见每条批注范围\n文件：${item.file}\n批注基于版本：${item.version}\n当前候选版本：${item.current_version}`
+        const notes = [...generations.values()].map(item => `审阅框编号：${item.id}\n方案：见每条批注范围\n文件：${item.file}\n批注来源：${item.version === item.current_version ? '当前内容' : '此前内容，需结合现稿重新定位'}`
             + '\n【作者返修批注】\n'
             + item.requests.map(n => {
                 const d=n.display_context, q=d?.review_question;
@@ -1286,7 +1286,7 @@ function createInlineReview(vscode, context, execute = run) {
         const file = path.join(folder, '返修批注.txt');
         const ids = requested ? requested.map(item => item.id) : [...new Set(items.map(item => item.id))];
         const readRequest = {project:c.repo,state:c.owner,ids,expected_plugin_version:require('../package.json').version};
-        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n审核批次：${state.session}\n按需读取：read_feedback ${JSON.stringify(readRequest)}；需要当前原文和候选时使用 read_context 同参数。按任务读取适用 SKILL、get_instructions 的 feedback 模块、read_file_roles、read_personal_prompts 与 read_paper_background；作者约定仍须遵守。附件是批注快照，不是完整原文或候选，不传 known_feedback。版本不匹配时提示重启 Codex MCP，不混用另一版本 CLI。\n\n${notes.join('\n\n')}\n`, 'utf8');
+        await fs.writeFile(file, `插件版本：${require('../package.json').version}\n审核批次：${state.session}\n先按所选编号读取当前保存正文、当前候选和相关稳定块：read_context ${JSON.stringify(readRequest)}。必要时再用 read_feedback 同参数核对所选批注的原始上下文；只处理下列明确选中的要求，不默认读取整篇论文或其他批注。\n此前内容的批注应保留原意，结合现稿重新理解并精确定位；原来的偏移只描述旧内容，不能直接套用于新文字。无法唯一对应时保留要求并说明具体冲突。确认位置后按原编号返修形成待审候选，不自动接收、关闭批注或覆盖现稿。\n按任务读取适用 SKILL、get_instructions 的 feedback 模块、read_file_roles、read_personal_prompts 与 read_paper_background；作者约定仍须遵守。附件是批注快照，不是完整原文或候选，不传 known_feedback。版本不匹配时提示重启 Codex MCP，不混用另一版本 CLI。\n\n${notes.join('\n\n')}\n`, 'utf8');
         if (selected) {
             const fresh = await backend(c, ['status']);
             verify(fresh);
