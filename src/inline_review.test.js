@@ -143,6 +143,7 @@ test('selected earlier feedback is handed off for current-source adaptation with
     const text=fs.readFileSync(file,'utf8');
     assert.match(text,/此前内容，需结合现稿重新定位/); assert.match(text,/read_context/);
     assert.match(text,/旧内容，不能直接套用于新文字/); assert.match(text,/无法唯一对应时保留要求/);
+    assert.match(text,/fulfillment 契约/); assert.match(text,/部分处理或需要作者、证据时如实标记/);
     assert.match(text,/不自动接收、关闭批注或覆盖现稿/); assert.match(text,/"version":"old-generation"/);
     assert(text.includes('保留这条要求')); assert(!text.includes('范围外批注')); assert.deepEqual(f.edit,before);
     const sent=f.calls.filter(call=>call[0]==='chatgpt.addFileToThread').length;

@@ -1,5 +1,19 @@
 # 问题审核与段落审核能力对照及优化
 
+## AF阶段：旧批注适配状态与界面直接入口
+
+2026-11-26用户提出旧批注在界面自动显示适配新版本的登记状态，并明确“那你改吧”。基线2208b6dd207b851414fcaa6a0140fb59dc867dc4，HEAD==origin/master、clean，0.9.75已发布安装。沿已授权两角色及发行流程：总控local/01a212c7-d736-7503-ab7a-9717a426fefb维护计划/索引与最终审核；唯一Terra local/01a21288-5815-7312-b496-006ade07bede连续实现、小验收及获签后的发行安装。AF返修0，不新建角色，不重载或重启。
+
+目标是让用户在批注所在界面直接理解和处理旧要求，不必管理版本号或先进入多步管理列表。能据当前内容可靠关联的显示关联状态；需要语义适配的显示“需要重新适配”及“按现稿适配”入口；当前候选确有针对该要求的有效适配说明与定位时显示“适配结果待审核”。自动呈现状态不等于自动调用AI、接收正文或关闭批注。只准备所选单条要求的现稿适配上下文供用户发送；不把加入输入区当作已适配，不改旧来源版本冒充完成。
+
+- [ ] AF1 原Terra一个完整功能批，复用已有批注、source_match/source_stale、候选fulfillment及精确交接链，实现当前/旧批注的明确适配状态和单条直接入口，兼顾段落/问题两种工作台与已有批注管理显示的一致语义。可靠关联必须有当前范围或有效映射依据，不凭版本不同一概失效，也不凭同文片段猜配重复位置；无法可靠对应仍保留要求，准备按现稿重新理解的提示。已保存候选的映射须对应精确request id/version/text、当前方案和范围，源已变或映射失效不能继续显示已适配。保留原批注文本/用途/暂留/历史，内部version/session/owner/CAS、草稿及原写入保护；不增加平行持久状态或全篇重扫/上下文快照。补齐刷新/切项/批次变化、必要调用方及文档。
+- [ ] AF2 Terra集中定向验证有效关联、需适配、有效结果待审、源/候选再次变化后的状态刷新；重复文字/无法定位、旧选区、此前批注及当前批注、翻译或问题来源按实际支持路径正确处理。单条入口仅交接本条和所需当前内容，交接中批次/候选/要求变化拒绝，范围外批注与正文/草稿不变；暂留及非普通返修用途保持原约束。按silent-ui-screenshot在正常Development专属profile/pipe、私有未切桌面，实际鼠标验证旧批注状态、直接入口及有效结果待审显示，截图实看并记录真实退出和前台保护。AI添加上下文可用声明的隔离桩，不外发、不冒称真实AI完成。总控冻结后审真实diff、消费者和有效证据，只补影响结论的未覆盖组合。
+- [ ] AF3 总控明确通过后另派原Terra必要发行检查、一次构建、正式Release及同VSIX安装；总控独立核交付meta并三docs集中结案，不重复功能组或包后冒烟，暂不重载/重启。
+
+总控先写plan/index支持增量，随后交产品/测试/UI/隔离配置/execution/Git租约给原Terra，支持docs随成功功能批精确普通commit/push/fetch；不为元数据微提交。证据沿D:/latex-writing-checks/review-efficiency-20261122/AF-*，保留完整argv/cwd/env/stdout/stderr/exit和首败。业务Python每实际子进程正向断言FakeHostSession及AF隔离根/有效endpoint；真实协议测试须显式非默认pipe并在child断言根及端点，LOCAL_LATEX_PIPE不是隔离证明。不新增性能测试，不机械运行含旧性能、删除cleanup或完整备份清理的全套，不改超时或既有退役。
+
+真实D:/Overleaf/TMI-DA-Marked-up Copy/P/个人资料/state/候选/批注/三稿/stage及全局host-lifecycle只读保护；不恢复真实登记、不处理真实146/147、不自动迁移真稿、不外发AI、不触用户窗口/默认pipe/MCP、不删除文件/对象/截图、不cleanup、不改全局技能/config/TeX。pwsh7/显式UTF8/Python -B -X utf8；普通Windows仓库，远端前移/权限Hook拒绝停止相关动作，不reset/rebase/merge/force/改remote。AF1–AF2完整冻结交包后才由总控审核派AF3，无待用户选择。
+
 ## AE阶段：恢复入口可见与旧批注按现稿适配
 
 AE已完成，返修0：[0.9.75正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.75)并安装同一VSIX，唯一构建源码3503fdd2d822aae3f8c83df55ab9498beabaafe5，build/安装exit0。总控独立核本地/远端附注tag对象72cd154dd307a2d1cfc8b91694e216fba1d173a0、构建目标及SOURCE-COMMIT/双包摘要；controller-ae-release-meta.py实际读正式Release API，三附件digest与同一本地产物一致，manifest及source=vsix/pinned登记0.9.75，exit0。原始API/argv/cwd/退出/结果在D:/latex-writing-checks/review-efficiency-20261122/controller-ae-release*，原发行安装记录AE-delivery-*，Node DEP0169警告保留。未重复构建/功能组/包后冒烟，未操作真实登记、稿件或批注；未重载/重启，活动宿主加载未知。用户方便时重载目标窗口后可直接搜索恢复命令，旧true仍需首次核对；旧批注交接只准备按现稿适配的提示，不代表AI已实际执行或作者已接收。三份支持记录集中结案，无在途。

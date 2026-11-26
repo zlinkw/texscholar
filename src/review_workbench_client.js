@@ -174,7 +174,8 @@ function renderFeedbackManager() {
         check.addEventListener('change', () => {if (check.checked) noteSelection.set(key, row); else noteSelection.delete(key); saveNoteSelection(); renderFeedbackManager();});
         const text = document.createElement('span');
         const state = {open:'待处理','addressed-pending-review':'待作者核对','closed-by-author-acceptance':'接收后关闭','closed-by-author-rejection':'拒绝后关闭'}[row.note.status] || row.note.status;
-        text.textContent = ` ${row.id} · ${row.file} · ${row.note.version === row.version ? '当前内容' : '此前内容'} · ${row.note.option ? '方案 ' + row.note.option : '整项／原文'} · ${state}${row.note.held ? ' · 暂留' : ''}${check.disabled ? ' · 身份不完整，保留待核' : ''}${selected && JSON.stringify(selected) !== JSON.stringify(row) ? ' · 已变化，请清选后重新选择' : ''}\n选区：${row.note.display_context?.quote ?? row.note.quote}\n${row.note.text}`;
+        const adaptation = row.id === current?.id && row.version === current.version ? ' · ' + adaptationState(row.note) : '';
+        text.textContent = ` ${row.id} · ${row.file} · ${row.note.version === row.version ? '当前内容' : '此前内容'}${adaptation} · ${row.note.option ? '方案 ' + row.note.option : '整项／原文'} · ${state}${row.note.held ? ' · 暂留' : ''}${check.disabled ? ' · 身份不完整，保留待核' : ''}${selected && JSON.stringify(selected) !== JSON.stringify(row) ? ' · 已变化，请清选后重新选择' : ''}\n选区：${row.note.display_context?.quote ?? row.note.quote}\n${row.note.text}`;
         text.style.whiteSpace = 'pre-wrap'; label.append(check, text); const box = document.createElement('div'); box.className = 'note'; box.append(label); root.append(box);
     }
     $('notesCount').textContent = ` 已选 ${noteSelection.size} 条`;
@@ -661,6 +662,12 @@ function renderQuestionMode() {
         root.appendChild(column);
     }
     $('questionModeScope').textContent=selectedQuestion === '__unbound__' ? '未绑定不代表没有修改。' : '';
+    if (reviewMode === 'question') {
+        if ($('notesPanel').parentElement !== $('questionNotesDock')) $('questionNotesDock').append($('previousFeedback'), $('notesPanel'));
+    } else if ($('notesPanel').parentElement === $('questionNotesDock')) {
+        $('previousFeedbackDock').after($('previousFeedback')); $('notesDock').after($('notesPanel'));
+    }
+    $('notesTitle').textContent = reviewMode === 'question' ? '当前审核项 ' + (current?.id || '') + ' 的返修批注' : '返修批注';
     $('questionModeView').hidden=reviewMode!=='question'; $('review').hidden=reviewMode==='question' || unavailable;
     document.querySelector('[data-action="paragraphMode"]').setAttribute('aria-pressed',String(reviewMode==='paragraph'));
     document.querySelector('[data-action="questionMode"]').setAttribute('aria-pressed',String(reviewMode==='question'));
@@ -789,9 +796,32 @@ function noteOrigin(n) {
     const origin = context ? (context.question ? context.question.id : n.option ? '方案 ' + n.option : '原文') + (context.kind === 'translation' ? '译文' : '审稿问题') : n.option || '整项';
     return origin + ' · ' + ({revision:'普通返修',skill:'完善通用 SKILL',personal:'完善我的习惯',paper_requirements:'完善本论文要求',paper_background:'论文背景',discussion:'仅提问或讨论'}[n.purpose || 'revision']) + ' · ' + (n.version === current.version ? '当前内容' : '此前内容');
 }
+function validFulfillments(n) {
+    if (data.source_match === false || n.source_stale || n.held || (n.purpose || 'revision') !== 'revision') return [];
+    return (data.fulfillment || []).filter(m => {
+        const option = options.find(o => o.label === m.option);
+        return m.request === n.id && m.request_version === n.version && m.request_text === n.text &&
+            option && !hasDraft(option) && Number.isInteger(m.start) && Number.isInteger(m.end) &&
+            m.start >= 0 && m.start < m.end && m.end <= Array.from(option.after).length && Array.from(option.after).slice(m.start,m.end).join('') === m.quote &&
+            ['attempted','partial','author','evidence'].includes(m.status) && typeof m.explanation === 'string' && m.explanation.trim();
+    });
+}
+function adaptationState(n) {
+    if (n.held) return '已暂留';
+    if ((n.purpose || 'revision') !== 'revision') return '保留原要求';
+    if (data.block && $('blockSource').value !== data.block.text.replace(/\r\n/g, '\n')) return '需要重新适配';
+    if (validFulfillments(n).length) return '适配结果待审核';
+    if (n.side === 'candidate' && options.some(o => o.label === n.option && hasDraft(o))) return '需要重新适配';
+    if (data.source_match !== false && !n.source_stale && (data.feedback_associations || []).some(a => a.id === n.id && a.version === n.version)) return '已关联当前内容';
+    return '需要重新适配';
+}
+function adaptationButton(n) {
+    return adaptationState(n) === '需要重新适配' && n.id && n.version
+        ? '<button class="secondary" data-action="adaptNote" data-note-id="' + esc(n.id) + '" data-note-version="' + esc(n.version) + '">按现稿适配</button>' : '';
+}
 function fulfillmentText(n) {
     if (data.source_match === false || n.source_stale) return '<p>原文或批注基准已变化，请重新核对返修说明。</p>';
-    const mappings = (data.fulfillment || []).filter(m => m.request === n.id && m.request_version === n.version && m.request_text === n.text);
+    const mappings = validFulfillments(n);
     return mappings.length ? mappings.map(m => '<p>返修说明（已保存本版） · 方案 ' + esc(m.option) + ' · ' + esc(({attempted:'已尝试',partial:'部分',author:'待作者',evidence:'待证据'})[m.status]) + '：' + esc(m.explanation) + ' <button class="secondary" data-action="locateFulfillment" data-mapping="' + data.fulfillment.indexOf(m) + '">查看对应文字：' + esc(m.quote) + '</button></p>').join('') : '<p>本版未说明此要求的处理情况。</p>';
 }
 function visibleFeedback(note) {
@@ -803,11 +833,11 @@ function renderPreviousNotes() {
     const active = new Set((data.edit.requests || []).filter(n => visibleFeedback(n) || heldPrevious.has(JSON.stringify([n.id,n.version]))).map(n => JSON.stringify([n.id, n.version])));
     const notes = (data.edit.previous_feedback?.requests || []).filter(n => visibleFeedback(n) && !active.has(JSON.stringify([n.id, n.version])));
     $('previousFeedback').hidden = !notes.length;
-    const signature = JSON.stringify([notes, notes.map(n => data.edit.versions.indexOf(n.version)), data.fulfillment, data.source_match]);
+    const signature = JSON.stringify([notes, current.version, notes.map(n => [data.edit.versions.indexOf(n.version), adaptationState(n)]), data.fulfillment, data.feedback_associations, options, data.source_match]);
     if (container.dataset.signature === signature) return;
     container.dataset.signature = signature;
     container.innerHTML = notes.map(n => '<div class="note"><strong>' + esc(noteOrigin(n)) + '</strong><div class="review-text">' + esc(n.text) + '</div>' +
-        ((n.display_context?.quote ?? n.quote) ? '<details><summary>此前选区</summary><div class="review-text">' + esc(n.display_context?.quote ?? n.quote) + '</div></details>' : '') + fulfillmentText(n) + '</div>').join('');
+        ((n.display_context?.quote ?? n.quote) ? '<details><summary>此前选区</summary><div class="review-text">' + esc(n.display_context?.quote ?? n.quote) + '</div></details>' : '') + '<p>' + esc(adaptationState(n)) + '</p>' + adaptationButton(n) + fulfillmentText(n) + '</div>').join('');
 }
 function renderNotes(requests) {
     renderPreviousNotes();
@@ -823,7 +853,7 @@ function renderNotes(requests) {
         let node = [...container.children].find(node => node.dataset.noteId === n.id);
         if (!node) {node = document.createElement('div'); node.className = 'note'; node.dataset.noteId = n.id; container.appendChild(node);}
         const mappings = (data.fulfillment || []).filter(m => m.request === n.id && m.request_version === n.version && m.request_text === n.text);
-        const signature = JSON.stringify([n, n.version === current.version, mappings, data.source_match]);
+        const signature = JSON.stringify([n, n.version === current.version, mappings, adaptationState(n), data.feedback_associations, options, data.source_match]);
         if (node.dataset.signature === signature) continue;
         node.dataset.signature = signature;
         if (node.contains($('noteComposer'))) $('notes').before($('noteComposer'));
@@ -831,7 +861,7 @@ function renderNotes(requests) {
         const origin = noteOrigin(n);
         node.innerHTML = '<strong>' + esc(origin) + ' · ' + esc(n.status) + (n.held ? ' · 暂留' : '') + (n.source_stale ? ' · 原批注，内容已变' : '') + '</strong><div class="review-text">' + esc(n.text) + '</div><details><summary>查看批注选区</summary><button class="secondary noteQuote" data-action="locateNote" title="定位并高亮本条批注的准确范围">' + esc(context?.quote ?? n.quote) + '</button></details>' +
             (n.status === 'open' && n.version === current.version ? '<button class="secondary" data-action="editNoteOpen">编辑批注</button>' : '') +
-            fulfillmentText(n);
+            '<p>' + esc(adaptationState(n)) + '</p>' + adaptationButton(n) + fulfillmentText(n);
     }
     placeComposer();
     buttons();
@@ -1070,6 +1100,7 @@ document.addEventListener('input', event => {
         if (!$('note').value.trim() && !editingNote) scope();
         if (!event.isComposing) queueDraftPreview();
     }
+    if (event.target.classList.contains('edit') || event.target.id === 'blockSource') {renderNotes(data.edit.requests || []); renderFeedbackManager();}
     if (event.target.matches('textarea')) dirty();
 });
 document.addEventListener('compositionend', event => {if (event.target.classList.contains('edit')) queueDraftPreview();});
@@ -1156,6 +1187,12 @@ document.addEventListener('click', event => {
     if (type === 'clearNotes') {for (const [key,row] of noteSelection) if (noteInScope(row)) noteSelection.delete(key); saveNoteSelection(); renderFeedbackManager(); return;}
     if (type === 'selectNotes') {for (const row of feedbackRows.filter(row => row.note.id && row.note.version && noteInScope(row))) if (!noteSelection.has(noteKey(row))) noteSelection.set(noteKey(row),row); saveNoteSelection(); renderFeedbackManager(); return;}
     if (type === 'sendSelectedNotes') {if (!noteSelection.size) {$('notesStatus').textContent='请先选择要交接的批注。';return;} send('handoffSelected',{items:[...noteSelection.values()],session:currentSession}); return;}
+    if (type === 'adaptNote') {
+        const row = feedbackRows.find(r => r.id === current.id && r.version === current.version && r.note.id === button.dataset.noteId && r.note.version === button.dataset.noteVersion);
+        const displayed = [...(data.edit.requests || []), ...(data.edit.previous_feedback?.requests || [])].find(n => n.id === button.dataset.noteId && n.version === button.dataset.noteVersion && JSON.stringify(n) === JSON.stringify(row?.note));
+        if (!row || !displayed || adaptationState(displayed) !== '需要重新适配') {status('批注已变化，请重新核对。', true); return;}
+        send('handoffSelected',{items:[row],session:currentSession}); return;
+    }
     if (['holdNotes','releaseNotes','deleteNotes'].includes(type)) {
         if (!noteSelection.size) {$('notesStatus').textContent='请先选择批注。'; return;}
         $('notesStatus').textContent=''; send('manageFeedback',{session:currentSession,items:[...noteSelection.values()],action:{holdNotes:'hold',releaseNotes:'release',deleteNotes:'delete'}[type]}); return;
@@ -1381,8 +1418,8 @@ window.addEventListener('message', ({data: message}) => {
         renderReadings(); return;
     }
     if (message.type === 'noteEdited') {data.edit.requests = message.requests; data.edit.previous_feedback = message.previous_feedback; if (!message.preserveInput) closeComposer(); renderNotes(message.requests);}
-    if (message.type === 'notes') {data.edit.requests = message.requests; data.edit.questions = message.questions; data.edit.previous_feedback = message.previous_feedback;
-        keepReading(() => {renderNotes(message.requests); renderQuestions(message.questions);}); return;}
+    if (message.type === 'notes') {data.edit.requests = message.requests; data.edit.questions = message.questions; data.edit.previous_feedback = message.previous_feedback; data.fulfillment = message.fulfillment; data.feedback_associations = message.feedback_associations;
+        keepReading(() => {renderNotes(message.requests); renderQuestions(message.questions); renderFeedbackManager();}); return;}
     if (message.type === 'noteSaved' && !message.preserveInput) closeComposer();
     if (message.type === 'conflict') {
         conflict = true;

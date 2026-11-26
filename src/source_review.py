@@ -1614,7 +1614,7 @@ class Review:
         if 'fulfillment' in spec:
             if not rework or not isinstance(spec['fulfillment'], list):
                 raise FieldConflict('spec.fulfillment', 'Fulfillment applies to existing review requests only')
-            requests = {r['id']: r for r in edit.get('requests', []) if r['status'] == 'open'}
+            requests = {r['id']: r for r in feedback_notes(edit) if r.get('status') == 'open'}
             choices = {o['label']: o['after'] for o in options or []}
             mappings = []
             for mapping in spec['fulfillment']:
@@ -1967,6 +1967,28 @@ class Review:
         result['fewer_options_reason'] = shown.get('fewer_options_reason', '')
         result['intent'] = shown.get('intent')
         result['fulfillment'] = shown.get('fulfillment', [])
+        # Only an unchanged complete source establishes that an old selection
+        # still denotes the same range. Repeated quotes alone are not evidence.
+        associations = []
+        for note in feedback_notes(edit):
+            if not note.get('id') or note.get('display_context') or note.get('source_stale') or note.get('side') not in ('original', 'candidate'):
+                continue
+            old_version = note.get('version')
+            if old_version not in edit['versions']:
+                continue
+            if note['side'] == 'original':
+                old_text = self.contents(old_version, 'original.tex')
+                current_text = result['original']
+            else:
+                old_span = json.loads(self.contents(old_version, 'span.json'))
+                old_options = old_span.get('options', [{'label': 'A', 'after': self.contents(old_version, 'candidate.tex')}])
+                old_text = next((o['after'] for o in old_options if o['label'] == note.get('option')), None)
+                current_text = next((o['after'] for o in result['options'] if o['label'] == note.get('option')), None)
+            a, b = note.get('start'), note.get('end')
+            if (old_text is not None and old_text == current_text and type(a) is int and type(b) is int
+                    and 0 <= a <= b <= len(old_text) and old_text[a:b] == note.get('quote')):
+                associations.append({'id': note['id'], 'version': old_version})
+        result['feedback_associations'] = associations
         result['fact_evidence'] = self.evidence_status(shown.get('fact_evidence', []))
         if reuse_diff:
             result['diff_reused'] = True

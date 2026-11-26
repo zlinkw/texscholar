@@ -2,6 +2,26 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html, filterItems, staleBatchSelections} = require('./review_workbench');
 
+test('adaptation status tracks exact saved ranges, source changes and held purposes', () => {
+    const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
+    const note={id:'n',version:'old',text:'request',side:'original'}, option={label:'A',after:'same text'};
+    const mapping={request:'n',request_version:'old',request_text:'request',option:'A',start:0,end:4,quote:'same',status:'partial',explanation:'Partial change'};
+    const context={data:{source_match:true,fulfillment:[mapping],feedback_associations:[]},options:[option],hasDraft:()=>false,$:()=>({value:''})};
+    const start=source.indexOf('function validFulfillments('),end=source.indexOf('\nfunction adaptationButton(',start);
+    vm.runInNewContext(source.slice(start,end),context);
+    assert.equal(context.adaptationState(note),'适配结果待审核');
+    mapping.start=5;assert.equal(context.adaptationState(note),'需要重新适配');mapping.start=0;
+    mapping.end=100;mapping.quote='same text';assert.equal(context.adaptationState(note),'需要重新适配');mapping.end=4;mapping.quote='same';
+    context.data.source_match=false;assert.equal(context.adaptationState(note),'需要重新适配');context.data.source_match=true;
+    context.hasDraft=()=>true;assert.equal(context.adaptationState(note),'需要重新适配');context.hasDraft=()=>false;
+    note.held=true;assert.equal(context.adaptationState(note),'已暂留');delete note.held;
+    note.purpose='discussion';assert.equal(context.adaptationState(note),'保留原要求');delete note.purpose;
+    context.data.fulfillment=[];context.data.feedback_associations=[{id:'n',version:'old'}];assert.equal(context.adaptationState(note),'已关联当前内容');
+    note.source_stale=true;assert.equal(context.adaptationState(note),'需要重新适配');
+    delete note.source_stale;context.data.feedback_associations=[];
+    for (const kind of ['question','translation']) {note.display_context={kind,quote:'same'};assert.equal(context.adaptationState(note),'需要重新适配');}
+});
+
 test('operation feedback follows a visible action and falls back when its action leaves view', () => {
     const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
     let placed; const statusNode={isConnected:true}, page={appendChild:node=>{placed='page';assert.equal(node,statusNode);}};
@@ -361,10 +381,11 @@ test('same-version refresh sends current block identity and revisions without re
     let count = messages.length; view.sync(records,c);
     assert(!messages.slice(count).some(m=>m.type==='locationStatus' || m.type==='content'));
     for (const [text, revision] of [['Manual.\n','r2'],['Again.\n','r3']]) {
-        data = {...data,source_match:false,conflict:'Changed',block:{...data.block,text,source_revision:revision}};
+        data = {...data,source_match:false,conflict:'Changed',feedback_associations:[],fulfillment:[],block:{...data.block,text,source_revision:revision}};
         records = new Map([['1',{c,data}]]); count = messages.length; view.sync(records,c);
         const update = messages.slice(count).find(m=>m.type==='locationStatus');
         assert.equal(update.block.text,text); assert.equal(update.block.source_revision,revision);
+        assert.deepEqual(messages.slice(count).find(m=>m.type==='notes').feedback_associations,[]);
         assert(!messages.slice(count).some(m=>m.type==='content'));
     }
 });

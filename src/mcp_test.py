@@ -564,6 +564,7 @@ class MCP(unittest.TestCase):
         version = self.review().state['edits'][id_]['versions'][-1]
         self.apply('feedback', {'id':id_, 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'请补限定'})
         self.apply('feedback', {'id':id_, 'version':version, 'side':'original', 'start':0, 'end':0, 'quote':'', 'text':'另一条要求'})
+        self.apply('feedback', {'id':id_, 'version':version, 'side':'candidate', 'option':'A', 'start':0, 'end':9, 'quote':'Candidate', 'text':'候选要求'})
         request = self.review().state['edits'][id_]['requests'][0]
         revised = [{**o, 'after':o['after'] + ' Limited.'} for o in options]
         mapping = {'request':request['id'], 'request_version':version, 'request_text':request['text'], 'option':'A',
@@ -576,13 +577,36 @@ class MCP(unittest.TestCase):
         saved = server.call('rework_options', {**args, 'spec':{**args['spec'], 'fulfillment':[mapping]}})
         result = self.review().inspect(id_)
         self.assertEqual(result['fulfillment'], [mapping])
-        self.assertEqual(len(result['edit']['requests']), 2)
+        self.assertEqual(len(result['edit']['requests']), 3)
+        self.assertIn({'id':request['id'], 'version':version}, result['feedback_associations'])
+        candidate_request = result['edit']['requests'][2]
+        self.assertNotIn({'id':candidate_request['id'], 'version':version}, result['feedback_associations'])
         context = server.call('read_context', {**base, 'ids':[id_]})['context']['items'][id_]
         self.assertEqual(context['fulfillment'], [mapping])
         updated = [{**o, 'after':o['after'] + ' Again.'} for o in revised]
         server.call('rework_options', {**args, 'version':saved['version'], 'expected_sha256':saved['sha256'],
                                       'spec':{'options':updated, 'discard_annotations':False}})
         self.assertEqual(self.review().inspect(id_)['fulfillment'], [])
+
+    def test_previous_only_feedback_can_receive_a_precise_fulfillment(self):
+        server = self.server(); base = {'project':str(self.root), 'state':'reply.tex'}
+        options = [{'label':k, 'after':'Candidate ' + k + '.', 'reason':k} for k in 'ABC']
+        id_ = self.apply('propose_options', {'file':'main.tex', 'kind':'manuscript', 'before':'The model is strong and fast.', 'options':options})['id']
+        version = self.review().state['edits'][id_]['versions'][-1]
+        self.apply('feedback', {'id':id_, 'version':version, 'side':'candidate', 'option':'A', 'start':0, 'end':9, 'quote':'Candidate', 'text':'保留此前要求'})
+        note = self.review().state['edits'][id_]['requests'][0]
+        revised = [{**o, 'after':o['after'] + ' First.'} for o in options]
+        first = server.call('rework_options', {**base, 'id':id_, 'version':version, 'expected_sha256':digest(self.review().raw),
+            'spec':{'options':revised, 'discard_annotations':True}})
+        self.assertEqual(self.review().state['edits'][id_]['requests'], [])
+        mapping = {'request':note['id'], 'request_version':version, 'request_text':note['text'], 'option':'A',
+                   'start':0, 'end':9, 'quote':'Candidate', 'explanation':'保留并核对。', 'status':'author'}
+        revised = [{**o, 'after':o['after'] + ' Again.'} for o in revised]
+        server.call('rework_options', {**base, 'id':id_, 'version':first['version'], 'expected_sha256':first['sha256'],
+            'spec':{'options':revised, 'fulfillment':[mapping], 'discard_annotations':False}})
+        result = self.review().inspect(id_)
+        self.assertEqual(result['fulfillment'], [mapping])
+        self.assertEqual(result['edit']['previous_feedback']['requests'][0]['version'], version)
 
     def test_fact_hints_use_explicit_terms_and_actual_candidate(self):
         server = self.server(); base = {'project':str(self.root), 'state':'reply.tex'}
