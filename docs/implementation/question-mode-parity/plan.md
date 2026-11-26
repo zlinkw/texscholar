@@ -6,8 +6,8 @@
 
 只读现场：真实state session e74dbc117a5f4cf4991bfb17187ca9c9，146/147均rework、无待提交事务；146最新版本81218ab73af0d899391cf20bf053a6102f0cff79b0f6f716ea968bb4649201af、generation3，147最新bb20a18b7de37e5083dc243eb6e7b54b5c4e3051d1d42e50b31b399215d82570、generation2。Code日志20261125T224400/window1/exthost/output_logging_20261125T224403/6-TeXScholar 接收与备份.log第21/28/32/36/40行有匹配显示id/version的webview_request，所读40行未见decide；该trace未含消息type，不能据此确定后端原因或宣称接收已完成。源码当前可达检查包括工作台dirty/noteDirty、inline currentFromRecords/cleanBuffers、状态/源码一致性及正文定位；需区分真实拒绝、请求未入写入与提示不可见，不能先放松保护。
 
-- [ ] AC1 原Terra在隔离数据及真实客户端/宿主seam建立同症状确定性复现，区分接收前检查、消息/卡片路由及反馈呈现；保留首败和可证伪根因，完成最小完整修复与受影响调用方。合法点击最终接收所选精确版本并反馈；未保存正文/候选/批注、旧版本或真实冲突明确提示并保留内容，不自动保存、接收或猜配146/147。仅按需读取真稿相关元数据/对应块，禁止对真实146/147执行接收、重试或任何写入。
-- [ ] AC2 Terra集中必要定向回归及真实隔离UI实点，覆盖实际复现路径的成功和当前拒绝原因可见性；按silent-ui-screenshot使用正常Development专属profile/pipe、私有未切桌面，实看截图并核Default/前台不变。测试每个实际Python子进程先正向断言FakeHostSession及隔离根/有效endpoint，不能把LOCAL_LATEX_PIPE当隔离证明；不无选择运行含旧性能/删除/cleanup的整组套件，不新增或改性能测试。总控冻结后审核真实diff/证据，仅补具体未覆盖且影响结论的组合，不重复相同验证。
+- [x] AC1 原Terra在隔离数据及真实客户端/宿主seam建立同症状确定性复现，区分接收前检查、消息/卡片路由及反馈呈现；保留首败和可证伪根因，完成最小完整修复与受影响调用方。合法点击最终接收所选精确版本并反馈；未保存正文/候选/批注、旧版本或真实冲突明确提示并保留内容，不自动保存、接收或猜配146/147。仅按需读取真稿相关元数据/对应块，禁止对真实146/147执行接收、重试或任何写入。
+- [x] AC2 Terra集中必要定向回归及真实隔离UI实点，覆盖实际复现路径的成功和当前拒绝原因可见性；按silent-ui-screenshot使用正常Development专属profile/pipe、私有未切桌面，实看截图并核Default/前台不变。测试每个实际Python子进程先正向断言FakeHostSession及隔离根/有效endpoint，不能把LOCAL_LATEX_PIPE当隔离证明；不无选择运行含旧性能/删除/cleanup的整组套件，不新增或改性能测试。总控冻结后审核真实diff/证据，仅补具体未覆盖且影响结论的组合，不重复相同验证。
 - [ ] AC3 总控明确通过后另派原Terra按既有授权预核下一无冲突版本、必要发行检查、一次构建、正式Release和同VSIX安装；总控核交付元数据并集中结案，不自动重载/重启，不包后冒烟。
 
 总控先集中写本plan/index支持增量，随后通过受支持消息移交产品/测试/UI/隔离配置/execution/Git租约，停止重叠写测；支持docs随成功完整功能批精确提交推送。沿既有权限保护真实论文D:/Overleaf/TMI-DA-Marked-up Copy、个人资料、state/候选/批注/三稿及范围外stage；不操作用户窗口、默认pipe/MCP、不外发AI、不改全局配置/技能/TeX，不删除文件/对象/截图、不cleanup。普通精确Git，远端前移/权限或Hook拒绝停止相关动作，不reset/rebase/merge/force/改remote。pwsh7、显式UTF8、Python -B -X utf8；完整argv/cwd/env/stdout/stderr/exit与失败记在既有execution及D:/latex-writing-checks/review-efficiency-20261122/AC-*。无待用户决定；修复完整交包后总控审核，未通过不发行。
@@ -21,6 +21,8 @@ AC当前阻断：长候选被接收保护拒绝时，原错误附加在卡片末
 本次恢复实际仍阻断：AC-ui-resume1正常启动日志107/112/115行明确vscode-updating被持有，等待31430ms后拒启动；未host ready、未点击/有效截图，观察器/外层exit1，CLI exit0不代表成功。总控回读原日志与run-result，Default及前后HWND526756相同；无在途，全部租约交回总控，6dirty和基线未变，未提交/发行。现需更新锁真实释放后才能补规定UI；不因用户说已完成而改签结果，不重复启动/轮询，不操作更新进程或绕过锁，不重载/重启。
 
 用户随后明确回复“好了”，作为新的更新结束事件恢复同一AC2缺项。复用已有效局部验证及初审，原Terra再次正常启动隔离Development，以真实结果判断更新锁是否释放；不额外轮询，不操作更新进程。通过后完整交总控审核，再按已授权原流程发行安装，仍暂不重载/重启。当前支持记录与6dirty随成功完整批集中提交，租约交还原Terra后总控停止重叠写测。
+
+AC1–AC2最终审核通过，冻结8171f61bd7e36321526fa7c5a5d4f20fa367d69f、HEAD==origin/master且clean，AC返修0。总控核完整6文件diff及必要调用链，客户端只改反馈放置，未改接收guard；复用局部回归及原红绿记录，不重复测试。AC-ui-resume3正常Development真实鼠标点击长卡A，脏正文拒绝提示位于视口内且state/磁盘不变，保存后精确ID1/版本466c42e4…/方案A接收，后端decide及evidence核完整A、无B/C、无关批注不变；宿主/观察器/外层exit0，Default/前中后HWND526756不变、私有桌面已闭。总控读run-result/host-result/done/evidence及dirty/save结果，核观察器真实鼠标事件，逐张实看ui-95ae1953616e43b3b7a058771b2e5264.png拒绝提示及ui-07ddc56af9e3497fad0da0e2b126f330.png成功toast。日志AC-ui-resume3；resume2结果文件尚在写入导致观察器解析失败exit1已修夹具并保留，早期更新锁及red3前台差异不改签。真实146/147具体拒绝原因仍未知、未实操真稿；问题卡路径仅客户端green2覆盖，不宣称完整真实UI组合。无未解产品阻断，下一步原Terra执行AC3必要发行检查、一次构建及同包发布安装；不包后冒烟、不重载或重启。
 
 ## AB阶段：保存与后台备份交叠恢复
 
