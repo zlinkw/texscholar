@@ -2,6 +2,8 @@
 
 ## AF阶段：旧批注适配状态与界面直接入口
 
+AF已完成，返修1：[0.9.76正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.76)并安装同一VSIX，唯一构建源码33ded3f15048c5ed4688660029f53bf5f7da611d，build/安装exit0。总控独立核本地/远端附注tag对象b7f368c44ccbeb085c35bbac10ac22fb7bc50859、目标及SOURCE-COMMIT/双包摘要；controller-af-release-meta.py实际读正式Release API，三附件digest与同一本地产物一致，manifest及source=vsix/pinned登记0.9.76，exit0。原记录在D:/latex-writing-checks/review-efficiency-20261122/controller-af-release*与AF-delivery-*，发行资格夹具首败及修正、Node DEP0169警告保留。复用有效功能/界面验证，未重复构建/安装/包后冒烟。未操作真实登记/论文/批注，不自动发送AI或接收/关闭要求；暂不重载/重启，活动宿主加载未知。三docs集中结案，无在途。
+
 AF1–AF2最终审核通过，返修1，冻结6970c9569bd66ce918d0606fc130b947aa6ef732，HEAD==origin/master且clean。总控审初包11文件及R1完整diff、来源/映射/精确交接和刷新调用链，无新增依赖或自动写入。复用AF定向检查与正常Development AF-ui5实点，逐张实看ui-57d764eecd3a4556a163f29397e1f17d.png、ui-4cb8b2d9b71e4e6397d5467a3d496a0e.png；宿主/观察器/外层exit0，Default及前中后HWND4130936不变，隔离源码/state保持，Codex添加/翻译/备份为声明的桩，不代表真实AI执行。
 
 R1保留原来源陈旧及旧选区关联限制，按当前已保存候选与当前源验证新fulfillment。总控核AF-R1-check3真实后端/客户端数据及child隔离证明、check4最终客户端/两项工作台记录：原文选区变化并同步、旧标记保留、当前及previous-only有效新映射显示待审核和部分处理说明，候选再变/源冲突/再次同步失效，正文草稿不显示旧说明，均exit0。原AF-check5夹具无内容变化失败、R1重叠变更首败及旧客户端红例保留，不改签，不重复有效UI组。无产品阻断，下一步原Terra执行AF3一次构建正式发布同包安装，暂不重载/重启。下文返修说明为已解决的历史事实。
@@ -14,7 +16,7 @@ AF最终审核返修1：初包f50b9e62b5c4b66276d538db1ee1e3f9ad113bbf已推送�
 
 - [x] AF1 原Terra一个完整功能批，复用已有批注、source_match/source_stale、候选fulfillment及精确交接链，实现当前/旧批注的明确适配状态和单条直接入口，兼顾段落/问题两种工作台与已有批注管理显示的一致语义。可靠关联必须有当前范围或有效映射依据，不凭版本不同一概失效，也不凭同文片段猜配重复位置；无法可靠对应仍保留要求，准备按现稿重新理解的提示。已保存候选的映射须对应精确request id/version/text、当前方案和范围，源已变或映射失效不能继续显示已适配。保留原批注文本/用途/暂留/历史，内部version/session/owner/CAS、草稿及原写入保护；不增加平行持久状态或全篇重扫/上下文快照。补齐刷新/切项/批次变化、必要调用方及文档。
 - [x] AF2 Terra集中定向验证有效关联、需适配、有效结果待审、源/候选再次变化后的状态刷新；重复文字/无法定位、旧选区、此前批注及当前批注、翻译或问题来源按实际支持路径正确处理。单条入口仅交接本条和所需当前内容，交接中批次/候选/要求变化拒绝，范围外批注与正文/草稿不变；暂留及非普通返修用途保持原约束。按silent-ui-screenshot在正常Development专属profile/pipe、私有未切桌面，实际鼠标验证旧批注状态、直接入口及有效结果待审显示，截图实看并记录真实退出和前台保护。AI添加上下文可用声明的隔离桩，不外发、不冒称真实AI完成。总控冻结后审真实diff、消费者和有效证据，只补影响结论的未覆盖组合。
-- [ ] AF3 总控明确通过后另派原Terra必要发行检查、一次构建、正式Release及同VSIX安装；总控独立核交付meta并三docs集中结案，不重复功能组或包后冒烟，暂不重载/重启。
+- [x] AF3 总控明确通过后另派原Terra必要发行检查、一次构建、正式Release及同VSIX安装；总控独立核交付meta并三docs集中结案，不重复功能组或包后冒烟，暂不重载/重启。
 
 总控先写plan/index支持增量，随后交产品/测试/UI/隔离配置/execution/Git租约给原Terra，支持docs随成功功能批精确普通commit/push/fetch；不为元数据微提交。证据沿D:/latex-writing-checks/review-efficiency-20261122/AF-*，保留完整argv/cwd/env/stdout/stderr/exit和首败。业务Python每实际子进程正向断言FakeHostSession及AF隔离根/有效endpoint；真实协议测试须显式非默认pipe并在child断言根及端点，LOCAL_LATEX_PIPE不是隔离证明。不新增性能测试，不机械运行含旧性能、删除cleanup或完整备份清理的全套，不改超时或既有退役。
 
