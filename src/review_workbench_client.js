@@ -191,19 +191,17 @@ function status(message, error = false, action) {
     if (message) {
         const target = action ? feedbackTargets.get(action) : localFeedback;
         const matches = target && target.item === JSON.stringify([current.repo, current.owner, current.id]);
-        const container = matches && [target.node, target.fallback].find(n => n?.isConnected && n.getClientRects().length);
-        (container || $('pageFeedback')).appendChild(node);
+        const anchor = matches && target.anchor;
+        const rect = anchor?.isConnected && anchor.getBoundingClientRect();
+        if (rect && rect.width && rect.height && rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth)
+            anchor.after(node);
+        else $('pageFeedback').appendChild(node);
     }
     if (!node.isConnected) $('pageFeedback').appendChild(node);
     node.textContent = message || ''; node.className = error ? 'error' : '';
 }
 function feedbackFor(button) {
-    const node = button.closest('#noteComposer, .note, [id^="editor-"], article, .question');
-    const label = selected?.option || $('scopeChoice').value;
-    return {item: JSON.stringify([current.repo, current.owner, current.id]), node,
-        fallback: node?.closest('article') || (node?.id === 'noteComposer'
-            ? selected?.side === 'original' || $('scopeChoice').value === 'original' ? $('original').parentElement : $('option-' + label)
-            : undefined)};
+    return {item: JSON.stringify([current.repo, current.owner, current.id]), anchor:button.closest('.optionActions') || button};
 }
 function dirty() {
     const candidateDirty = options.some(o => drafts.has(o.label) && drafts.get(o.label) !== o.after.replace(/\r\n/g, '\n'));

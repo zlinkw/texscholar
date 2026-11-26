@@ -2,6 +2,20 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const {createWorkbench, html, filterItems, staleBatchSelections} = require('./review_workbench');
 
+test('operation feedback follows a visible action and falls back when its action leaves view', () => {
+    const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
+    let placed; const statusNode={isConnected:true}, page={appendChild:node=>{placed='page';assert.equal(node,statusNode);}};
+    let rect={top:200,bottom:230,left:10,right:300,width:290,height:30};
+    const anchor={isConnected:true,getBoundingClientRect:()=>rect,after:node=>{placed='action';assert.equal(node,statusNode);}};
+    const c={repo:'fixture',owner:'state',id:'1'}, target={item:JSON.stringify([c.repo,c.owner,c.id]),anchor};
+    const context={feedbackNode:statusNode,feedbackTargets:new Map([['accept',target]]),localFeedback:target,current:c,innerWidth:1000,innerHeight:600,$:id=>{assert.equal(id,'pageFeedback');return page;}};
+    const start=source.indexOf('function status('),end=source.indexOf('\nfunction feedbackFor(',start);
+    const show=vm.runInNewContext('('+source.slice(start,end)+')',context);
+    show('Blocked by a dirty source',true,'accept');assert.equal(placed,'action');assert.equal(statusNode.className,'error');
+    rect={...rect,top:800,bottom:830};show('Blocked by a dirty source',true,'accept');assert.equal(placed,'page');
+    rect={...rect,top:200,bottom:230};context.current={...c,id:'2'};show('Earlier result',true,'accept');assert.equal(placed,'page');
+});
+
 test('question option selection ignores controls and selected text while supporting keyboard', () => {
     const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
     let selection={isCollapsed:true}, chosen=0, prevented=0;const handlers={};

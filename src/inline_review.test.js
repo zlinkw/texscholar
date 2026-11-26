@@ -605,6 +605,21 @@ test('accept shortcut binds the visible card instead of an unrelated editor curs
     assert.equal(call.args[call.args.indexOf('--version')+1],'v1');
 });
 
+test('accept reports a dirty source and accepts the selected version after it is saved', async () => {
+    const f=hostFixture({autoPDF:false});await f.ui.ready;
+    const c=f.rows()[0].children[0].command.arguments[0];await f.ui.open(c);await f.receive({type:'ready'});
+    const before=f.value;f.document.isDirty=true;
+    await f.receive({type:'accept',id:c.id,version:c.version,option:'B'});
+    assert(f.packets.some(m=>m.error && /未保存编辑/.test(m.message)));
+    assert(!f.backendCalls.some(call=>call.args.includes('decide')));assert.equal(f.value,before);
+    f.document.isDirty=false;
+    await f.receive({type:'accept',id:c.id,version:c.version,option:'B'});
+    const call=f.backendCalls.findLast(row=>row.args.includes('decide'));
+    assert.equal(call.args[call.args.indexOf('--accept')+1],c.id);
+    assert.equal(call.args[call.args.indexOf('--version')+1],c.version);
+    assert.equal(call.args[call.args.indexOf('--option')+1],'B');
+});
+
 test('a reveal in progress resolves against the live tree after a refresh', async () => {
     const f=hostFixture();await f.ui.ready;await f.ui.refresh({repo:f.root,owner:'reply.tex'});
     let release, started;const begun=new Promise(resolve=>{started=resolve;});
