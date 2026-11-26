@@ -6,10 +6,12 @@ test('adaptation status tracks exact saved ranges, source changes and held purpo
     const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require.resolve('./review_workbench_client'),'utf8');
     const note={id:'n',version:'old',text:'request',side:'original'}, option={label:'A',after:'same text'};
     const mapping={request:'n',request_version:'old',request_text:'request',option:'A',start:0,end:4,quote:'same',status:'partial',explanation:'Partial change'};
-    const context={data:{source_match:true,fulfillment:[mapping],feedback_associations:[]},options:[option],hasDraft:()=>false,$:()=>({value:''})};
-    const start=source.indexOf('function validFulfillments('),end=source.indexOf('\nfunction adaptationButton(',start);
+    const context={data:{source_match:true,fulfillment:[mapping],feedback_associations:[]},options:[option],hasDraft:()=>false,$:()=>({value:''}),esc:String};
+    const start=source.indexOf('function validFulfillments('),end=source.indexOf('\nfunction visibleFeedback(',start);
     vm.runInNewContext(source.slice(start,end),context);
     assert.equal(context.adaptationState(note),'适配结果待审核');
+    note.source_stale=true;assert.equal(context.adaptationState(note),'适配结果待审核');assert.match(context.fulfillmentText(note),/Partial change/);delete note.source_stale;
+    context.data.block={text:'saved'};context.$=()=>({value:'draft'});assert.equal(context.adaptationState(note),'需要重新适配');assert.doesNotMatch(context.fulfillmentText(note),/Partial change/);delete context.data.block;
     mapping.start=5;assert.equal(context.adaptationState(note),'需要重新适配');mapping.start=0;
     mapping.end=100;mapping.quote='same text';assert.equal(context.adaptationState(note),'需要重新适配');mapping.end=4;mapping.quote='same';
     context.data.source_match=false;assert.equal(context.adaptationState(note),'需要重新适配');context.data.source_match=true;

@@ -727,6 +727,39 @@ class MCP(unittest.TestCase):
         self.assertEqual(review().inspect(id_)['fulfillment'],[])
         self.assertEqual(review().inspect(id_)['fact_evidence'],[])
 
+    def test_stale_original_selection_can_have_new_current_fulfillment(self):
+        from source_review import Review
+        state = '.codex-review/state.json'
+        fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
+        def review(): return Review(self.root, state, 'missing-git')
+        r=review(); text=r.read('main.tex'); start=text.index('The model'); end=text.index('\n',start)+1
+        updated,block=r.prepare_block({'file':'main.tex','kind':'paragraph','start':start,'end':end,'source_revision':r.source_digest(text)});r.persist(updated,digest(r.raw))
+        options=[{'label':k,'after':'The model is strong and '+word+'.','reason':k} for k,word in zip('ABC',('reliable','compact','efficient'))]
+        r=review();updated,item=r.propose_options({'file':'main.tex','kind':'manuscript','block_id':block['block_id'],'before':'The model is strong and fast.','options':options});r.persist(updated,digest(r.raw))
+        id_=item['id'];r=review();version=r.state['edits'][id_]['versions'][-1]
+        updated,note=r.feedback({'id':id_,'version':version,'side':'original','start':13,'end':19,'quote':'strong','text':'Clarify strength'});r.persist(updated,digest(r.raw))
+        source=self.root/'main.tex';source.write_bytes(source.read_bytes().replace(b'strong',b'robust'))
+        r=review();updated,_=r.sync_block(id_,version,r.source_digest(r.read('main.tex')));r.persist(updated,digest(r.raw))
+        r=review();old=r.state['edits'][id_]['requests'][0];self.assertTrue(old['source_stale'])
+        revised=[{**o,'after':o['after']+' Clarified.'} for o in r.payload(r.state['edits'][id_])['options']]
+        mapping={'request':old['id'],'request_version':old['version'],'request_text':old['text'],'option':'A',
+                 'start':0,'end':3,'quote':'The','status':'partial','explanation':'Clarified on the new source.'}
+        updated,_=r.propose_options({'options':revised,'fulfillment':[mapping]},id_,r.state['edits'][id_]['versions'][-1]);r.persist(updated,digest(r.raw))
+        current=review().inspect(id_);self.assertTrue(current['source_match']);self.assertTrue(current['edit']['requests'][0]['source_stale']);self.assertEqual(current['fulfillment'],[mapping])
+        r=review(); revised=[{**o,'after':o['after']+' Previous.'} for o in r.payload(r.state['edits'][id_])['options']]
+        updated,_=r.propose_options({'options':revised,'fulfillment':[mapping],'discard_annotations':True},id_,r.state['edits'][id_]['versions'][-1]);r.persist(updated,digest(r.raw))
+        previous_only=review().inspect(id_);self.assertEqual(previous_only['edit']['requests'],[]);self.assertTrue(previous_only['edit']['previous_feedback']['requests'][0]['source_stale']);self.assertEqual(previous_only['fulfillment'],[mapping])
+        r=review(); revised=[{**o,'after':o['after']+' Changed.'} for o in r.payload(r.state['edits'][id_])['options']]
+        updated,_=r.propose_options({'options':revised},id_,r.state['edits'][id_]['versions'][-1]);r.persist(updated,digest(r.raw))
+        changed_candidate=review().inspect(id_);self.assertEqual(changed_candidate['fulfillment'],[])
+        r=review(); revised=[{**o,'after':o['after']+' Remapped.'} for o in r.payload(r.state['edits'][id_])['options']]
+        updated,_=r.propose_options({'options':revised,'fulfillment':[mapping]},id_,r.state['edits'][id_]['versions'][-1]);r.persist(updated,digest(r.raw))
+        source.write_bytes(source.read_bytes().replace(b'robust',b'accurate'))
+        conflict=review().inspect(id_);self.assertFalse(conflict['source_match'])
+        r=review();updated,_=r.sync_block(id_,r.state['edits'][id_]['versions'][-1],r.source_digest(r.read('main.tex')));r.persist(updated,digest(r.raw))
+        synced=review().inspect(id_);self.assertEqual(synced['fulfillment'],[])
+        self.af_r1 = {'current':current,'previous_only':previous_only,'changed_candidate':changed_candidate,'conflict':conflict,'synced':synced}
+
     def test_default_context_is_local_and_confirmed_roles_are_compact(self):
         main = self.root / 'main.tex'
         main.write_bytes(main.read_bytes().replace(b'\\end{document}', b'\n\nDistant paragraph.\n\nFar away context.\n\\end{document}'))

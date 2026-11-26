@@ -797,7 +797,8 @@ function noteOrigin(n) {
     return origin + ' · ' + ({revision:'普通返修',skill:'完善通用 SKILL',personal:'完善我的习惯',paper_requirements:'完善本论文要求',paper_background:'论文背景',discussion:'仅提问或讨论'}[n.purpose || 'revision']) + ' · ' + (n.version === current.version ? '当前内容' : '此前内容');
 }
 function validFulfillments(n) {
-    if (data.source_match === false || n.source_stale || n.held || (n.purpose || 'revision') !== 'revision') return [];
+    if (data.source_match === false || n.held || (n.purpose || 'revision') !== 'revision') return [];
+    if (data.block && $('blockSource').value !== data.block.text.replace(/\r\n/g, '\n')) return [];
     return (data.fulfillment || []).filter(m => {
         const option = options.find(o => o.label === m.option);
         return m.request === n.id && m.request_version === n.version && m.request_text === n.text &&
@@ -820,9 +821,10 @@ function adaptationButton(n) {
         ? '<button class="secondary" data-action="adaptNote" data-note-id="' + esc(n.id) + '" data-note-version="' + esc(n.version) + '">按现稿适配</button>' : '';
 }
 function fulfillmentText(n) {
-    if (data.source_match === false || n.source_stale) return '<p>原文或批注基准已变化，请重新核对返修说明。</p>';
+    if (data.block && $('blockSource').value !== data.block.text.replace(/\r\n/g, '\n')) return '<p>原文草稿尚未核对返修说明。</p>';
     const mappings = validFulfillments(n);
-    return mappings.length ? mappings.map(m => '<p>返修说明（已保存本版） · 方案 ' + esc(m.option) + ' · ' + esc(({attempted:'已尝试',partial:'部分',author:'待作者',evidence:'待证据'})[m.status]) + '：' + esc(m.explanation) + ' <button class="secondary" data-action="locateFulfillment" data-mapping="' + data.fulfillment.indexOf(m) + '">查看对应文字：' + esc(m.quote) + '</button></p>').join('') : '<p>本版未说明此要求的处理情况。</p>';
+    if (mappings.length) return mappings.map(m => '<p>返修说明（已保存本版） · 方案 ' + esc(m.option) + ' · ' + esc(({attempted:'已尝试',partial:'部分',author:'待作者',evidence:'待证据'})[m.status]) + '：' + esc(m.explanation) + ' <button class="secondary" data-action="locateFulfillment" data-mapping="' + data.fulfillment.indexOf(m) + '">查看对应文字：' + esc(m.quote) + '</button></p>').join('');
+    return data.source_match === false || n.source_stale ? '<p>原文或批注基准已变化，请重新核对返修说明。</p>' : '<p>本版未说明此要求的处理情况。</p>';
 }
 function visibleFeedback(note) {
     return note.held || !['resolved', 'closed-by-author-acceptance', 'closed-by-author-rejection'].includes(note.status);
