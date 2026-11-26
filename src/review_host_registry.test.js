@@ -90,6 +90,17 @@ test('published independent host blocks writing before its delayed join', async 
     await host.close();
 });
 
+test('a published host that exits before join permits recovery after its lifetime ends', async () => {
+    const f = fixture(), host = await openRegistry(f.pipe, f.journal); await host.join([f.root]);
+    const script = `const net=require('net');const [pipe,root]=process.argv.slice(1);const life=net.createServer(s=>s.destroy());life.listen(0,'127.0.0.1',()=>{const s=net.createConnection(pipe);s.on('connect',()=>s.write(JSON.stringify({id:1,type:'publish',roots:[root],pid:process.pid,port:life.address().port})+'\\n'));s.on('data',c=>{const m=JSON.parse(c.toString().trim());if(m.id===1)console.log(m.ok?'published':'error');});process.stdin.once('data',()=>process.exit(0));});`;
+    const child = spawn(process.execPath, ['-e', script, f.pipe, f.root], {stdio:['pipe','pipe','pipe']});
+    assert.equal(await new Promise((resolve,reject) => {child.stdout.once('data', value => resolve(value.toString().trim())); child.once('error',reject);}), 'published');
+    const lost = new Promise(resolve => host.onState(value => {if (value.uncertain) resolve();}));
+    const exited = new Promise(resolve => child.once('exit',resolve)); child.stdin.write('exit\n');
+    assert.equal(await exited, 0); await lost;
+    await host.acquire(f.root); await host.close();
+});
+
 test('a reviewed legacy registration recovers after its independent host exits', async () => {
     const f = fixture(), key = process.platform === 'win32' ? fs.realpathSync(f.root).toLowerCase() : fs.realpathSync(f.root);
     fs.writeFileSync(f.journal, JSON.stringify({[key]:true}));
@@ -146,6 +157,30 @@ test('an unregistered connection blocks writes and requires explicit review afte
     await assert.rejects(host.check(f.root, old.generation), /资格已失效/);
     const uncertain = new Promise(resolve => host.onState(value => {if (value.uncertain) resolve();}));
     unknown.end(); await uncertain;
+    await assert.rejects(host.acquire(f.root), /资格已失效/);
+    await host.resolveStale(f.root); await host.acquire(f.root); await host.close();
+});
+
+test('a rejected reservation followed by damaged protocol is not treated as known', async () => {
+    const f = fixture(), first = await openRegistry(f.pipe,f.journal); await first.join([f.root]);
+    const second = await openRegistry(f.pipe,f.journal); await second.join([f.root]);
+    const socket = net.createConnection(f.pipe);
+    await new Promise((resolve,reject) => {socket.once('connect',resolve);socket.once('error',reject);});
+    const response = new Promise(resolve => socket.once('data', raw => resolve(JSON.parse(raw.toString()))));
+    socket.write(JSON.stringify({id:1,type:'reserve-review-transaction',root:f.root})+'\n');
+    assert.equal((await response).ok, false);
+    const uncertain = new Promise(resolve => first.onState(value => {if (value.uncertain) resolve();}));
+    socket.end('{'); await uncertain; await second.close();
+    await assert.rejects(first.acquire(f.root), /资格已失效/);
+    await first.resolveStale(f.root); await first.close();
+});
+
+test('a non-object protocol message remains unknown and does not disable the broker', async () => {
+    const f = fixture(), host = await openRegistry(f.pipe,f.journal); await host.join([f.root]);
+    const unknown = net.createConnection(f.pipe);
+    await new Promise((resolve,reject) => {unknown.once('connect',resolve);unknown.once('error',reject);});
+    const uncertain = new Promise(resolve => host.onState(value => {if (value.uncertain) resolve();}));
+    unknown.write('null\n'); await uncertain;
     await assert.rejects(host.acquire(f.root), /资格已失效/);
     await host.resolveStale(f.root); await host.acquire(f.root); await host.close();
 });
@@ -298,6 +333,11 @@ test('Python client completes a persisted transaction over the registered host c
     const state = Buffer.from(JSON.stringify({schema:3,transaction:{commit,files:['paper.tex'],owner:false}}));
     const statePath = path.join(f.root,'.codex-review','state.json'); fs.writeFileSync(statePath,state);
     host.onTransaction(async () => {fs.writeFileSync(source,'New.\n'); return {files:['paper.tex']};});
+    const second = await openRegistry(f.pipe, f.journal); await second.join([f.root]);
+    const denied = "import os,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review_host_client import HostSession,HostError,endpoint; assert Path(sys.argv[2]).resolve().is_relative_to(Path(os.environ['LOCAL_LATEX_TEST_ROOT']).resolve()); assert sys.argv[3] != endpoint() and ('ts-registry-test-' in sys.argv[3] if os.name == 'nt' else Path(sys.argv[3]).parent.resolve() == Path(sys.argv[2]).resolve()); exec(\"try:\\n with HostSession(sys.argv[2],pipe=sys.argv[3]): pass\\nexcept HostError: print('reservation refused')\\nelse: raise AssertionError('reservation unexpectedly granted')\")";
+    await promisify(execFile)(process.env.LOCAL_LATEX_PYTHON || 'python', ['-X','utf8','-c',denied,__dirname,f.root,f.pipe]);
+    assert.deepEqual(fs.readFileSync(statePath),state); assert.equal(fs.readFileSync(source,'utf8'),'Old.\n');
+    await second.close();
     const script = "import os,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review_host_client import apply_review_transaction,endpoint; assert Path(sys.argv[2]).resolve().is_relative_to(Path(os.environ['LOCAL_LATEX_TEST_ROOT']).resolve()); assert sys.argv[5] != endpoint(); assert ('ts-registry-test-' in sys.argv[5] if os.name == 'nt' else Path(sys.argv[5]).parent.resolve() == Path(sys.argv[2]).resolve()); apply_review_transaction(sys.argv[2],sys.argv[3],sys.argv[4],b'{\\\"schema\\\":3}',pipe=sys.argv[5])";
     await promisify(execFile)(process.env.LOCAL_LATEX_PYTHON || 'python', ['-X','utf8','-c',script,__dirname,f.root,sha(state),commit,f.pipe]);
     assert.deepEqual(JSON.parse(fs.readFileSync(statePath,'utf8')),{schema:3});

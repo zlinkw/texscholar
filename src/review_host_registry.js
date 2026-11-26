@@ -25,16 +25,21 @@ function defaultJournal() {
 }
 
 function lines(socket, callback) {
-    let pending = '';
+    const framing = {pending:'', invalid:false, messages:0};
     socket.setEncoding('utf8');
     socket.on('data', chunk => {
-        pending += chunk;
+        framing.pending += chunk;
         let end;
-        while ((end = pending.indexOf('\n')) >= 0) {
-            const line = pending.slice(0, end); pending = pending.slice(end + 1);
-            try {callback(JSON.parse(line));} catch (_) {socket.destroy(); return;}
+        while ((end = framing.pending.indexOf('\n')) >= 0) {
+            const line = framing.pending.slice(0, end); framing.pending = framing.pending.slice(end + 1);
+            try {
+                const value = JSON.parse(line);
+                if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('协议消息无效。');
+                framing.messages++; callback(value);
+            } catch (_) {framing.invalid = true; socket.destroy(); return;}
         }
     });
+    return framing;
 }
 const send = (socket, value) => socket.write(JSON.stringify(value) + '\n');
 
@@ -72,7 +77,7 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
         for (const entry of projects.values()) entry.generation++;
         let joined = false, orderly = false, operationRoot, operationGeneration, completed;
         const roots = new Set(), published = new Set();
-        let lifetime;
+        let lifetime, knownRejectedReservation = false, publishedOnly = false;
         function state(root) {
             const entry = projects.get(root);
             return {eligible: !!entry && !entry.uncertain && !entry.pending.size && unregistered === 0 && entry.members.size === 1,
@@ -82,11 +87,11 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
             const entry = projects.get(root);
             if (entry) for (const peer of entry.members) send(peer, {type:'state', root, ...state(root)});
         }
-        lines(socket, message => {queue = queue.then(async () => {
+        const framing = lines(socket, message => {queue = queue.then(async () => {
             if (socket.destroyed) return;
             try {
                 if (message.type === 'publish') {
-                    if (operationRoot || !Array.isArray(message.roots) || !Number.isSafeInteger(message.pid) || message.pid <= 0 || !Number.isInteger(message.port) || message.port < 1 || message.port > 65535) throw new Error('宿主身份登记请求无效。');
+                    if (operationRoot || !Number.isSafeInteger(message.id) || message.id <= 0 || !Object.keys(message).every(key => ['id','type','roots','pid','port'].includes(key)) || !Array.isArray(message.roots) || !Number.isSafeInteger(message.pid) || message.pid <= 0 || !Number.isInteger(message.port) || message.port < 1 || message.port > 65535) throw new Error('宿主身份登记请求无效。');
                     if (lifetime && (lifetime.pid !== message.pid || lifetime.port !== message.port)) throw new Error('宿主身份已变化。');
                     if (!lifetime) lifetime = {pid:message.pid, port:message.port};
                     const requested = [...new Set(message.roots.map(canonical))];
@@ -110,6 +115,7 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                         }
                     }
                     for (const root of projects.keys()) broadcast(root);
+                    publishedOnly = true;
                     send(socket, {id:message.id, ok:true});
                 } else if (message.type === 'join') {
                     if (operationRoot || !Array.isArray(message.roots)) throw new Error('宿主登记请求无效。');
@@ -137,11 +143,13 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
                     for (const root of projects.keys()) broadcast(root);
                     send(socket, {id:message.id, ok:true});
                 } else if (message.type === 'reserve-review-transaction') {
-                    if (joined || unregistered !== 1) throw new Error('审核事务请求无效或宿主资格不明。');
+                    const validReservation = !joined && !lifetime && !published.size && Number.isSafeInteger(message.id) && message.id > 0 && typeof message.root === 'string' && Object.keys(message).every(key => ['id','type','root'].includes(key));
+                    if (!validReservation) throw new Error('审核事务请求无效或宿主资格不明。');
                     const root = canonical(message.root), entry = projects.get(root);
+                    if (unregistered !== 1) {knownRejectedReservation = true; throw new Error('审核事务请求无效或宿主资格不明。');}
                     if (entry) await refresh(root, entry);
-                    if (socket.destroyed || unregistered !== 1) throw new Error('宿主资格已变化；未提交正文。');
-                    if (!entry || entry.uncertain || entry.pending.size || entry.members.size !== 1) throw new Error('宿主资格已失效或存在多个宿主；未提交正文。');
+                    if (socket.destroyed || unregistered !== 1) {knownRejectedReservation = true; throw new Error('宿主资格已变化；未提交正文。');}
+                    if (!entry || entry.uncertain || entry.pending.size || entry.members.size !== 1) {knownRejectedReservation = true; throw new Error('宿主资格已失效或存在多个宿主；未提交正文。');}
                     joined = true; operationRoot = root; operationGeneration = entry.generation; unregistered--;
                     for (const project of projects.keys()) broadcast(project);
                     send(socket, {id:message.id, ok:true, generation:operationGeneration});
@@ -248,10 +256,13 @@ async function openRegistry(pipe = endpoint(), journal = defaultJournal()) {
             }
             if (!joined) {
                 unregistered--;
-                for (const [root, entry] of projects) {
-                    if (!entry.legacy && !entry.leases.length && !entry.unknown) continue;
-                    entry.unknown = true; entry.uncertain = true;
-                    try {record(root, saved(entry));} catch (failure) {console.error('宿主状态持久化失败：', failure);}
+                const knownClosed = !framing.invalid && !framing.pending && framing.messages === 1 && (knownRejectedReservation || (publishedOnly && !!lifetime && published.size > 0));
+                if (!knownClosed) {
+                    for (const [root, entry] of projects) {
+                        if (!entry.legacy && !entry.leases.length && !entry.unknown) continue;
+                        entry.unknown = true; entry.uncertain = true;
+                        try {record(root, saved(entry));} catch (failure) {console.error('宿主状态持久化失败：', failure);}
+                    }
                 }
             }
             for (const root of published) {
