@@ -95,7 +95,7 @@ TOOLS = [
      schema({**WRITE, 'apply':{'type':'boolean','default':False}, 'spec':schema({'block_id':STRING, 'file':STRING, 'source_revision':STRING, 'restore':{'type':'boolean'},
                                     'start':{'type':'integer'}, 'end':{'type':'integer'}}, ['block_id','file','source_revision'])},
             ['project','state','expected_sha256','spec']), False),
-    ('migrate_state', 'Preview migration first. Apply only after explicit author confirmation of the exact returned preview; never migrate a paper automatically.',
+    ('migrate_state', 'Preview migration of embedded review state to external state. This does not repair legacy candidate comments. Apply only after explicit author confirmation of the exact preview.',
      schema({**BASE, 'apply': {'type':'boolean', 'default':False}, 'approved': {'type':'object'}}, ['project','state']), False),
     ('recover_migration', 'Preview an interrupted migration and resume only after explicit author confirmation of that exact preview.',
      schema({**BASE, 'apply': {'type':'boolean', 'default':False}, 'approved': {'type':'object'}}, ['project','state']), False),
@@ -365,6 +365,18 @@ def ai_context(review, roles, ids=None, files=None, scopes=None, known_feedback=
             continue
         payload = review.payload(edit)
         options = payload.get('options', [{'label': 'A', 'after': payload['after'], 'reason': '已有单方案'}])
+        version = edit['versions'][-1]
+        # Decided legacy prerequisites may predate the candidate migration.  Their
+        # identity and decision are useful, but their unproved candidates cannot
+        # safely be projected as current text or rules.
+        if (review.sidecar and edit['status'] in ('accepted', 'rejected') and id_ not in targets
+                and review.state.get('option_migration_complete') and not edit.get('option_migration')
+                and edit.get('migration_item_id') is None
+                and not any(version in versions for versions in review.state.get('option_migration_manifest', {}).values())
+                and not any(n.get('held') or n.get('status') in ('open', 'addressed-pending-review') for n in feedback_notes(edit))
+                and any(re.search(r'(?m)^\s*%\s*CODEX-', o['after']) for o in options)):
+            item.update(version=version, historical_candidate_unavailable='已处理的旧依赖缺少候选迁移资料；保留原身份和决定，不能将旧候选作为当前正文或规则。需要现稿时请按范围读取该文件的当前保存正文。')
+            continue
         item.update(version=edit['versions'][-1], original=payload['before'],
                     options=[review.option_view(edit,payload,edit['versions'][-1],option) for option in options],
                     intent=payload.get('intent'), fulfillment=payload.get('fulfillment', []), protected_terms=payload.get('protected_terms', []),

@@ -1,5 +1,17 @@
 # 问题审核与段落审核能力对照及优化
 
+## AH阶段：外置审核状态与候选迁移读取兼容
+
+2026-11-26用户明确要求先修插件：read_context报“候选的旧注释没有当前版本的精确迁移资料”，迁移预览又报“需要现有内嵌审核状态”，项目已用外置状态，尚未保存R2-Q2/R4-Q1返修。仅修插件及必要交付，本轮不继续科学返修或同步正文/表注/结论，不修改真实论文、批注、候选、依赖及登记。基线0e212f98dba130045e71423bce80d39b7379f77e，HEAD==origin/master、clean，0.9.77已安装。沿既有总控与唯一Terra角色，AH返修0；验证后原流程发行安装，暂不重载/重启。
+
+已只读核：review_migration.preview明确拒绝sidecar，它是内嵌→外置状态迁移；source_review.option_effect按候选精确迁移资料校验并受全局option_migration_complete影响，两种迁移用途不能混淆。真实state schema3、option_migration_complete=true、manifest12项，无transaction；R2-Q2/R4-Q1相关活跃107/108/112/113/114/115/bg/bh当前版本均有对应proof/manifest版本键，历史accepted/rejected项多无当前proof。尚未运行真实MCP/后端，不据这些元数据宣称唯一根因。需在隔离夹具还原真实读取条件，区分缺失/损坏证明、历史或已处理项、正常新候选及误入迁移入口。
+
+- [ ] AH1 原Terra一个完整功能批：在隔离外置项目通过实际read_context消费者复现原错误及迁移预览冲突，确定产生不兼容状态的实际读写链；最小完整修复合法现有状态/精确候选迁移资料及受影响读取、返修与保存调用方。复用已支持的精确proof/manifest/原对象，不全局跳过校验、自动去注释、猜新版本证明或把外置状态退回内嵌。若现有合法资料足够则兼容读取；真实损坏/来源不明明确定位冲突并给适用恢复路径，不能静默丢批注/依赖或返回空候选冒充成功。迁移接口/错误指引须与当前外置状态相符；只有确需显式修复时准备可核预览和原CAS/宿主事务，不自动迁移真稿。补齐必要消费者、源码说明及资源闭包，不新增通用兼容平台/无依据回退。
+- [ ] AH2 Terra必要定向验证：schema3既有迁移完备/携带映射、合法新候选与历史已处理项、旧批注/previous_feedback/依赖按需读取、当前与历史精确proof及manifest不符/缺失拒绝、跨版本及换行语义；实际MCP read_context读取R2-Q2/R4-Q1形态相关项成功，并在隔离项目保存同编号返修后回读、正文/表注/结论关联及未决/暂留/范围外数据保持，原科学内容不重写。原内嵌迁移合法路径与外置入口行为按受影响消费者回归。复用有效旧证据，不跑全仓/性能/删除cleanup/完整备份；每业务Python实际child正向FakeHost/AH根/显式私有endpoint。若修改可见UI/入口则按silent-ui-screenshot必要真实Development私有未切桌面实点；纯后端兼容不机械截图。总控冻结后审实际diff/必要链及有效证据，仅补影响结论的缺口。
+- [ ] AH3 总控明确通过后原Terra必要发行检查、一次构建、正式Release及同一VSIX安装；总控独立交付meta并plan/index/execution集中结案，暂不重载/重启，不包后冒烟，不触真实迁移或论文返修。
+
+总控plan/index支持增量随成功完整批提交，随后转Terra产品/测试/UI/隔离配置/execution/Git租约；证据沿D:/latex-writing-checks/review-efficiency-20261122/AH-*保留argv/cwd/env/stdout/stderr/真实exit及首败，唯一execution登记。普通Windows/pwsh7/显式UTF8/Python -B -X utf8、精确stage/commit/push master:master/fetch，远端前移/权限Hook拒绝停止相关动作，不reset/rebase/merge/force/改remote。真实D:/Overleaf/TMI-DA-Marked-up Copy、P/个人资料/state/候选/批注/三稿/依赖/stage及全局host-lifecycle只读；不恢复真实登记或事务、不接收/返修真实项、不触用户窗口/默认pipe/MCP/实网AI、不删除文件对象截图或cleanup、不改全局技能/config/TeX，不新增代理/性能测试或改超时退役。无待用户选择，完整AH1–AH2冻结交包后再派AH3。
+
 ## AG阶段：旧批注适配入口可发现
 
 AG已完成，返修0：[0.9.77正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.77)并安装同一VSIX，唯一构建源码88503d18d19934d9e6df5e79418fd2c9c334b40f，build/安装exit0。总控独立核本地/远端附注tag对象9fd00fe48de22ced8703dce4a65d640b579cf2fd、目标及SOURCE-COMMIT/双包摘要；controller-ag-release-meta.py实际读取正式Release API，三附件digest与同一本地产物一致，manifest及source=vsix/pinned登记0.9.77，exit0。原记录D:/latex-writing-checks/review-efficiency-20261122/controller-ag-release*及AG-delivery-*，预期404与Node DEP0169警告保留。用户指定的首屏顶部按钮、命令面板搜索及选择具体旧批注准备适配均已在AG-ui12实际键鼠通过并逐张实看截图；未发送真实AI或操作真实稿件/登记，未重复功能/UI或包后冒烟。暂不重载/重启，活动宿主加载未知，三docs集中结案，无在途。

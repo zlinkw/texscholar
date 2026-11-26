@@ -1069,8 +1069,8 @@ class Review:
                                                      sorted(version_map) != sorted(manifest[item_id][version])):
             raise Conflict('候选的旧注释迁移清单不完整；未执行。')
         if version_map is None:
-            if (self.state.get('option_migration_complete') or migrations or item_id is not None) and version == edit['versions'][-1] and re.search(r'(?m)^\s*%\s*CODEX-', raw):
-                raise Conflict('候选的旧注释没有当前版本的精确迁移资料；未执行。')
+            if (self.state.get('option_migration_complete') or migrations or item_id is not None) and re.search(r'(?m)^\s*%\s*CODEX-', raw):
+                raise Conflict(f'候选的旧注释没有该版本的精确迁移资料；文件 {edit["file"]}，版本 {version}，方案 {label}；未执行。请核对该候选及其迁移资料，外置状态无需再次执行内嵌状态迁移。')
             return raw
         proof = version_map.get(label)
         if proof is None:
@@ -1449,6 +1449,10 @@ class Review:
         if protected and (a < protected[1] and b > protected[0] or a == b and protected[0] <= a < protected[1]):
             raise Conflict('文件角色登记是项目配置，不是正文候选；请通过文件角色确认入口更新。')
         options = self.validate_options(spec)
+        if not rework and self.state.get('option_migration_complete') and any(
+                isinstance(value, str) and re.search(r'(?m)^\s*%\s*CODEX-', value)
+                for value in ([spec.get('after', '')] if options is None else [option['after'] for option in options])):
+            raise Conflict('新候选含未迁移的旧版机器注释；请先明确方案内容，未保存。')
         if rework and (edit.get('option_migration') or self.state.get('option_migration_complete')):
             if migration_carry is not None:
                 if options is None or self.carried_option_migration(edit, edit['versions'][-1], options) != migration_carry:

@@ -70,6 +70,33 @@ class CandidateProjectionTests(unittest.TestCase):
         with self.assertRaises(Conflict):
             review.option_effect(edit, {'after':edited, 'options':forged}, new, 'A')
 
+    def test_missing_historical_proof_never_exposes_legacy_comment(self):
+        old, new = '1' * 64, '2' * 64
+        edit = {'file':'main.tex', 'versions':[old, new]}
+        review = Review.__new__(Review)
+        review.state = {'option_migration_complete':True, 'edits':{}, 'option_migration_manifest':{}}
+        item = {'after':self.raw, 'options':[{'label':'A', 'after':self.raw}]}
+        with self.assertRaisesRegex(Conflict, '精确迁移资料.*方案 A'):
+            review.option_effect(edit, item, old, 'A')
+
+    def test_manifest_and_option_identity_remain_required(self):
+        version = '3' * 64
+        proof = {**self.proof, 'rule_source':f'candidate:session:1:{version}:A'}
+        edit = {'file':'main.tex', 'versions':[version], 'block_id':'block', 'migration_item_id':'1',
+                'option_migration':{version:{'A':proof}}}
+        review = Review.__new__(Review)
+        review.state = {'session':'session', 'edits':{'1':edit}, 'option_migration_complete':True,
+                        'option_migration_manifest':{'1':{version:['A']}}}
+        item = {'after':self.raw, 'options':[{'label':'A', 'after':self.raw}]}
+        self.assertEqual(review.option_effect(edit, item, version, 'A'), 'before\nafter α\n')
+        review.state['option_migration_manifest']['1'][version] = ['B']
+        with self.assertRaisesRegex(Conflict, '迁移清单不完整'):
+            review.option_effect(edit, item, version, 'A')
+        review.state['option_migration_manifest']['1'][version] = ['A']
+        proof['rule_source'] = f'candidate:session:1:{version}:B'
+        with self.assertRaisesRegex(Conflict, '来源与版本或方案不一致'):
+            review.option_effect(edit, item, version, 'A')
+
 
 if __name__ == '__main__':
     unittest.main()

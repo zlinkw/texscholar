@@ -15,6 +15,184 @@ from document_roles import scan as scan_roles, save as save_roles
 from unittest.mock import patch
 
 class MCP(unittest.TestCase):
+    def test_sidecar_migrated_candidate_and_clean_rework_preserve_original_proof(self):
+        from review_option_migration import prepare
+        fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3, option_migration_complete=True))
+        def review(): return fixtures.Review(self.root, '.codex-review/state.json', 'missing-git')
+        r = review(); text = r.read('main.tex'); start = text.index('The model'); end = text.index('\n', start)+1
+        changed, block = r.prepare_block({'file':'main.tex', 'kind':'paragraph', 'start':start, 'end':end,
+            'source_revision':r.source_digest(text)})
+        r.persist(changed, digest(r.raw))
+        r = review(); changed, row = r.propose({'file':'main.tex', 'kind':'manuscript', 'block_id':block['block_id'],
+            'before':'The model is strong and fast.', 'after':'The model is reliable.'})
+        r.persist(changed, digest(r.raw)); id_ = row['id']
+        r = review(); edit = r.state['edits'][id_]; payload = r.payload(edit)
+        raw = '% CODEX-PARAGRAPH-PLAN-BEGIN\n% original fixture intent\n% CODEX-PARAGRAPH-PLAN-END\nThe model is reliable.'
+        payload['after'] = raw
+        if 'options' in payload: payload['options'][0]['after'] = raw
+        version = r.snapshot({'original.tex':payload['before'].encode('utf-8'), 'candidate.tex':raw.encode('utf-8'),
+                              'span.json':json.dumps(payload, ensure_ascii=False).encode('utf-8')}, 'fixture migrated candidate')
+        proof = {**prepare(raw), 'rule_source':f"candidate:{r.state['session']}:{id_}:{version}:A"}
+        edit['versions'] = [version]; edit['migration_item_id'] = id_; edit['option_migration'] = {version:{'A':proof}}
+        r.state['option_migration_manifest'] = {id_:{version:['A']}}
+        r.persist({}, digest(r.raw))
+        server = self.server(); args = {'project':str(self.root), 'state':'.codex-review/state.json', 'ids':[id_]}
+        context = server.call('read_context', args)['context']
+        self.assertEqual(context['items'][id_]['options'][0]['after'], 'The model is reliable.')
+        before = (self.root/'main.tex').read_bytes()
+        saved = server.call('rework_options', {'project':str(self.root), 'state':args['state'], 'id':id_, 'version':version,
+            'expected_sha256':context['sha256'], 'spec':{'options':[{'label':'A', 'after':'The model is reliable here.',
+            'reason':'fixture'}], 'fewer_options_reason':'fixture'}})
+        latest = server.call('read_context', args)['context']['items'][id_]
+        self.assertEqual(latest['version'], saved['version'])
+        self.assertEqual(latest['options'][0]['after'], 'The model is reliable here.')
+        self.assertEqual(review().state['edits'][id_]['option_migration'][version]['A'], proof)
+        self.assertEqual((self.root/'main.tex').read_bytes(), before)
+
+    def test_sidecar_related_questions_keep_exact_dependencies_and_unselected_work(self):
+        path = self.root / 'reply.tex'
+        path.write_text(path.read_text(encoding='utf-8').replace('Thank you.\n',
+            'Thank you.\n\nReviewer second point.\n'), encoding='utf-8')
+        fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3, option_migration_complete=True))
+        def review(): return fixtures.Review(self.root, '.codex-review/state.json', 'missing-git')
+        blocks = {}
+        for file, text in [('main.tex','The model is strong and fast.'), ('main.tex','Unchanged context after.'),
+                           ('reply.tex','Thank you.'), ('reply.tex','Reviewer second point.')]:
+            r = review(); source = r.read(file); start = source.index(text); end = source.index('\n', start) + 1
+            changed, block = r.prepare_block({'file':file, 'kind':'paragraph', 'start':start, 'end':end,
+                'source_revision':r.source_digest(source)})
+            r.persist(changed, digest(r.raw)); blocks[text] = block['block_id']
+        rows = []
+        for number, original in enumerate(('The model is strong and fast.', 'Unchanged context after.'), 1):
+            r = review(); changed, item = r.propose({'file':'main.tex', 'kind':'manuscript',
+                'block_id':blocks[original], 'before':original, 'after':f'Fixture table or conclusion {number}.'})
+            r.persist(changed, digest(r.raw)); rows.append(item['id'])
+        ids = []
+        for number, original in enumerate(('Thank you.', 'Reviewer second point.'), 1):
+            r = review(); changed, item = r.propose({'file':'reply.tex', 'kind':'response',
+                'block_id':blocks[original], 'before':original, 'after':f'Fixture response {number}.',
+                'questions':[{'id':f'R{number}-Q1', 'file':'reply.tex', 'quote':original}], 'deps':[rows[number-1]]})
+            r.persist(changed, digest(r.raw)); ids.append(item['id'])
+        server = self.server(); args = {'project':str(self.root), 'state':'.codex-review/state.json'}
+        before = {name:(self.root/name).read_bytes() for name in ('main.tex','reply.tex')}
+        context = server.call('read_context', {**args, 'ids':ids})['context']
+        self.assertEqual(set(context['items']), set(ids + rows))
+        self.assertEqual({q['id'] for q in context['questions'].values()}, {'R1-Q1','R2-Q1'})
+        other = review().state['edits'][ids[1]].copy()
+        saved = server.call('rework_options', {**args, 'id':ids[0], 'version':context['items'][ids[0]]['version'],
+            'expected_sha256':context['sha256'], 'spec':{'options':[{'label':'A','after':'Revised fixture response.','reason':'fixture'}],
+            'fewer_options_reason':'fixture'}})
+        after = server.call('read_context', {**args, 'ids':ids})['context']
+        self.assertEqual(after['items'][ids[0]]['version'], saved['version'])
+        self.assertEqual(after['items'][ids[0]]['deps'], [rows[0]])
+        self.assertEqual(review().state['edits'][ids[1]], other)
+        self.assertEqual({name:(self.root/name).read_bytes() for name in before}, before)
+
+    def test_context_with_unmapped_decided_legacy_dependency(self):
+        legacy = '% CODEX-PARAGRAPH-PLAN-BEGIN\n% old intent\n% CODEX-PARAGRAPH-PLAN-END\nAccepted text.'
+        first = self.apply('propose', {'file':'main.tex', 'kind':'manuscript',
+            'before':'The model is strong and fast.', 'after':legacy})['id']
+        review = self.review()
+        review.state['edits'][first]['status'] = 'accepted'
+        review.state['option_migration_complete'] = True
+        fixtures.NativeReview.install_sidecar(self, dict(review.state, schema=3))
+        def sidecar(): return fixtures.Review(self.root, '.codex-review/state.json', 'missing-git')
+        review = sidecar(); text = review.read('reply.tex')
+        start = text.index('Thank you.'); end = text.index('\n', start) + 1
+        updated, block = review.prepare_block({'file':'reply.tex', 'kind':'paragraph', 'start':start, 'end':end,
+            'source_revision':review.source_digest(text)})
+        review.persist(updated, digest(review.raw))
+        review = sidecar()
+        updated, row = review.propose({'file':'reply.tex', 'kind':'response', 'block_id':block['block_id'],
+            'before':'Thank you.', 'after':'Thank you for the suggestion.', 'deps':[first]})
+        review.persist(updated, digest(review.raw)); second = row['id']
+        review = sidecar(); version = review.state['edits'][second]['versions'][-1]
+        updated, note = review.feedback({'id':second, 'version':version, 'side':'original',
+            'start':0, 'end':5, 'quote':'Thank', 'text':'Preserve this requirement.'})
+        review.persist(updated, digest(review.raw))
+        result = self.server().call('read_context', {'project':str(self.root),
+            'state':'.codex-review/state.json', 'ids':[second]})['context']
+        self.assertEqual(result['items'][first]['status'], 'accepted')
+        self.assertTrue(result['items'][first]['historical_candidate_unavailable'])
+        self.assertNotIn('options', result['items'][first])
+        self.assertEqual(result['items'][second]['options'][0]['after'], 'Thank you for the suggestion.')
+        self.assertTrue(result['items'][second]['source_match'])
+        self.assertEqual(result['items'][second]['deps'], [first])
+        self.assertEqual(result['items'][second]['requests'][0]['text'], 'Preserve this requirement.')
+        server = self.server()
+        args = {'project':str(self.root), 'state':'.codex-review/state.json'}
+        before = (self.root / 'reply.tex').read_bytes()
+        saved = server.call('rework_options', {**args, 'id':second, 'version':result['items'][second]['version'],
+            'expected_sha256':result['sha256'], 'spec':{'options':[{'label':'A', 'after':'Updated reply.', 'reason':'fixture'}],
+            'fewer_options_reason':'fixture'}})
+        refreshed = server.call('read_context', {**args, 'ids':[second]})['context']
+        self.assertEqual(refreshed['items'][second]['id'], second)
+        self.assertEqual(refreshed['items'][second]['version'], saved['version'])
+        self.assertEqual(refreshed['items'][second]['options'][0]['after'], 'Updated reply.')
+        feedback = server.call('read_feedback', {**args, 'ids':[second]})['items']
+        self.assertEqual(feedback[0]['version'], version)
+        self.assertEqual(feedback[0]['requests'][0]['text'], 'Preserve this requirement.')
+        self.assertEqual((self.root / 'reply.tex').read_bytes(), before)
+        command = [sys.executable, '-B', '-X', 'utf8', str(Path(__file__).with_name('mcp_server.py')),
+                   '--registrations', str(server.registrations)]
+        request = {'jsonrpc':'2.0', 'id':1, 'method':'tools/call',
+                   'params':{'name':'read_context', 'arguments':{**args, 'ids':[second]}}}
+        self.assertTrue(self.root.resolve().is_relative_to(fixtures.ROOT.resolve()))
+        child = subprocess.run(command, cwd=self.root, env=os.environ.copy(),
+            input=(json.dumps(request, ensure_ascii=False)+'\n').encode('utf-8'), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        (self.root/'ah-mcp-stdout.log').write_bytes(child.stdout)
+        (self.root/'ah-mcp-stderr.log').write_bytes(child.stderr)
+        (self.root/'ah-mcp-run.json').write_text(json.dumps({'argv':command, 'cwd':str(self.root),
+            'env':{k:os.environ[k] for k in ('PYTHONPATH','SOURCE_REVIEW_FIXTURES','AH_PROOF')},
+            'request':request, 'exit':child.returncode}, ensure_ascii=False), encoding='utf-8')
+        self.assertEqual(child.returncode, 0, child.stderr.decode('utf-8', errors='replace'))
+        response = json.loads(child.stdout.decode('utf-8').splitlines()[-1])['result']
+        self.assertFalse(response.get('isError'), response)
+        self.assertEqual(response['structuredContent']['context']['items'][second]['version'], saved['version'])
+        with self.assertRaisesRegex(Conflict, '文件 main.tex.*方案 A'):
+            server.call('read_context', {**args, 'ids':[first]})
+        with self.assertRaisesRegex(Conflict, '已经外置.*不能修复候选旧注释'):
+            server.call('migrate_state', args)
+        state_path = self.root / '.codex-review' / 'state.json'
+        original = state_path.read_bytes()
+        state = json.loads(original)
+        old = state['edits'][first]
+        for status in ('accepted', 'rejected'):
+            old['status'] = status
+            state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+            data = server.call('read_context', {**args, 'ids':[second]})['context']
+            self.assertEqual(data['items'][first]['status'], status)
+            self.assertTrue(data['items'][first]['historical_candidate_unavailable'])
+        old['status'] = 'pending'
+        state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+        with self.assertRaisesRegex(Conflict, '精确迁移资料'):
+            server.call('read_context', {**args, 'ids':[second]})
+        old['status'] = 'accepted'
+        old['previous_feedback'] = {'version':old['versions'][-1], 'requests':[
+            {'id':'held-fixture', 'version':old['versions'][-1], 'status':'open', 'held':True}]}
+        state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+        with self.assertRaisesRegex(Conflict, '精确迁移资料'):
+            server.call('read_context', {**args, 'ids':[second]})
+        with self.assertRaisesRegex(Conflict, '精确迁移资料'):
+            server.call('read_feedback', {**args, 'ids':[first]})
+        old.pop('previous_feedback')
+        old['migration_item_id'] = first
+        state['option_migration_manifest'] = {first:{old['versions'][-1]:['A']}}
+        state_path.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+        with self.assertRaisesRegex(Conflict, '迁移清单不完整'):
+            server.call('read_context', {**args, 'ids':[second]})
+        state_path.write_bytes(original)
+        review = sidecar(); text = review.read('main.tex')
+        start = text.index('Unchanged context after.'); end = text.index('\n', start) + 1
+        updated, block = review.prepare_block({'file':'main.tex', 'kind':'paragraph', 'start':start, 'end':end,
+            'source_revision':review.source_digest(text)})
+        review.persist(updated, digest(review.raw))
+        review = sidecar(); before = review.raw
+        with self.assertRaisesRegex(Conflict, '新候选含未迁移的旧版机器注释'):
+            review.propose({'file':'main.tex', 'kind':'manuscript', 'block_id':block['block_id'],
+                            'before':'Unchanged context after.', 'after':legacy})
+        self.assertEqual(sidecar().raw, before)
+
     def test_excerpt_insert_uses_nested_document_root_and_guarded_resource(self):
         fixtures.NativeReview.install_sidecar(self, dict(self.review().state, schema=3))
         state = '.codex-review/state.json'

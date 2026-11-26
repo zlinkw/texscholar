@@ -14,7 +14,9 @@ from review_blocks import safe_boundaries
 
 def preview(review):
     review.assert_ready()
-    if review.sidecar or not review.state:
+    if review.sidecar:
+        raise Conflict('当前审核状态已经外置；此预览只用于内嵌状态迁移，不能修复候选旧注释。请核对报错的审核项、版本和方案及其迁移资料。')
+    if not review.state:
         raise Conflict('迁移预览需要现有内嵌审核状态。')
     files = review.state['rounds'][-1]['files']
     texts = {name: review.read(name) for name in files}
