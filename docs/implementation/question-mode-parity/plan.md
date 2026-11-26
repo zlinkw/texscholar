@@ -2,13 +2,15 @@
 
 ## AD阶段：单窗口重启后自动恢复旧宿主登记
 
+AD已完成，返修1：[0.9.74正式发布](https://github.com/zlinkw/texscholar/releases/tag/v0.9.74)并安装同一VSIX，唯一构建源码fbaf318bc6d576632fec7c1d850e2bc0c64215f2，build/安装exit0。总控独立核本地/远端附注tag对象ccb1717f00a0f1cd0c6ba61549bc791023fc78df、构建目标及SOURCE-COMMIT/双包摘要；controller-ad-release-meta.py实际读正式Release API，三附件digest与同一本地产物一致，manifest及source=vsix/pinned登记0.9.74，exit0。原始API/argv/cwd/退出/结果在D:/latex-writing-checks/review-efficiency-20261122/controller-ad-release*，实际发行安装日志AD-delivery-*；Node DEP0169警告保留。未重复构建/功能组/包后冒烟；未恢复或修改真实旧登记、未接收146/147、不重载/重启，活动宿主加载未知。旧true仍需首次执行原“核对并恢复审核宿主登记”，建立新身份后才适用自动恢复；真实多宿主/不明连接/未完成事务保护保留。三份支持记录集中结案，无在途。
+
 2026-11-26用户明确要求自动识别并恢复旧宿主登记，避免只有一个窗口却每次重启都需手动恢复。基线0eaf845792e4d35b1b654ff5161b96fdb8851638，HEAD==origin/master、clean，0.9.73已发布安装。总控local/01a212c7-d736-7503-ab7a-9717a426fefb维护计划/索引及最终审核，唯一Terra local/01a21288-5815-7312-b496-006ade07bede实现与小验收，AD返修1。沿已授权原流程验证通过后发布安装，不自动重载/重启用户窗口或MCP。
 
 真实只读证据：用户贴出“审核宿主事务失败；请核对是否存在待恢复意图：宿主资格已失效或存在多个宿主；未提交正文”，并确认只开一个窗口。真实state当前无transaction、146/147仍rework；本机C:/Users/ZLK/AppData/Local/TeXScholar/host-lifecycle.json仅该项目true、mtime2026-11-25T13:09:19Z，当前Code日志20261126T093813。未连接默认pipe、未恢复登记或真实接收。持久标记不能单独证明当前实时成员数；不得把“失效或多宿主”合并错误当成多个窗口的确证。源码registry将persisted[root]直接变为uncertain，断线亦置uncertain，只有resolve-stale人工清除；bridge已有人工确认入口，main deactivate会close，但异常退出/更新可留下登记。应实证重启路径及必要边界，不能仅删除登记、绕过校验或假定PID消失即安全。
 
 - [x] AD1 原Terra一个完整功能批：在专属pipe/journal/隔离论文以真实进程生命周期复现单宿主正常重启与非正常旧登记阻断，设计最小自动识别恢复，使可确认只剩当前有效宿主、旧生命周期已结束时无需手动操作恢复登记并可继续精确接收。复用现有registry/bridge/事务契约，不引入无依据超时、重试轮询、TTL或通用恢复平台；必要身份机制须对应已证缺口。保留旧人工入口，不自动接受任何候选/回放未完成事务，不清理真实登记或稿件。
 - [x] AD2 Terra必要定向回归与正常Development私有未切桌面验证：隔离重启/旧登记后自动恢复、实际鼠标接收所选版本；真实同时多宿主、另一有效宿主仍在线/迟到登记、资格generation变化、未登记连接、未完成事务/损坏记录保持必要阻断或显式恢复路径，不丢正文/草稿/意图。按当前契约覆盖受影响原生及已有旧格式消费者，不猜角色文件。已有安全用例如确需改变预期须说明用户新语义及等价边界覆盖，不自动退役/放宽其他断言或超时。总控冻结后审实际diff/消费者/证据，只补未覆盖且影响结论的组合，不重复同组。
-- [ ] AD3 总控明确通过后另派原Terra预核下一无冲突版本、必要发行检查、一次构建、正式Release及同VSIX安装；总控只核交付元数据并三docs集中结案，不包后冒烟，不重载/重启。
+- [x] AD3 总控明确通过后另派原Terra预核下一无冲突版本、必要发行检查、一次构建、正式Release及同VSIX安装；总控只核交付元数据并三docs集中结案，不包后冒烟，不重载/重启。
 
 总控plan/index支持增量先写，随后移交产品/测试/UI/隔离配置/execution/Git租约给原Terra，支持docs随完整成功功能批精确普通commit/push/fetch，不为元数据另起微提交。检查每个实际Python子进程正向断言FakeHostSession及AD隔离根/正确endpoint；禁止默认pipe/MCP探测，不用LOCAL_LATEX_PIPE冒充隔离。UI按silent-ui-screenshot正常Development专属profile/pipe、CreateDesktopW私有未切桌面，核Default/前中后前台不变、截图逐张实看。证据D:/latex-writing-checks/review-efficiency-20261122/AD-*，完整argv/cwd/env/stdout/stderr/exit及首败；不机械重跑AC/全套/性能或含删除cleanup的测试。
 
